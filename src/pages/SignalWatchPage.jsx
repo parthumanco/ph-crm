@@ -89,17 +89,25 @@ export default function SignalWatchPage({ onNavigate, icp }) {
   useEffect(() => {
     async function load() {
       setLoading(true);
-      const { data } = await supabase
-        .from('companies')
-        .select('*')
-        .order('scan_date', { ascending: false, nullsFirst: false });
-      if (data?.length) {
-        // Mark already-in-pipeline companies
-        const { data: pipelineEntries } = await supabase
-          .from('pipeline_entries')
-          .select('company_id');
+      // Paginate past Supabase's 1000-row default limit
+      let allData = [];
+      const PAGE = 1000;
+      let from = 0;
+      while (true) {
+        const { data, error } = await supabase
+          .from('companies')
+          .select('*')
+          .order('scan_date', { ascending: false, nullsFirst: false })
+          .range(from, from + PAGE - 1);
+        if (error || !data?.length) break;
+        allData = allData.concat(data);
+        if (data.length < PAGE) break;
+        from += PAGE;
+      }
+      if (allData.length) {
+        const { data: pipelineEntries } = await supabase.from('pipeline_entries').select('company_id');
         const inPipeline = new Set((pipelineEntries || []).map(e => e.company_id));
-        const loaded = data.map(c => ({ ...c, _key: c.id }));
+        const loaded = allData.map(c => ({ ...c, _key: c.id }));
         setCompanies(loaded);
         const alreadyAdded = {};
         loaded.forEach(c => { if (inPipeline.has(c.id)) alreadyAdded[c.id] = true; });
@@ -130,9 +138,17 @@ export default function SignalWatchPage({ onNavigate, icp }) {
         return;
       }
 
-      // Separate new vs existing
-      const { data: existing } = await supabase.from('companies').select('id, name');
-      const existingMap = new Map((existing || []).map(c => [c.name.toLowerCase().trim(), c.id]));
+      // Fetch ALL existing names from DB (paginated past 1000-row limit)
+      let existingRows = [];
+      let from = 0;
+      while (true) {
+        const { data, error } = await supabase.from('companies').select('id, name').range(from, from + 999);
+        if (error || !data?.length) break;
+        existingRows = existingRows.concat(data);
+        if (data.length < 1000) break;
+        from += 1000;
+      }
+      const existingMap = new Map(existingRows.map(c => [c.name.toLowerCase().trim(), c.id]));
 
       const toInsert = allParsed.filter(c => !existingMap.has(c.name.toLowerCase().trim()));
       const toMaybeReset = allParsed.filter(c => existingMap.has(c.name.toLowerCase().trim()));
@@ -356,29 +372,36 @@ export default function SignalWatchPage({ onNavigate, icp }) {
   const clearAll = useCallback(async () => {
     if (!window.confirm(`Clear all companies from Signal Watch? Companies already in your pipeline will not be deleted.`)) return;
     try {
-      const ids = companies.map(c => c.id).filter(Boolean);
-      if (!ids.length) { setCompanies([]); return; }
-
-      // Fetch pipeline company IDs in chunks to avoid URL length limits
       const CHUNK = 100;
       const chunk = (arr) => { const out = []; for (let i = 0; i < arr.length; i += CHUNK) out.push(arr.slice(i, i + CHUNK)); return out; };
 
+      // Fetch ALL company IDs from DB (not from React state, which may be capped)
+      let allIds = [];
+      let from = 0;
+      while (true) {
+        const { data, error } = await supabase.from('companies').select('id').range(from, from + 999);
+        if (error || !data?.length) break;
+        allIds = allIds.concat(data.map(c => c.id));
+        if (data.length < 1000) break;
+        from += 1000;
+      }
+      if (!allIds.length) { setCompanies([]); return; }
+
+      // Find which are in the pipeline
       const pipelinedIds = new Set();
-      for (const batch of chunk(ids)) {
+      for (const batch of chunk(allIds)) {
         const { data } = await supabase.from('pipeline_entries').select('company_id').in('company_id', batch);
         (data || []).forEach(e => pipelinedIds.add(e.company_id));
       }
 
-      const toDelete = ids.filter(id => !pipelinedIds.has(id));
-      const toReset  = ids.filter(id =>  pipelinedIds.has(id));
+      const toDelete = allIds.filter(id => !pipelinedIds.has(id));
+      const toReset  = allIds.filter(id =>  pipelinedIds.has(id));
 
-      // Delete non-pipeline companies in chunks
       for (const batch of chunk(toDelete)) {
         const { error } = await supabase.from('companies').delete().in('id', batch);
         if (error) throw error;
       }
 
-      // Reset scan data for pipeline companies in chunks
       for (const batch of chunk(toReset)) {
         await supabase.from('companies').update({
           scan_date: null, icp_score: null, overall_score: null, icp_tier: null,
@@ -399,7 +422,7 @@ export default function SignalWatchPage({ onNavigate, icp }) {
     } catch (e) {
       alert('Clear failed: ' + e.message);
     }
-  }, [companies]);
+  }, []);
 
   // ── Filtering ────────────────────────────────────────────────────────────────
 
