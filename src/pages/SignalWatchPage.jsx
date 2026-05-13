@@ -75,6 +75,7 @@ export default function SignalWatchPage({ onNavigate, icp }) {
   const [addedToPipeline, setAddedToPipeline]   = useState({});
   const [loading, setLoading]         = useState(true);
   const [importing, setImporting]     = useState(false);
+  const [autoResume, setAutoResume]   = useState(false);
   const [filters, setFilters] = useState({
     series: 'all',
     employees: 'all',
@@ -112,6 +113,7 @@ export default function SignalWatchPage({ onNavigate, icp }) {
         const alreadyAdded = {};
         loaded.forEach(c => { if (inPipeline.has(c.id)) alreadyAdded[c.id] = true; });
         setAddedToPipeline(alreadyAdded);
+        if (localStorage.getItem('ph_scan_active')) setAutoResume(true);
       }
       setLoading(false);
     }
@@ -232,21 +234,22 @@ export default function SignalWatchPage({ onNavigate, icp }) {
 
   const saveScanResult = useCallback(async (companyId, result) => {
     const update = {
-      icp_tier: result.icpTier,
-      icp_score: result.icpScore,
-      overall_score: result.overallScore,
+      icp_tier: result.icpTier || null,
+      icp_score: result.icpScore ? Math.round(result.icpScore) : null,
+      overall_score: result.overallScore ? Math.round(result.overallScore) : null,
       funding_stage: result.fundingStage || null,
-      employee_count_num: result.employeeCountNum || null,
-      employee_count: result.employeeCountNum ? String(result.employeeCountNum) : null,
-      summary: result.summary,
+      employee_count_num: result.employeeCountNum ? Math.round(result.employeeCountNum) : null,
+      employee_count: result.employeeCountNum ? String(Math.round(result.employeeCountNum)) : null,
+      summary: result.summary || null,
       triggers: result.triggers || [],
-      recommended_angle: result.recommendedAngle,
+      recommended_angle: result.recommendedAngle || null,
       contact_angles: result.contactAngles || [],
       lat: result.lat || null,
       lng: result.lng || null,
       scan_date: new Date().toISOString(),
     };
-    await supabase.from('companies').update(update).eq('id', companyId);
+    const { error } = await supabase.from('companies').update(update).eq('id', companyId);
+    if (error) throw new Error(error.message);
     setCompanies(prev => prev.map(c => c.id === companyId ? { ...c, ...update, _scanned: true } : c));
   }, []);
 
@@ -272,8 +275,9 @@ export default function SignalWatchPage({ onNavigate, icp }) {
 
   const scanAll = useCallback(async () => {
     const unscanned = companies.filter(c => !c.scan_date && !c._error && c.id);
-    if (!unscanned.length) { alert('All companies have already been scanned.'); return; }
+    if (!unscanned.length) { localStorage.removeItem('ph_scan_active'); return; }
     cancelRef.current = { cancelled: false };
+    localStorage.setItem('ph_scan_active', 'true');
     setScanningAll(true);
     setScanProgress({ done: 0, total: unscanned.length });
 
@@ -301,8 +305,17 @@ export default function SignalWatchPage({ onNavigate, icp }) {
       setScanProgress({ done, total: unscanned.length });
       if (done < unscanned.length && !cancelRef.current.cancelled) await new Promise(r => setTimeout(r, SCAN_DELAY));
     }
+    localStorage.removeItem('ph_scan_active');
     setScanningAll(false);
   }, [companies, saveScanResult, icp]);
+
+  // ── Auto-resume scan after page refresh ─────────────────────────────────────
+  useEffect(() => {
+    if (autoResume && !loading) {
+      setAutoResume(false);
+      scanAll();
+    }
+  }, [autoResume, loading, scanAll]);
 
   // ── Add to pipeline ──────────────────────────────────────────────────────────
 
@@ -477,6 +490,7 @@ export default function SignalWatchPage({ onNavigate, icp }) {
   const added    = Object.values(addedToPipeline).filter(Boolean).length;
   const pct      = scanProgress.total ? Math.round((scanProgress.done / scanProgress.total) * 100) : 0;
   const unscannedCount = companies.filter(c => !c.scan_date && c.id).length;
+  const isResuming = unscannedCount > 0 && scanned > 0;
 
   const setFilter = (key, val) => setFilters(f => ({ ...f, [key]: val }));
 
@@ -496,15 +510,14 @@ export default function SignalWatchPage({ onNavigate, icp }) {
                 <option value="distance">Sort: Distance</option>
                 <option value="name">Sort: Name</option>
               </select>
-              {scanningAll ? (
-                <button className="btn btn-secondary" onClick={() => { cancelRef.current.cancelled = true; setScanningAll(false); }}>
+              {scanningAll && (
+                <button className="btn btn-secondary" onClick={() => { cancelRef.current.cancelled = true; setScanningAll(false); localStorage.removeItem('ph_scan_active'); }}>
                   ⏹ Stop
                 </button>
-              ) : (
-                <button className="btn btn-primary" onClick={scanAll} disabled={!unscannedCount}>
-                  ⚡ Scan Unscanned ({unscannedCount})
-                </button>
               )}
+              <button className="btn btn-primary" onClick={scanAll} disabled={scanningAll || !unscannedCount}>
+                {unscannedCount ? `▶ Resume Scan (${unscannedCount} left)` : '✅ All Scanned'}
+              </button>
             </>
           )}
           <button className="btn btn-secondary" onClick={() => fileInputRef.current?.click()}>
@@ -541,10 +554,17 @@ export default function SignalWatchPage({ onNavigate, icp }) {
           </div>
         )}
 
+        {!scanningAll && isResuming && (
+          <div className="alert alert-info" style={{ marginBottom: 16 }}>
+            <span>▶</span>
+            <span><strong>{scanned} of {companies.length} already scanned</strong> — click Resume Scan to continue from where you left off. Already-scanned companies will not be re-scanned.</span>
+          </div>
+        )}
+
         {scanningAll && (
           <div style={{ marginBottom: 16 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4, fontSize: 12, color: 'var(--text-muted)' }}>
-              <span>Scanning… {scanProgress.done} of {scanProgress.total}</span>
+              <span>Scanning… {scanned} of {companies.length} total ({scanProgress.done} this session)</span>
               <span>{pct}%</span>
             </div>
             <div className="progress-bar-wrap"><div className="progress-bar" style={{ width: `${pct}%` }} /></div>
