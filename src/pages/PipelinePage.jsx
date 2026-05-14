@@ -204,7 +204,17 @@ export default function PipelinePage() {
                             {[1,2,3,4,5].map(n => {
                               const t = touchMap[n];
                               const cls = !t ? '' : t.status === 'sent' ? 'sent' : t.status === 'responded' ? 'responded' : t.status === 'skipped' ? 'skipped' : t.status === 'ready' ? 'ready' : n === nextTouchNum ? 'ready' : '';
-                              return <div key={n} className={`touch-pill${cls ? ' ' + cls : ''}`} title={`${TOUCH_LABELS[n]?.label}${t?.status === 'ready' ? ' · Draft saved' : ''}`}>{n}</div>;
+                              return (
+                                <div
+                                  key={n}
+                                  className={`touch-pill${cls ? ' ' + cls : ''}`}
+                                  title={`${TOUCH_LABELS[n]?.label}${t?.status === 'ready' ? ' · Draft saved — click to edit' : ' · Click to draft'}`}
+                                  style={{ cursor: 'pointer' }}
+                                  onClick={() => setDraftModal({ entry, company, touchNumber: n, touchType: TOUCH_LABELS[n]?.type || 'email', contacts: company.contacts || [], existingTouch: touchMap[n] || null, t1Subject: touchMap[1]?.subject_line || null })}
+                                >
+                                  {n}
+                                </div>
+                              );
                             })}
                           </div>
                         </td>
@@ -227,14 +237,6 @@ export default function PipelinePage() {
                         </td>
                         <td>
                           <div style={{ display: 'flex', gap: 4 }}>
-                            {nextTouchNum && entry.status === 'active' && (
-                              <button
-                                className={`btn btn-xs ${nextExistingTouch?.status === 'ready' ? 'btn-secondary' : 'btn-primary'}`}
-                                onClick={() => setDraftModal({ entry, company, touchNumber: nextTouchNum, touchType: TOUCH_LABELS[nextTouchNum]?.type || 'email', contacts: company.contacts || [], existingTouch: nextExistingTouch || null })}
-                              >
-                                {nextExistingTouch?.status === 'ready' ? '✏️ Edit T' + nextTouchNum : 'Draft T' + nextTouchNum}
-                              </button>
-                            )}
                             <button
                               className="btn btn-secondary btn-xs"
                               onClick={() => setResponseModal({ entry, company })}
@@ -263,6 +265,7 @@ export default function PipelinePage() {
         <EmailDraftModal
           {...draftModal}
           onClose={() => setDraftModal(null)}
+          onSave={() => load()}
           onMarkSent={(touch) => { markTouchSent(touch); setDraftModal(null); }}
         />
       )}

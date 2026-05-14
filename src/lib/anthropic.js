@@ -56,7 +56,23 @@ CRITICAL: JSON array only. No markdown.`;
 
 function buildDeepSystem(icp) {
   const profile = buildIcpProfile(icp);
-  return `B2B sales intelligence analyst. Search web for very recent news about this company.
+  return `B2B sales intelligence analyst. Search the web AND social media for very recent signals about this company.
+
+Sources to check:
+- LinkedIn: company page posts, executive posts, job postings, follower growth
+- Twitter/X: company and executive account posts, mentions
+- News: press releases, TechCrunch, Forbes, local business press
+- Job boards: Greenhouse, Lever, LinkedIn Jobs — rapid hiring signals brand/marketing need
+
+Trigger categories to surface:
+- leadership: new CEO/CMO/CCO/VP Marketing hired or departed
+- funding: seed, Series A/B/C/D, acquisition, merger
+- expansion: new office, new market, headcount growth
+- product: launch, rebrand, major update, new vertical
+- hiring: open brand/marketing/comms roles — strong signal they need help
+- pain: layoffs, restructuring, missed targets, negative press
+- social: exec posts about brand challenges, growth goals, or culture shifts
+
 ${profile}
 Return ONLY valid JSON object, no markdown:
 {"companyName":"str","website":"https://domain.com or null","scanDate":"today","overallScore":1-10,"icpScore":1-10,"icpReason":"str","icpTier":"str","fundingStage":"Seed|Series A|Series B|Series C|Series D+|Unknown","employeeCountNum":integer_or_null,"summary":"2-3 sentences","triggers":[{"category":"str","headline":"str","detail":"str","urgency":"str","source":"str","date":"str"}],"recommendedAngle":"str","contactAngles":[{"name":"str","title":"str","angle":"str"}],"lat":number_or_null,"lng":number_or_null,"noNewsFound":false}
@@ -166,12 +182,18 @@ export async function weeklyRescanBatch(companies, icp = DEFAULT_ICP) {
 }
 
 export async function scanDeepDive(company, icp = DEFAULT_ICP) {
-  const contactStr = (company.contacts || [])
-    .map(ct => [ct.name, ct.title].filter(Boolean).join(' / '))
+  const contacts = company.contacts || [];
+  const contactStr = contacts
+    .map(ct => {
+      const parts = [ct.name, ct.title].filter(Boolean).join(' / ');
+      return ct.linkedin ? `${parts} (${ct.linkedin})` : parts;
+    })
     .filter(Boolean).join('; ');
 
+  const contactNames = contacts.map(ct => ct.name).filter(Boolean);
+
   const websiteKnown = !!company.website;
-  const query = `${company.name}${company.hq ? ` ${company.hq}` : ''} recent news funding hiring 2025`;
+  const query = `${company.name}${company.hq ? ` ${company.hq}` : ''} news funding hiring LinkedIn 2025`;
 
   const data = await withTimeout(
     callClaude({
@@ -181,7 +203,7 @@ export async function scanDeepDive(company, icp = DEFAULT_ICP) {
       tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 2 }],
       messages: [{
         role: 'user',
-        content: `Search: "${query}". Find up to 3 recent (last 90 days) trigger events for ${company.name}${company.website ? ` (${company.website})` : ''}: funding, exec changes, product launches, expansions, layoffs. Do 1-2 searches max.${!websiteKnown ? ' Also find their website.' : ''} Return JSON only.${contactStr ? ` Contacts: ${contactStr}.` : ''}`,
+        content: `Search for recent signals about ${company.name}${company.website ? ` (${company.website})` : ''}. Check: company news, LinkedIn company page, Twitter/X, job boards (brand/marketing/comms roles).${contactNames.length ? ` Also search for recent LinkedIn and Twitter/X posts by these specific contacts: ${contactNames.join(', ')} — look for posts about growth, brand, team changes, or challenges.` : ''} Find up to 3 trigger events from the last 90 days. Do 1-2 searches max.${!websiteKnown ? ' Also find their website.' : ''} Return JSON only.${contactStr ? ` Contacts: ${contactStr}.` : ''}`,
       }],
     }),
     TIMEOUT_MS
@@ -230,20 +252,20 @@ Subject line: Short, specific, references the trigger. Not generic.
 
 Return JSON: {"subject":"str","body":"str"}. Body uses \\n for line breaks between paragraphs. No markdown in body.`,
 
-  2: (company, contact) => `Write a Touch 2 follow-up email for Part Human. 7-day follow-up to ${contact.name}, ${contact.title} at ${company.name}.
+  2: (company, contact, angle, t1Subject) => `Write a Touch 2 follow-up email for Part Human. 7-day follow-up to ${contact.name}, ${contact.title} at ${company.name}.
 ${EMAIL_RULES}
 RULES:
-- Reply on the same thread. Subject line: "Re: [original subject]"
+- Reply on the same thread. Subject line: "Re: ${t1Subject || '[original subject]'}"
 - 3-4 sentences max. That's it.
 - Reference the original message naturally.
 - One soft CTA, same ask as before (20-min call).
 - No new pitch. Just a gentle nudge.
 
-Return JSON: {"subject":"Re: [original subject]","body":"str"}. Body uses \\n for line breaks.`,
+Return JSON: {"subject":"Re: ${t1Subject || '[original subject]'}","body":"str"}. Body uses \\n for line breaks.`,
 
-  3: (company, contact) => `Write two LinkedIn messages for Part Human reaching out to ${contact.name}, ${contact.title} at ${company.name}.
+  3: (company, contact, angle, t1Subject) => `Write two LinkedIn messages for Part Human reaching out to ${contact.name}, ${contact.title} at ${company.name}.
 
-Context: ${company.summary || ''}
+Context: ${company.summary || ''}${t1Subject ? `\nPrevious outreach subject: "${t1Subject}"` : ''}
 ${EMAIL_RULES}
 Message 1 — CONNECTION REQUEST NOTE (300 characters max):
 - No pitch. Just context: who you are and why you're connecting.
@@ -258,9 +280,9 @@ Message 2 — POST-ACCEPTANCE DM (after they accept):
 
 Return JSON: {"connection_note":"str","acceptance_dm":"str"}`,
 
-  4: (company, contact) => `Write a Touch 4 goodwill email for Part Human to ${contact.name}, ${contact.title} at ${company.name}. Day 21. No hard ask.
+  4: (company, contact, angle, t1Subject) => `Write a Touch 4 goodwill email for Part Human to ${contact.name}, ${contact.title} at ${company.name}. Day 21. No hard ask.
 
-Context: ${company.summary || ''}
+Context: ${company.summary || ''}${t1Subject ? `\nThis is part of an outreach sequence. Original subject: "${t1Subject}". They have not replied.` : ''}
 ${EMAIL_RULES}
 RULES:
 - Share a relevant market observation or competitor move that would genuinely interest them.
@@ -271,8 +293,8 @@ RULES:
 
 Return JSON: {"subject":"str","body":"str"}. Body uses \\n for line breaks.`,
 
-  5: (company, contact) => `Write a Touch 5 close-the-loop email for Part Human to ${contact.name}, ${contact.title} at ${company.name}. Day 28. Final touch.
-${EMAIL_RULES}
+  5: (company, contact, angle, t1Subject) => `Write a Touch 5 close-the-loop email for Part Human to ${contact.name}, ${contact.title} at ${company.name}. Day 28. Final touch.
+${t1Subject ? `Original outreach subject: "${t1Subject}". They have not replied to any of the previous touches.\n` : ''}${EMAIL_RULES}
 RULES:
 - Acknowledge the silence gracefully. No guilt, no passive aggression.
 - Leave the door completely open.
@@ -283,7 +305,7 @@ RULES:
 Return JSON: {"subject":"str","body":"str"}. Body uses \\n for line breaks.`,
 };
 
-export async function generateEmailDraft(touchNumber, company, contact, angle, icp = DEFAULT_ICP) {
+export async function generateEmailDraft(touchNumber, company, contact, angle, icp = DEFAULT_ICP, t1Subject = null) {
   const promptFn = TOUCH_PROMPTS[touchNumber];
   if (!promptFn) throw new Error(`No prompt for touch ${touchNumber}`);
 
@@ -295,14 +317,17 @@ export async function generateEmailDraft(touchNumber, company, contact, angle, i
       model: 'claude-sonnet-4-6',
       max_tokens: 1000,
       system: systemContext,
-      messages: [{ role: 'user', content: promptFn(company, contact, angle) }],
+      messages: [{ role: 'user', content: promptFn(company, contact, angle, t1Subject) }],
     }),
     TIMEOUT_MS
   );
 
   const text = data.content?.find(b => b.type === 'text')?.text || '';
   const cleaned = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
-  const result = JSON.parse(cleaned);
+  const s = cleaned.indexOf('{');
+  const e = cleaned.lastIndexOf('}');
+  if (s === -1 || e === -1) throw new Error('No JSON found in draft response');
+  const result = JSON.parse(cleaned.slice(s, e + 1));
   // Strip any em dashes that slipped through
   if (result.body) result.body = result.body.replace(/—/g, ',');
   if (result.subject) result.subject = result.subject.replace(/—/g, ',');

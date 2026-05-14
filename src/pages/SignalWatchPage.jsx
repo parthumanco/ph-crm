@@ -10,6 +10,7 @@ const TRIGGER_CATEGORIES = [
   { id: 'product',    label: 'Product Launch',     color: '#8b5cf6' },
   { id: 'pain',       label: 'Challenges / Pain',  color: '#ef4444' },
   { id: 'hiring',     label: 'Hiring Signals',     color: '#06b6d4' },
+  { id: 'social',     label: 'Social Signal',      color: '#ec4899' },
 ];
 
 const catColor   = id => TRIGGER_CATEGORIES.find(c => c.id === id)?.color || '#94a3b8';
@@ -32,6 +33,7 @@ function haversineDistance(lat1, lng1, lat2, lng2) {
 
 const BATCH_SIZE = 5;
 const SCAN_DELAY = 3000;
+const DEEP_SCAN_DELAY = 6000;
 
 function parseCsvLine(line) {
   const vals = [];
@@ -190,28 +192,67 @@ export default function SignalWatchPage({ onNavigate, icp }) {
         return;
       }
 
-      // Fetch ALL existing names from DB (paginated past 1000-row limit)
+      // Deduplicate within the CSV: merge contacts for same company name
+      const mergedMap = new Map();
+      for (const c of allParsed) {
+        const key = c.name.toLowerCase().trim();
+        if (mergedMap.has(key)) {
+          const existing = mergedMap.get(key);
+          // Merge contacts, skip duplicates by name
+          const existingNames = new Set(existing.contacts.map(ct => ct.name.toLowerCase()));
+          for (const ct of c.contacts) {
+            if (ct.name && !existingNames.has(ct.name.toLowerCase())) {
+              existing.contacts.push(ct);
+              existingNames.add(ct.name.toLowerCase());
+            }
+          }
+          // Fill in missing fields from later rows
+          if (!existing.website && c.website) existing.website = c.website;
+          if (!existing.hq && c.hq) existing.hq = c.hq;
+        } else {
+          mergedMap.set(key, { ...c, contacts: [...c.contacts] });
+        }
+      }
+      const deduped = Array.from(mergedMap.values());
+
+      // Fetch ALL existing companies from DB with their contacts
       let existingRows = [];
       let from = 0;
       while (true) {
-        const { data, error } = await supabase.from('companies').select('id, name').range(from, from + 999);
+        const { data, error } = await supabase.from('companies').select('id, name, contacts').range(from, from + 999);
         if (error || !data?.length) break;
         existingRows = existingRows.concat(data);
         if (data.length < 1000) break;
         from += 1000;
       }
-      const existingMap = new Map(existingRows.map(c => [c.name.toLowerCase().trim(), c.id]));
+      const existingMap = new Map(existingRows.map(c => [c.name.toLowerCase().trim(), c]));
 
-      const toInsert = allParsed.filter(c => !existingMap.has(c.name.toLowerCase().trim()));
-      const toMaybeReset = allParsed.filter(c => existingMap.has(c.name.toLowerCase().trim()));
+      const toInsert = deduped.filter(c => !existingMap.has(c.name.toLowerCase().trim()));
+      const toMergeContacts = deduped.filter(c => existingMap.has(c.name.toLowerCase().trim()));
 
+      // Always merge new contacts into existing companies
+      let mergedContactCount = 0;
+      for (const c of toMergeContacts) {
+        const existing = existingMap.get(c.name.toLowerCase().trim());
+        const existingContacts = existing.contacts || [];
+        const existingNames = new Set(existingContacts.map(ct => ct.name?.toLowerCase()));
+        const newContacts = c.contacts.filter(ct => ct.name && !existingNames.has(ct.name.toLowerCase()));
+        if (newContacts.length > 0) {
+          const merged = [...existingContacts, ...newContacts];
+          await supabase.from('companies').update({ contacts: merged }).eq('id', existing.id);
+          setCompanies(prev => prev.map(co => co.id === existing.id ? { ...co, contacts: merged } : co));
+          mergedContactCount += newContacts.length;
+        }
+      }
+
+      // Ask about resetting scan data for existing companies
       let resetCount = 0;
-      if (toMaybeReset.length > 0) {
+      if (toMergeContacts.length > 0) {
         const shouldReset = window.confirm(
-          `${toMaybeReset.length} compan${toMaybeReset.length === 1 ? 'y' : 'ies'} already exist.\n\nClick OK to reset their scan data so they'll be re-evaluated.\nClick Cancel to skip them and only import the ${toInsert.length} new ones.`
+          `${toMergeContacts.length} compan${toMergeContacts.length === 1 ? 'y' : 'ies'} already exist${mergedContactCount > 0 ? ` (${mergedContactCount} new contact${mergedContactCount === 1 ? '' : 's'} merged)` : ''}.\n\nClick OK to reset their scan data so they'll be re-evaluated.\nClick Cancel to keep existing scan data.`
         );
         if (shouldReset) {
-          const resetIds = toMaybeReset.map(c => existingMap.get(c.name.toLowerCase().trim()));
+          const resetIds = toMergeContacts.map(c => existingMap.get(c.name.toLowerCase().trim()).id);
           await supabase.from('companies').update({
             scan_date: null, icp_score: null, overall_score: null, icp_tier: null,
             funding_stage: null, employee_count_num: null, summary: null,
@@ -226,7 +267,7 @@ export default function SignalWatchPage({ onNavigate, icp }) {
         }
       }
 
-      if (!toInsert.length && resetCount === 0) return;
+      if (!toInsert.length && resetCount === 0 && mergedContactCount === 0) return;
 
       let insertedCount = 0;
       if (toInsert.length) {
@@ -246,6 +287,7 @@ export default function SignalWatchPage({ onNavigate, icp }) {
 
       const parts = [];
       if (insertedCount) parts.push(`${insertedCount} new compan${insertedCount === 1 ? 'y' : 'ies'} imported`);
+      if (mergedContactCount) parts.push(`${mergedContactCount} new contact${mergedContactCount === 1 ? '' : 's'} merged into existing companies`);
       if (resetCount) parts.push(`${resetCount} reset for re-evaluation`);
       alert(parts.join('. ') + '.');
     } catch (e) {
@@ -371,15 +413,14 @@ export default function SignalWatchPage({ onNavigate, icp }) {
     localStorage.removeItem('ph_scan_active');
     setScanningAll(false);
 
-    // Auto deep-scan companies scoring 7+ that haven't been deep-scanned yet
+    // Auto deep-scan all companies that haven't been deep-scanned yet, highest score first
     if (!cancelRef.current.cancelled) {
-      const highScorers = companiesRef.current.filter(c =>
-        c.scan_date && !c.deep_scanned && !c._error && c.id &&
-        ((c.overall_score || 0) >= 7 || (c.icp_score || 0) >= 7)
-      );
-      if (highScorers.length > 0) {
-        setAutoDeepQueue(highScorers);
-        setAutoDeepProgress({ done: 0, total: highScorers.length });
+      const toDeep = companiesRef.current
+        .filter(c => c.scan_date && !c.deep_scanned && !c._error && c.id)
+        .sort((a, b) => Math.max(b.overall_score || 0, b.icp_score || 0) - Math.max(a.overall_score || 0, a.icp_score || 0));
+      if (toDeep.length > 0) {
+        setAutoDeepQueue(toDeep);
+        setAutoDeepProgress({ done: 0, total: toDeep.length });
       }
     }
   }, [companies, saveScanResult, icp]);
@@ -406,6 +447,9 @@ export default function SignalWatchPage({ onNavigate, icp }) {
         await scanOneRef.current(autoDeepQueue[idx]);
         idx++;
         setAutoDeepProgress(p => ({ ...p, done: idx }));
+        if (idx < autoDeepQueue.length && !cancelRef.current.cancelled) {
+          await new Promise(r => setTimeout(r, DEEP_SCAN_DELAY));
+        }
       }
       autoDeepRunning.current = false;
       setAutoDeepQueue([]);
@@ -748,13 +792,28 @@ export default function SignalWatchPage({ onNavigate, icp }) {
                 <option value="distance">Sort: Distance</option>
                 <option value="name">Sort: Name</option>
               </select>
-              {scanningAll && (
-                <button className="btn btn-secondary" onClick={() => { cancelRef.current.cancelled = true; setScanningAll(false); localStorage.removeItem('ph_scan_active'); }}>
+              {(scanningAll || autoDeepQueue.length > 0) && (
+                <button className="btn btn-secondary" onClick={() => { cancelRef.current.cancelled = true; setScanningAll(false); setAutoDeepQueue([]); autoDeepRunning.current = false; localStorage.removeItem('ph_scan_active'); }}>
                   ⏹ Stop
                 </button>
               )}
               <button className="btn btn-primary" onClick={scanAll} disabled={scanningAll || !unscannedCount}>
                 {unscannedCount ? `▶ Resume Scan (${unscannedCount} left)` : '✅ All Scanned'}
+              </button>
+              <button
+                className="btn btn-secondary"
+                disabled={autoDeepQueue.length > 0 || scanningAll}
+                onClick={() => {
+                  const toDeep = companiesRef.current
+                    .filter(c => c.scan_date && !c.deep_scanned && !c._error && c.id)
+                    .sort((a, b) => Math.max(b.overall_score || 0, b.icp_score || 0) - Math.max(a.overall_score || 0, a.icp_score || 0));
+                  if (!toDeep.length) { alert('All companies have already been deep scanned.'); return; }
+                  cancelRef.current = { cancelled: false };
+                  setAutoDeepQueue(toDeep);
+                  setAutoDeepProgress({ done: 0, total: toDeep.length });
+                }}
+              >
+                🔍 Deep Scan All
               </button>
             </>
           )}
@@ -817,7 +876,7 @@ export default function SignalWatchPage({ onNavigate, icp }) {
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <span className="spinner" />
               <span style={{ fontSize: 13, fontWeight: 600, color: '#854d0e' }}>
-                Auto deep scanning {autoDeepProgress.total} high-scoring companies (SIG/ICP 7+)… {autoDeepProgress.done}/{autoDeepProgress.total}
+                Auto deep scanning all companies, highest score first… {autoDeepProgress.done}/{autoDeepProgress.total}
               </span>
             </div>
             <button className="btn btn-ghost btn-xs" style={{ color: '#854d0e' }} onClick={() => { cancelRef.current.cancelled = true; setAutoDeepQueue([]); autoDeepRunning.current = false; }}>

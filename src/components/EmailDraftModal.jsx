@@ -10,7 +10,7 @@ const TOUCH_META = {
   5: { label: 'Touch 5 — Close the Loop',   type: 'email',    desc: 'Graceful final note, leave door open, Day 28.' },
 };
 
-export default function EmailDraftModal({ entry, company, touchNumber, contacts, existingTouch, onClose, onMarkSent }) {
+export default function EmailDraftModal({ entry, company, touchNumber, contacts, existingTouch, onClose, onMarkSent, onSave, t1Subject }) {
   const meta = TOUCH_META[touchNumber] || {};
   const [selectedContact, setSelectedContact] = useState(0);
   const [draft, setDraft]           = useState(null);
@@ -24,9 +24,11 @@ export default function EmailDraftModal({ entry, company, touchNumber, contacts,
 
   const contact = contacts[selectedContact] || { name: 'the decision-maker', title: '', email: '' };
 
-  // Load existing saved draft on open
+  const isSent = existingTouch?.status === 'sent';
+
+  // Load existing saved draft on open (including sent)
   useEffect(() => {
-    if (existingTouch?.draft_content && existingTouch.status !== 'sent') {
+    if (existingTouch?.draft_content) {
       if (existingTouch.touch_type === 'linkedin') {
         const parts = existingTouch.draft_content.split('\n\n---\nPOST-ACCEPTANCE DM:\n');
         const connNote = parts[0]?.replace('CONNECTION NOTE:\n', '') || '';
@@ -47,7 +49,7 @@ export default function EmailDraftModal({ entry, company, touchNumber, contacts,
       if (touchNumber === 3) {
         result = await generateLinkedInDrafts(company, contact);
       } else {
-        result = await generateEmailDraft(touchNumber, company, contact, angle);
+        result = await generateEmailDraft(touchNumber, company, contact, angle, undefined, t1Subject);
       }
       setDraft(result);
       setEditedSubject(result.subject || '');
@@ -96,6 +98,7 @@ export default function EmailDraftModal({ entry, company, touchNumber, contacts,
       }
       setSaveConfirmed(true);
       setTimeout(() => setSaveConfirmed(false), 2000);
+      onSave?.();
     } catch (e) {
       alert('Error saving: ' + e.message);
     } finally {
@@ -148,9 +151,18 @@ export default function EmailDraftModal({ entry, company, touchNumber, contacts,
             </div>
           )}
 
-          <button className="btn btn-primary" onClick={generate} disabled={generating} style={{ marginBottom: 16 }}>
-            {generating ? <><span className="spinner" /> Generating…</> : hasDraft ? '🔄 Regenerate' : '✨ Generate Draft'}
-          </button>
+          {isSent && (
+            <div className="alert alert-success" style={{ marginBottom: 12 }}>
+              <span>✅</span>
+              <span><strong>Sent{existingTouch?.sent_date ? ` on ${existingTouch.sent_date}` : ''}</strong> — this touch is locked for reference.</span>
+            </div>
+          )}
+
+          {!isSent && (
+            <button className="btn btn-primary" onClick={generate} disabled={generating} style={{ marginBottom: 16 }}>
+              {generating ? <><span className="spinner" /> Generating…</> : hasDraft ? '🔄 Regenerate' : '✨ Generate Draft'}
+            </button>
+          )}
 
           {hasDraft && (
             <>
@@ -166,8 +178,9 @@ export default function EmailDraftModal({ entry, company, touchNumber, contacts,
                     <textarea
                       rows={3}
                       value={draft.connection_note}
-                      onChange={e => setDraft(d => ({ ...d, connection_note: e.target.value }))}
-                      style={{ fontFamily: 'inherit', fontSize: 13, lineHeight: 1.6 }}
+                      onChange={e => !isSent && setDraft(d => ({ ...d, connection_note: e.target.value }))}
+                      readOnly={isSent}
+                      style={{ fontFamily: 'inherit', fontSize: 13, lineHeight: 1.6, background: isSent ? 'var(--surface)' : undefined }}
                     />
                     <p style={{ fontSize: 11, color: (draft.connection_note || '').length > 300 ? 'var(--red)' : 'var(--text-muted)', marginTop: 4 }}>
                       {(draft.connection_note || '').length} / 300 characters
@@ -181,8 +194,9 @@ export default function EmailDraftModal({ entry, company, touchNumber, contacts,
                     <textarea
                       rows={5}
                       value={draft.acceptance_dm}
-                      onChange={e => setDraft(d => ({ ...d, acceptance_dm: e.target.value }))}
-                      style={{ fontFamily: 'inherit', fontSize: 13, lineHeight: 1.6 }}
+                      onChange={e => !isSent && setDraft(d => ({ ...d, acceptance_dm: e.target.value }))}
+                      readOnly={isSent}
+                      style={{ fontFamily: 'inherit', fontSize: 13, lineHeight: 1.6, background: isSent ? 'var(--surface)' : undefined }}
                     />
                   </div>
                 </>
@@ -192,7 +206,7 @@ export default function EmailDraftModal({ entry, company, touchNumber, contacts,
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
                       <label style={{ marginBottom: 0 }}>Subject Line</label>
                     </div>
-                    <input type="text" value={editedSubject} onChange={e => setEditedSubject(e.target.value)} style={{ fontWeight: 600 }} />
+                    <input type="text" value={editedSubject} onChange={e => !isSent && setEditedSubject(e.target.value)} readOnly={isSent} style={{ fontWeight: 600, background: isSent ? 'var(--surface)' : undefined }} />
                   </div>
                   <div className="form-row">
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
@@ -204,8 +218,9 @@ export default function EmailDraftModal({ entry, company, touchNumber, contacts,
                     <textarea
                       rows={14}
                       value={editedBody}
-                      onChange={e => setEditedBody(e.target.value)}
-                      style={{ fontFamily: 'inherit', fontSize: 13, lineHeight: 1.6 }}
+                      onChange={e => !isSent && setEditedBody(e.target.value)}
+                      readOnly={isSent}
+                      style={{ fontFamily: 'inherit', fontSize: 13, lineHeight: 1.6, background: isSent ? 'var(--surface)' : undefined }}
                     />
                   </div>
                 </>
@@ -224,13 +239,28 @@ export default function EmailDraftModal({ entry, company, touchNumber, contacts,
 
         <div className="modal-footer">
           <button className="btn btn-secondary" onClick={onClose}>Close</button>
-          {hasDraft && (
+          {hasDraft && !isSent && (
             <button className="btn btn-secondary" onClick={saveDraft} disabled={saving}>
               {saving ? 'Saving…' : saveConfirmed ? '✅ Saved!' : '💾 Save Draft'}
             </button>
           )}
-          {hasDraft && (
+          {hasDraft && !isSent && (
             <button className="btn btn-green" onClick={markSent}>✅ Mark as Sent</button>
+          )}
+          {isSent && (
+            <button className="btn btn-secondary" onClick={async () => {
+              if (!existingTouch?.id) return;
+              await supabase.from('touches').update({ status: 'ready', sent_date: null, updated_at: new Date().toISOString() }).eq('id', existingTouch.id);
+              // Roll back pipeline touch counter if needed
+              const entry2 = entry;
+              if (entry2 && touchNumber >= entry2.current_touch) {
+                await supabase.from('pipeline_entries').update({ current_touch: Math.max(touchNumber - 1, 0), updated_at: new Date().toISOString() }).eq('id', entry2.id);
+              }
+              onSave?.();
+              onClose();
+            }}>
+              ↩ Undo Sent
+            </button>
           )}
         </div>
       </div>
