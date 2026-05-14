@@ -46,8 +46,9 @@ function buildBatchSystem(icp) {
 ${profile}
 Return ONLY a JSON array, same order as input. Short strings only.
 Each object schema:
-{"companyName":"str","overallScore":1-10,"icpScore":1-10,"icpReason":"max 15 words","icpTier":"Ambitious Scale-Up|Category Challenger|Innovation Team","fundingStage":"Seed|Series A|Series B|Series C|Series D+|Unknown","employeeCountNum":integer_or_null,"summary":"max 25 words","triggers":[{"category":"leadership|funding|expansion|product|pain|hiring","headline":"max 8 words","detail":"max 20 words","urgency":"high|medium|low","source":"str","date":"str"}],"recommendedAngle":"max 30 words","contactAngles":[{"name":"str","title":"str","angle":"max 30 words"}],"lat":number_or_null,"lng":number_or_null,"noNewsFound":false}
+{"companyName":"str","website":"https://domain.com or null — only include if you are confident this is correct, never guess","overallScore":1-10,"icpScore":1-10,"icpReason":"max 15 words","icpTier":"Ambitious Scale-Up|Category Challenger|Innovation Team","fundingStage":"Seed|Series A|Series B|Series C|Series D+|Unknown","employeeCountNum":integer_or_null,"summary":"max 25 words","triggers":[{"category":"leadership|funding|expansion|product|pain|hiring","headline":"max 8 words","detail":"max 20 words","urgency":"high|medium|low","source":"str","date":"str"}],"recommendedAngle":"max 30 words","contactAngles":[{"name":"str","title":"str","angle":"max 30 words"}],"lat":number_or_null,"lng":number_or_null,"noNewsFound":false}
 For lat/lng: return the approximate latitude and longitude of the company headquarters city. If unknown, return null.
+For website: return the company's primary domain if you know it with confidence. Return null if unsure — do not guess.
 If contacts listed, populate contactAngles per contact tailored to their role.
 If unknown company: noNewsFound:true, triggers:[], overallScore:3, icpScore:3, lat:null, lng:null.
 CRITICAL: JSON array only. No markdown.`;
@@ -58,8 +59,9 @@ function buildDeepSystem(icp) {
   return `B2B sales intelligence analyst. Search web for very recent news about this company.
 ${profile}
 Return ONLY valid JSON object, no markdown:
-{"companyName":"str","scanDate":"today","overallScore":1-10,"icpScore":1-10,"icpReason":"str","icpTier":"str","fundingStage":"Seed|Series A|Series B|Series C|Series D+|Unknown","employeeCountNum":integer_or_null,"summary":"2-3 sentences","triggers":[{"category":"str","headline":"str","detail":"str","urgency":"str","source":"str","date":"str"}],"recommendedAngle":"str","contactAngles":[{"name":"str","title":"str","angle":"str"}],"lat":number_or_null,"lng":number_or_null,"noNewsFound":false}
-For lat/lng: return the approximate latitude and longitude of the company headquarters city.`;
+{"companyName":"str","website":"https://domain.com or null","scanDate":"today","overallScore":1-10,"icpScore":1-10,"icpReason":"str","icpTier":"str","fundingStage":"Seed|Series A|Series B|Series C|Series D+|Unknown","employeeCountNum":integer_or_null,"summary":"2-3 sentences","triggers":[{"category":"str","headline":"str","detail":"str","urgency":"str","source":"str","date":"str"}],"recommendedAngle":"str","contactAngles":[{"name":"str","title":"str","angle":"str"}],"lat":number_or_null,"lng":number_or_null,"noNewsFound":false}
+For lat/lng: return the approximate latitude and longitude of the company headquarters city.
+For website: search for and return the company's actual primary website URL. Verify it exists.`;
 }
 
 export async function scanBatch(companies, icp = DEFAULT_ICP) {
@@ -73,7 +75,7 @@ export async function scanBatch(companies, icp = DEFAULT_ICP) {
   const data = await withTimeout(
     callClaude({
       model: 'claude-haiku-4-5-20251001',
-      max_tokens: 6000,
+      max_tokens: 10000,
       system: buildBatchSystem(icp),
       messages: [{ role: 'user', content: `Analyze for B2B trigger events:\n${list}` }],
     }),
@@ -81,8 +83,86 @@ export async function scanBatch(companies, icp = DEFAULT_ICP) {
   );
 
   const text = data.content?.find(b => b.type === 'text')?.text || '';
-  const cleaned = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
-  return JSON.parse(cleaned);
+  const fenceStripped = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
+  const arrStart = fenceStripped.indexOf('[');
+  const arrEnd   = fenceStripped.lastIndexOf(']');
+  if (arrStart === -1) throw new Error('No JSON array found in batch scan response');
+  const slice = arrEnd !== -1 ? fenceStripped.slice(arrStart, arrEnd + 1) : fenceStripped.slice(arrStart);
+  try {
+    return JSON.parse(slice);
+  } catch {
+    // Response was truncated or contains a bad element — recover complete top-level objects
+    const recovered = [];
+    let depth = 0, objStart = -1;
+    for (let i = 0; i < slice.length; i++) {
+      const ch = slice[i];
+      if (ch === '{') { if (depth === 0) objStart = i; depth++; }
+      else if (ch === '}') {
+        depth--;
+        if (depth === 0 && objStart !== -1) {
+          try { recovered.push(JSON.parse(slice.slice(objStart, i + 1))); } catch { /* skip */ }
+          objStart = -1;
+        }
+      }
+    }
+    if (recovered.length === 0) throw new Error('Batch scan returned unparseable JSON');
+    return recovered;
+  }
+}
+
+function buildWeeklySystem(icp) {
+  const profile = buildIcpProfile(icp);
+  return `Sales intelligence analyst doing a weekly refresh scan for Part Human.
+${profile}
+Focus: what has CHANGED or is NEW in the last 30 days — leadership moves, funding rounds, product launches, layoffs, expansions, key hires. Adjust scores up if new positive triggers exist.
+Return ONLY a JSON array, same order as input. Short strings only.
+Each object schema:
+{"companyName":"str","overallScore":1-10,"icpScore":1-10,"scoreChanged":true|false,"triggers":[{"category":"leadership|funding|expansion|product|pain|hiring","headline":"max 8 words","detail":"max 20 words","urgency":"high|medium|low","source":"str","date":"str"}],"recommendedAngle":"max 30 words","noNewsFound":false}
+scoreChanged: true only if you are aware of meaningful new developments in the last 30 days that would change outreach priority.
+If nothing new: scoreChanged:false, triggers:[], keep scores similar to before.
+CRITICAL: JSON array only. No markdown.`;
+}
+
+export async function weeklyRescanBatch(companies, icp = DEFAULT_ICP) {
+  const list = companies.map((c, i) =>
+    `${i + 1}. ${c.name}${c.website ? ` (${c.website})` : ''}${c.hq ? ` — HQ: ${c.hq}` : ''} [current SIG: ${c.overall_score || '?'}, ICP: ${c.icp_score || '?'}]`
+  ).join('\n');
+
+  const data = await withTimeout(
+    callClaude({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 8000,
+      system: buildWeeklySystem(icp),
+      messages: [{ role: 'user', content: `Weekly refresh — check for new developments:\n${list}` }],
+    }),
+    TIMEOUT_MS
+  );
+
+  const text = data.content?.find(b => b.type === 'text')?.text || '';
+  const fenceStripped = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
+  const arrStart = fenceStripped.indexOf('[');
+  const arrEnd   = fenceStripped.lastIndexOf(']');
+  if (arrStart === -1) throw new Error('No JSON array found in weekly rescan response');
+  const slice = arrEnd !== -1 ? fenceStripped.slice(arrStart, arrEnd + 1) : fenceStripped.slice(arrStart);
+  try {
+    return JSON.parse(slice);
+  } catch {
+    const recovered = [];
+    let depth = 0, objStart = -1;
+    for (let i = 0; i < slice.length; i++) {
+      const ch = slice[i];
+      if (ch === '{') { if (depth === 0) objStart = i; depth++; }
+      else if (ch === '}') {
+        depth--;
+        if (depth === 0 && objStart !== -1) {
+          try { recovered.push(JSON.parse(slice.slice(objStart, i + 1))); } catch { /* skip */ }
+          objStart = -1;
+        }
+      }
+    }
+    if (recovered.length === 0) throw new Error('Weekly rescan returned unparseable JSON');
+    return recovered;
+  }
 }
 
 export async function scanDeepDive(company, icp = DEFAULT_ICP) {
@@ -90,23 +170,37 @@ export async function scanDeepDive(company, icp = DEFAULT_ICP) {
     .map(ct => [ct.name, ct.title].filter(Boolean).join(' / '))
     .filter(Boolean).join('; ');
 
+  const websiteKnown = !!company.website;
+  const query = `${company.name}${company.hq ? ` ${company.hq}` : ''} recent news funding hiring 2025`;
+
   const data = await withTimeout(
     callClaude({
       model: 'claude-sonnet-4-6',
-      max_tokens: 2000,
+      max_tokens: 2500,
       system: buildDeepSystem(icp),
-      tools: [{ type: 'web_search_20250305', name: 'web_search' }],
+      tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 2 }],
       messages: [{
         role: 'user',
-        content: `Search the web for recent (last 60 days) trigger events for: ${company.name}${company.website ? ` (${company.website})` : ''}${company.hq ? `, HQ: ${company.hq}` : ''}${contactStr ? `. Key contacts: ${contactStr}` : ''}. Search for: LinkedIn posts from company leaders, press releases, news articles, funding announcements, executive hires or departures, product launches, layoffs, expansions, or any major company news. Pull actual sources and dates.`,
+        content: `Search: "${query}". Find up to 3 recent (last 90 days) trigger events for ${company.name}${company.website ? ` (${company.website})` : ''}: funding, exec changes, product launches, expansions, layoffs. Do 1-2 searches max.${!websiteKnown ? ' Also find their website.' : ''} Return JSON only.${contactStr ? ` Contacts: ${contactStr}.` : ''}`,
       }],
     }),
     TIMEOUT_MS
   );
 
-  const text = data.content?.find(b => b.type === 'text')?.text || '';
-  const cleaned = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
-  return JSON.parse(cleaned);
+  // Search ALL text blocks from last to first for one containing JSON
+  const textBlocks = (data.content || []).filter(b => b.type === 'text');
+  let jsonObj = null;
+  for (let i = textBlocks.length - 1; i >= 0; i--) {
+    const raw = textBlocks[i]?.text || '';
+    const stripped = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
+    const s = stripped.indexOf('{');
+    const e = stripped.lastIndexOf('}');
+    if (s !== -1 && e !== -1) {
+      try { jsonObj = JSON.parse(stripped.slice(s, e + 1)); break; } catch { /* try next block */ }
+    }
+  }
+  if (!jsonObj) throw new Error('No JSON found in deep scan response');
+  return jsonObj;
 }
 
 // ── Email draft generation ────────────────────────────────────────────────────
@@ -189,15 +283,18 @@ RULES:
 Return JSON: {"subject":"str","body":"str"}. Body uses \\n for line breaks.`,
 };
 
-export async function generateEmailDraft(touchNumber, company, contact, angle) {
+export async function generateEmailDraft(touchNumber, company, contact, angle, icp = DEFAULT_ICP) {
   const promptFn = TOUCH_PROMPTS[touchNumber];
   if (!promptFn) throw new Error(`No prompt for touch ${touchNumber}`);
+
+  const { outreachVoice, aboutCompany } = icp;
+  const systemContext = `You are a copywriter for Part Human. ${aboutCompany ? aboutCompany.split('.')[0] + '.' : 'Brand strategy agency.'} Write in their voice: direct, warm, human, no jargon. Never use em dashes (—). Return only valid JSON as specified.${outreachVoice ? '\n\nVOICE GUIDANCE: ' + outreachVoice : ''}`;
 
   const data = await withTimeout(
     callClaude({
       model: 'claude-sonnet-4-6',
       max_tokens: 1000,
-      system: `You are a copywriter for Part Human, a brand strategy agency. Write in their voice: direct, warm, human, no jargon. Never use em dashes (—). Return only valid JSON as specified.`,
+      system: systemContext,
       messages: [{ role: 'user', content: promptFn(company, contact, angle) }],
     }),
     TIMEOUT_MS
@@ -233,7 +330,7 @@ export async function generateLinkedInDrafts(company, contact) {
 
 // ── Weekly report ─────────────────────────────────────────────────────────────
 
-export async function generateWeeklyPlan(newCompanies, followups) {
+export async function generateWeeklyPlan(newCompanies, followups, icp = DEFAULT_ICP) {
   const prompt = `You are the Part Human AI sales coach. Generate this week's outreach plan summary.
 
 NEW COMPANIES THIS WEEK (Touch 1):

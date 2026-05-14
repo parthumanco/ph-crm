@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import { generateWeeklyPlan, generateEmailDraft } from '../lib/anthropic';
+import { DEFAULT_ICP } from '../lib/settings';
 
 function getMonday(d = new Date()) {
   const day = d.getDay();
@@ -20,7 +21,7 @@ function formatDate(d) {
   return d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
 }
 
-export default function WeeklyReportPage() {
+export default function WeeklyReportPage({ icp = DEFAULT_ICP }) {
   const [entries, setEntries]       = useState([]);
   const [companies, setCompanies]   = useState({});
   const [touches, setTouches]       = useState([]);
@@ -85,7 +86,8 @@ export default function WeeklyReportPage() {
     try {
       const briefing = await generateWeeklyPlan(
         newOutreach.map(({ company }) => ({ name: company.name, recommended_angle: company.recommended_angle, summary: company.summary })),
-        followupsDue.map(({ company, touchNumber }) => ({ companyName: company.name, touchNumber, contactName: (company.contacts || [])[0]?.name }))
+        followupsDue.map(({ company, touchNumber }) => ({ companyName: company.name, touchNumber, contactName: (company.contacts || [])[0]?.name })),
+        icp
       );
       setReport({ briefing, generated: new Date().toISOString() });
     } catch (e) {
@@ -110,7 +112,7 @@ export default function WeeklyReportPage() {
           const result = await generateLinkedInDrafts(item.company, contact);
           setEmailDrafts(d => ({ ...d, [item.key]: { type: 'linkedin', ...result, contact } }));
         } else {
-          const result = await generateEmailDraft(item.touchNumber, item.company, contact, item.company.recommended_angle);
+          const result = await generateEmailDraft(item.touchNumber, item.company, contact, item.company.recommended_angle, icp);
           setEmailDrafts(d => ({ ...d, [item.key]: { type: 'email', ...result, contact } }));
         }
       } catch (e) {

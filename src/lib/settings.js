@@ -55,8 +55,40 @@ export async function loadIcp() {
 }
 
 export async function saveIcp(icp) {
-  await supabase.from('app_settings').upsert(
+  const { error } = await supabase.from('app_settings').upsert(
     { key: 'icp', value: icp, updated_at: new Date().toISOString() },
     { onConflict: 'key' }
   );
+  if (error) throw new Error(error.message);
+}
+
+export async function loadLastWeeklyScan() {
+  try {
+    const { data } = await supabase.from('app_settings').select('value').eq('key', 'last_weekly_scan').single();
+    return data?.value || null;
+  } catch { return null; }
+}
+
+export async function saveLastWeeklyScan() {
+  await supabase.from('app_settings').upsert(
+    { key: 'last_weekly_scan', value: { timestamp: new Date().toISOString(), scanned: 0, changes: [], toDeepScan: [], viewed: false }, updated_at: new Date().toISOString() },
+    { onConflict: 'key' }
+  );
+}
+
+export async function markWeeklyScanViewed() {
+  const { data } = await supabase.from('app_settings').select('value').eq('key', 'last_weekly_scan').single();
+  if (data?.value) {
+    await supabase.from('app_settings').upsert(
+      { key: 'last_weekly_scan', value: { ...data.value, viewed: true }, updated_at: new Date().toISOString() },
+      { onConflict: 'key' }
+    );
+  }
+}
+
+// Returns true if a weekly rescan is due (last one > 6 days ago or never run)
+export function isWeeklyScanDue(lastScan) {
+  if (!lastScan?.timestamp) return true;
+  const daysSince = (Date.now() - new Date(lastScan.timestamp).getTime()) / 86400000;
+  return daysSince >= 6;
 }
