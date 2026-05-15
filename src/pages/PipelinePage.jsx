@@ -23,8 +23,8 @@ function daysSince(dateStr) {
   return Math.floor((Date.now() - new Date(dateStr).getTime()) / 86400000);
 }
 
-function nextTouchDue(entry, touches) {
-  const sent = touches.filter(t => t.pipeline_entry_id === entry.id && t.status === 'sent');
+function nextTouchDue(entryTouches) {
+  const sent = entryTouches.filter(t => t.status === 'sent');
   const lastSent = sent.sort((a, b) => new Date(b.sent_date) - new Date(a.sent_date))[0];
   if (!lastSent) return 'Due now';
   const days = daysSince(lastSent.sent_date);
@@ -39,12 +39,12 @@ export default function PipelinePage({ icp = {} }) {
   const [loading, setLoading]     = useState(true);
   const [filter, setFilter]       = useState('all');
   const [search, setSearch]       = useState('');
-  const [selected, setSelected]   = useState(null);
   const [expandedRows, setExpandedRows] = useState({});
   const [primaryContacts, setPrimaryContacts] = useState({});
   const [draftModal, setDraftModal] = useState(null);
   const [responseModal, setResponseModal] = useState(null);
   const [notesEntry, setNotesEntry] = useState(null);
+  const [contextMenu, setContextMenu] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -78,14 +78,28 @@ export default function PipelinePage({ icp = {} }) {
     } else {
       await supabase.from('touches').insert({ ...touch, status: 'sent', sent_date: today });
     }
-    // advance pipeline touch counter
-    const entry = entries.find(e => e.id === touch.pipeline_entry_id);
-    if (entry && touch.touch_number >= entry.current_touch) {
-      const newTouch = Math.min(touch.touch_number + 1, 5);
-      await supabase.from('pipeline_entries').update({ current_touch: newTouch, updated_at: new Date().toISOString() }).eq('id', entry.id);
-    }
     load();
-  }, [entries, load]);
+  }, [load]);
+
+  const handleTouchRightClick = useCallback((e, touch) => {
+    if (!touch?.id) return;
+    e.preventDefault();
+    setContextMenu({ x: e.clientX, y: e.clientY, touch });
+  }, []);
+
+  const undoTouchSent = async () => {
+    if (!contextMenu?.touch?.id) return;
+    await supabase.from('touches').update({ status: 'ready', sent_date: null, updated_at: new Date().toISOString() }).eq('id', contextMenu.touch.id);
+    setContextMenu(null);
+    load();
+  };
+
+  const deleteTouchRecord = async () => {
+    if (!contextMenu?.touch?.id) return;
+    await supabase.from('touches').delete().eq('id', contextMenu.touch.id);
+    setContextMenu(null);
+    load();
+  };
 
   const filtered = entries
     .filter(e => filter === 'all' || e.status === filter)
@@ -96,12 +110,12 @@ export default function PipelinePage({ icp = {} }) {
     });
 
   // Stats
-  const active     = entries.filter(e => e.status === 'active').length;
-  const responded  = entries.filter(e => e.status === 'responded').length;
+  const active    = entries.filter(e => e.status === 'active').length;
+  const responded = entries.filter(e => e.status === 'responded').length;
   const dueTouches = entries.filter(e => {
     if (e.status !== 'active') return false;
     const sent = touches.filter(t => t.pipeline_entry_id === e.id && t.status === 'sent');
-    if (!sent.length && e.current_touch === 0) return true;
+    if (!sent.length) return true;
     const last = sent.sort((a, b) => new Date(b.sent_date) - new Date(a.sent_date))[0];
     return last ? daysSince(last.sent_date) >= 7 : true;
   }).length;
@@ -164,22 +178,37 @@ export default function PipelinePage({ icp = {} }) {
                     <th style={{ width: 28 }}></th>
                     <th>Company</th>
                     <th>ICP</th>
-                    <th>Touches</th>
+                    <th>Touches (primary contact)</th>
                     <th>Status</th>
-                    <th>Next Touch</th>
+                    <th>Next Due</th>
                     <th>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
                   {filtered.map(entry => {
                     const company = companies[entry.company_id] || {};
+                    const contacts = company.contacts || [];
+                    const primaryIdx = primaryContacts[entry.id] || 0;
+                    const primaryContact = contacts[primaryIdx] || contacts[0];
+                    const primaryName = primaryContact?.name || '';
+
                     const entryTouches = touches.filter(t => t.pipeline_entry_id === entry.id);
-                    const touchMap = {};
-                    entryTouches.forEach(t => { touchMap[t.touch_number] = t; });
-                    const nextTouchNum = entry.current_touch < 5 ? (entry.current_touch || 0) + 1 : null;
-                    const nextExistingTouch = nextTouchNum ? touchMap[nextTouchNum] : null;
-                    const primary = (company.contacts || [])[0];
-                    const due = nextTouchDue(entry, touches);
+
+                    // Primary contact touch map — for main row pills
+                    const primaryTouchMap = {};
+                    entryTouches
+                      .filter(t => !contacts.length || t.contact_name === primaryName)
+                      .forEach(t => { primaryTouchMap[t.touch_number] = t; });
+
+                    // Per-contact touch maps — for expanded view
+                    const touchesByContact = {};
+                    entryTouches.forEach(t => {
+                      const k = t.contact_name || '';
+                      if (!touchesByContact[k]) touchesByContact[k] = {};
+                      touchesByContact[k][t.touch_number] = t;
+                    });
+
+                    const due = nextTouchDue(entryTouches);
                     const isDue = due.includes('Due');
                     const isExpanded = !!expandedRows[entry.id];
 
@@ -203,7 +232,12 @@ export default function PipelinePage({ icp = {} }) {
                                 {company.website.replace(/https?:\/\//, '')}
                               </a>
                             )}
-                            {primary && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>{primary.name}{primary.title ? ` · ${primary.title}` : ''}</div>}
+                            {primaryContact && (
+                              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
+                                {primaryContact.name}{primaryContact.title ? ` · ${primaryContact.title}` : ''}
+                                {contacts.length > 1 && <span style={{ color: 'var(--text-faint)', marginLeft: 4 }}>+{contacts.length - 1} more</span>}
+                              </div>
+                            )}
                           </div>
                         </td>
                         <td>
@@ -219,15 +253,24 @@ export default function PipelinePage({ icp = {} }) {
                         <td>
                           <div className="touch-pills">
                             {[1,2,3,4,5].map(n => {
-                              const t = touchMap[n];
-                              const cls = !t ? '' : t.status === 'sent' ? 'sent' : t.status === 'responded' ? 'responded' : t.status === 'skipped' ? 'skipped' : t.status === 'ready' ? 'ready' : n === nextTouchNum ? 'ready' : '';
+                              const t = primaryTouchMap[n];
+                              const cls = !t ? '' : t.status === 'sent' ? 'sent' : t.status === 'responded' ? 'responded' : t.status === 'skipped' ? 'skipped' : t.status === 'ready' ? 'ready' : '';
                               return (
                                 <div
                                   key={n}
                                   className={`touch-pill${cls ? ' ' + cls : ''}`}
-                                  title={`${TOUCH_LABELS[n]?.label}${t?.status === 'ready' ? ' · Draft saved — click to edit' : ' · Click to draft'}`}
+                                  title={`${TOUCH_LABELS[n]?.label} — ${primaryContact?.name || 'contact'}${t?.status === 'ready' ? ' · Draft saved' : ''}`}
                                   style={{ cursor: 'pointer' }}
-                                  onClick={() => setDraftModal({ entry, company, touchNumber: n, touchType: TOUCH_LABELS[n]?.type || 'email', contacts: company.contacts || [], existingTouch: touchMap[n] || null, t1Subject: touchMap[1]?.subject_line || null, defaultContactIndex: primaryContacts[entry.id] || 0, emailSignature: icp.emailSignature || '' })}
+                                  onClick={() => setDraftModal({
+                                    entry, company,
+                                    touchNumber: n,
+                                    contacts,
+                                    existingTouch: primaryTouchMap[n] || null,
+                                    t1Subject: primaryTouchMap[1]?.subject_line || null,
+                                    defaultContactIndex: primaryIdx,
+                                    emailSignature: icp.emailSignature || '',
+                                  })}
+                                  onContextMenu={(e) => handleTouchRightClick(e, primaryTouchMap[n])}
                                 >
                                   {n}
                                 </div>
@@ -249,23 +292,13 @@ export default function PipelinePage({ icp = {} }) {
                         </td>
                         <td>
                           <span style={{ fontSize: 12, color: isDue ? 'var(--red)' : 'var(--text-muted)', fontWeight: isDue ? 700 : 400 }}>
-                            {entry.status !== 'active' ? '—' : nextTouchNum ? due : 'Complete ✓'}
+                            {entry.status !== 'active' ? '—' : due}
                           </span>
                         </td>
                         <td>
                           <div style={{ display: 'flex', gap: 4 }}>
-                            <button
-                              className="btn btn-secondary btn-xs"
-                              onClick={() => setResponseModal({ entry, company })}
-                            >
-                              Log Reply
-                            </button>
-                            <button
-                              className="btn btn-ghost btn-xs"
-                              onClick={() => setNotesEntry(entry)}
-                            >
-                              Notes
-                            </button>
+                            <button className="btn btn-secondary btn-xs" onClick={() => setResponseModal({ entry, company })}>Log Reply</button>
+                            <button className="btn btn-ghost btn-xs" onClick={() => setNotesEntry(entry)}>Notes</button>
                           </div>
                         </td>
                       </tr>
@@ -273,19 +306,26 @@ export default function PipelinePage({ icp = {} }) {
                         <tr key={`${entry.id}-expanded`} style={{ background: 'var(--surface)' }}>
                           <td />
                           <td colSpan={6} style={{ padding: '12px 16px 16px', borderTop: '1px solid var(--border)' }}>
-                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-                              {/* Left: contacts */}
+                            <div style={{ display: 'grid', gridTemplateColumns: '3fr 2fr', gap: 24 }}>
+                              {/* Left: per-contact touch grid */}
                               <div>
-                                <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 8 }}>Contacts</div>
-                                <ContactList
-                                  companyId={company.id}
-                                  contacts={company.contacts || []}
+                                <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 8 }}>
+                                  Contacts &amp; Touches
+                                </div>
+                                <ContactTouchGrid
+                                  entry={entry}
+                                  company={company}
+                                  contacts={contacts}
                                   primaryIndex={primaryContacts[entry.id] || 0}
                                   onSetPrimary={async (idx) => {
                                     await supabase.from('pipeline_entries').update({ primary_contact_index: idx }).eq('id', entry.id);
                                     setPrimaryContacts(prev => ({ ...prev, [entry.id]: idx }));
                                   }}
                                   onUpdated={(updated) => setCompanies(prev => ({ ...prev, [company.id]: { ...company, contacts: updated } }))}
+                                  touchesByContact={touchesByContact}
+                                  icp={icp}
+                                  onOpenModal={setDraftModal}
+                                  onRightClick={handleTouchRightClick}
                                 />
                               </div>
                               {/* Right: scan intel */}
@@ -360,19 +400,38 @@ export default function PipelinePage({ icp = {} }) {
           onSave={() => { load(); setNotesEntry(null); }}
         />
       )}
+
+      {contextMenu && (
+        <>
+          <div style={{ position: 'fixed', inset: 0, zIndex: 9998 }} onClick={() => setContextMenu(null)} />
+          <div style={{ position: 'fixed', top: contextMenu.y, left: contextMenu.x, background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 6, boxShadow: '0 4px 16px rgba(0,0,0,.15)', zIndex: 9999, minWidth: 168, overflow: 'hidden' }}>
+            <div style={{ padding: '6px 12px', fontSize: 10, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em', borderBottom: '1px solid var(--border)' }}>
+              T{contextMenu.touch.touch_number}{contextMenu.touch.contact_name ? ` — ${contextMenu.touch.contact_name.split(' ')[0]}` : ''}
+            </div>
+            {contextMenu.touch.status === 'sent' && (
+              <button onClick={undoTouchSent} style={{ display: 'block', width: '100%', textAlign: 'left', padding: '9px 12px', background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: 'var(--text)' }}>
+                ↩ Undo Sent
+              </button>
+            )}
+            <button onClick={deleteTouchRecord} style={{ display: 'block', width: '100%', textAlign: 'left', padding: '9px 12px', background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: 'var(--red)' }}>
+              🗑 Delete {contextMenu.touch.status === 'sent' ? 'record' : 'draft'}
+            </button>
+          </div>
+        </>
+      )}
     </>
   );
 }
 
-// ── Contact List (with edit) ──────────────────────────────────────────────────
+// ── Contact Touch Grid ────────────────────────────────────────────────────────
 
-function ContactList({ companyId, contacts, primaryIndex = 0, onSetPrimary, onUpdated }) {
+function ContactTouchGrid({ entry, company, contacts, primaryIndex, onSetPrimary, onUpdated, touchesByContact, icp, onOpenModal, onRightClick }) {
   const [editingIdx, setEditingIdx] = useState(null);
   const [editForm, setEditForm] = useState({});
 
-  const saveEdit = async () => {
-    const updated = contacts.map((c, i) => i === editingIdx ? { ...editForm } : c);
-    const { error } = await supabase.from('companies').update({ contacts: updated }).eq('id', companyId);
+  const saveEdit = async (idx) => {
+    const updated = contacts.map((c, i) => i === idx ? { ...editForm } : c);
+    const { error } = await supabase.from('companies').update({ contacts: updated }).eq('id', company.id);
     if (error) { alert('Error saving: ' + error.message); return; }
     onUpdated(updated);
     setEditingIdx(null);
@@ -381,38 +440,90 @@ function ContactList({ companyId, contacts, primaryIndex = 0, onSetPrimary, onUp
   return (
     <div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 10 }}>
-        {contacts.map((c, i) => (
-          editingIdx === i ? (
-            <div key={i} style={{ padding: '10px', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 6 }}>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
-                <input type="text" placeholder="Name *" value={editForm.name || ''} onChange={e => setEditForm(f => ({ ...f, name: e.target.value }))} style={{ fontSize: 12 }} />
-                <input type="text" placeholder="Title" value={editForm.title || ''} onChange={e => setEditForm(f => ({ ...f, title: e.target.value }))} style={{ fontSize: 12 }} />
-                <input type="email" placeholder="Email" value={editForm.email || ''} onChange={e => setEditForm(f => ({ ...f, email: e.target.value }))} style={{ fontSize: 12 }} />
-                <input type="text" placeholder="LinkedIn URL" value={editForm.linkedin || ''} onChange={e => setEditForm(f => ({ ...f, linkedin: e.target.value }))} style={{ fontSize: 12 }} />
+        {contacts.map((contact, contactIdx) => {
+          const contactTouches = touchesByContact[contact.name] || {};
+          const isPrimary = contactIdx === primaryIndex;
+
+          if (editingIdx === contactIdx) {
+            return (
+              <div key={contactIdx} style={{ padding: 10, background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 6 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
+                  <input type="text" placeholder="Name *" value={editForm.name || ''} onChange={e => setEditForm(f => ({ ...f, name: e.target.value }))} style={{ fontSize: 12 }} />
+                  <input type="text" placeholder="Title" value={editForm.title || ''} onChange={e => setEditForm(f => ({ ...f, title: e.target.value }))} style={{ fontSize: 12 }} />
+                  <input type="email" placeholder="Email" value={editForm.email || ''} onChange={e => setEditForm(f => ({ ...f, email: e.target.value }))} style={{ fontSize: 12 }} />
+                  <input type="text" placeholder="LinkedIn URL" value={editForm.linkedin || ''} onChange={e => setEditForm(f => ({ ...f, linkedin: e.target.value }))} style={{ fontSize: 12 }} />
+                </div>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button className="btn btn-primary btn-sm" onClick={() => saveEdit(contactIdx)}>Save</button>
+                  <button className="btn btn-ghost btn-sm" onClick={() => setEditingIdx(null)}>Cancel</button>
+                </div>
               </div>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <button className="btn btn-primary btn-sm" onClick={saveEdit}>Save</button>
-                <button className="btn btn-ghost btn-sm" onClick={() => setEditingIdx(null)}>Cancel</button>
-              </div>
-            </div>
-          ) : (
-            <div key={i} style={{ fontSize: 12, borderRadius: 6, border: `1px solid ${i === primaryIndex ? 'var(--accent)' : 'var(--border)'}`, overflow: 'hidden' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', background: i === primaryIndex ? 'var(--accent)11' : 'var(--surface)' }}>
+            );
+          }
+
+          return (
+            <div key={contactIdx} style={{ border: `1px solid ${isPrimary ? 'var(--accent)' : 'var(--border)'}`, borderRadius: 6, overflow: 'hidden' }}>
+              {/* Contact info row */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', background: isPrimary ? 'var(--accent)11' : 'var(--surface)', flexWrap: 'wrap' }}>
                 <button
-                  title={i === primaryIndex ? 'Primary contact' : 'Set as primary contact'}
-                  onClick={() => onSetPrimary?.(i)}
-                  style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, padding: 0, lineHeight: 1, opacity: i === primaryIndex ? 1 : 0.3 }}
+                  title={isPrimary ? 'Primary contact' : 'Set as primary'}
+                  onClick={() => onSetPrimary?.(contactIdx)}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, padding: 0, lineHeight: 1, opacity: isPrimary ? 1 : 0.3, flexShrink: 0 }}
                 >⭐</button>
-                <span style={{ fontWeight: 600 }}>{c.name}{c.title ? <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}> · {c.title}</span> : ''}</span>
-                {c.email && <a href={`https://mail.google.com/mail/?view=cm&to=${encodeURIComponent(c.email)}`} target="_blank" rel="noreferrer" style={{ color: 'var(--text-faint)', marginLeft: 4 }}>{c.email}</a>}
-                {c.linkedin && <a href={c.linkedin} target="_blank" rel="noreferrer" style={{ color: 'var(--blue)', fontSize: 11 }}>LinkedIn ↗</a>}
-                <button className="btn btn-ghost btn-xs" style={{ color: 'var(--text-faint)', marginLeft: 'auto' }} onClick={() => { setEditingIdx(i); setEditForm({ ...c }); }}>✏️ Edit</button>
+                <span style={{ fontWeight: 600, fontSize: 12 }}>
+                  {contact.name}
+                  {contact.title && <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}> · {contact.title}</span>}
+                </span>
+                {contact.email && (
+                  <a href={`https://mail.google.com/mail/?view=cm&to=${encodeURIComponent(contact.email)}`} target="_blank" rel="noreferrer" style={{ color: 'var(--text-faint)', fontSize: 11 }}>
+                    {contact.email}
+                  </a>
+                )}
+                {contact.linkedin && (
+                  <a href={contact.linkedin} target="_blank" rel="noreferrer" style={{ color: 'var(--blue)', fontSize: 11 }}>LinkedIn ↗</a>
+                )}
+                <button
+                  className="btn btn-ghost btn-xs"
+                  style={{ marginLeft: 'auto', color: 'var(--text-faint)' }}
+                  onClick={() => { setEditingIdx(contactIdx); setEditForm({ ...contact }); }}
+                >✏️ Edit</button>
+              </div>
+              {/* Per-contact touch pills */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 10px', background: 'var(--bg)', borderTop: '1px solid var(--border)' }}>
+                <span style={{ fontSize: 10, color: 'var(--text-faint)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.04em', marginRight: 2, flexShrink: 0 }}>Touches:</span>
+                <div className="touch-pills">
+                  {[1,2,3,4,5].map(n => {
+                    const t = contactTouches[n];
+                    const cls = !t ? '' : t.status === 'sent' ? 'sent' : t.status === 'responded' ? 'responded' : t.status === 'skipped' ? 'skipped' : t.status === 'ready' ? 'ready' : '';
+                    return (
+                      <div
+                        key={n}
+                        className={`touch-pill${cls ? ' ' + cls : ''}`}
+                        title={`${TOUCH_LABELS[n]?.label} — ${contact.name}${t?.status === 'ready' ? ' · Draft saved' : t?.status === 'sent' ? ' · Sent' : ' · Click to draft'}`}
+                        style={{ cursor: 'pointer' }}
+                        onClick={() => onOpenModal({
+                          entry,
+                          company,
+                          touchNumber: n,
+                          contacts,
+                          existingTouch: t || null,
+                          t1Subject: (contactTouches[1])?.subject_line || null,
+                          defaultContactIndex: contactIdx,
+                          emailSignature: icp.emailSignature || '',
+                        })}
+                        onContextMenu={(e) => onRightClick?.(e, t)}
+                      >
+                        {n}
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             </div>
-          )
-        ))}
+          );
+        })}
       </div>
-      <AddContactForm companyId={companyId} existingContacts={contacts} onSaved={onUpdated} />
+      <AddContactForm companyId={company.id} existingContacts={contacts} onSaved={onUpdated} />
     </div>
   );
 }
@@ -442,7 +553,7 @@ function AddContactForm({ companyId, existingContacts, onSaved }) {
   };
 
   if (!show) return (
-    <button className="btn btn-ghost btn-xs" onClick={() => setShow(true)} style={{ marginTop: 8 }}>+ Add Contact</button>
+    <button className="btn btn-ghost btn-xs" onClick={() => setShow(true)} style={{ marginTop: 4 }}>+ Add Contact</button>
   );
 
   return (
@@ -474,7 +585,7 @@ function ResponseModal({ entry, company, onClose, onSave }) {
     try {
       const { analyzeResponse } = await import('../lib/anthropic');
       const primary = (company.contacts || [])[0] || { name: 'the contact', title: '' };
-      const result = await analyzeResponse(company, primary, entry.current_touch, responseText);
+      const result = await analyzeResponse(company, primary, 1, responseText);
       setAnalysis(result);
     } catch (e) {
       alert('Error analyzing response: ' + e.message);
@@ -484,13 +595,6 @@ function ResponseModal({ entry, company, onClose, onSave }) {
   };
 
   const save = async () => {
-    const sentTouches = entry.current_touch > 0 ? entry.current_touch : 1;
-    await supabase.from('touches').update({
-      status: 'responded',
-      response_text: responseText,
-      ai_next_step: analysis?.nextStep || '',
-      updated_at: new Date().toISOString(),
-    }).eq('pipeline_entry_id', entry.id).eq('touch_number', sentTouches).eq('status', 'sent');
     await supabase.from('pipeline_entries').update({ status: 'responded', updated_at: new Date().toISOString() }).eq('id', entry.id);
     onSave();
   };
