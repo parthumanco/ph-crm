@@ -99,7 +99,7 @@ export default function SignalWatchPage({ onNavigate, icp }) {
   const [scanProgress, setScanProgress] = useState({ done: 0, total: 0 });
   const [search, setSearch]           = useState('');
   const [dragOver, setDragOver]       = useState(false);
-  const [sortBy, setSortBy]           = useState('score');
+  const [sortBy, setSortBy]           = useState('icp');
   const [addingToPipeline, setAddingToPipeline] = useState({});
   const [addedToPipeline, setAddedToPipeline]   = useState({});
   const [loading, setLoading]         = useState(true);
@@ -110,6 +110,7 @@ export default function SignalWatchPage({ onNavigate, icp }) {
     employees: 'all',
     distance: 'all',
     icp: 'all',
+    sig: 'all',
   });
   const [autoDeepQueue, setAutoDeepQueue]           = useState([]);
   const [autoDeepProgress, setAutoDeepProgress]     = useState({ done: 0, total: 0 });
@@ -119,6 +120,9 @@ export default function SignalWatchPage({ onNavigate, icp }) {
   const [weeklyScanChanges, setWeeklyScanChanges]   = useState([]);
   const [lastWeeklyScan, setLastWeeklyScan]         = useState(null);
   const [serverScanNotification, setServerScanNotification] = useState(null);
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [addForm, setAddForm] = useState({ name: '', website: '', hq: '' });
+  const [addingManual, setAddingManual] = useState(false);
   const cancelRef        = useRef({ cancelled: false });
   const fileInputRef     = useRef();
   const companiesRef     = useRef([]);
@@ -412,17 +416,6 @@ export default function SignalWatchPage({ onNavigate, icp }) {
     }
     localStorage.removeItem('ph_scan_active');
     setScanningAll(false);
-
-    // Auto deep-scan all companies that haven't been deep-scanned yet, highest score first
-    if (!cancelRef.current.cancelled) {
-      const toDeep = companiesRef.current
-        .filter(c => c.scan_date && !c.deep_scanned && !c._error && c.id)
-        .sort((a, b) => Math.max(b.overall_score || 0, b.icp_score || 0) - Math.max(a.overall_score || 0, a.icp_score || 0));
-      if (toDeep.length > 0) {
-        setAutoDeepQueue(toDeep);
-        setAutoDeepProgress({ done: 0, total: toDeep.length });
-      }
-    }
   }, [companies, saveScanResult, icp]);
 
   // ── Auto-resume scan after page refresh ─────────────────────────────────────
@@ -557,6 +550,32 @@ export default function SignalWatchPage({ onNavigate, icp }) {
     if (company.id) await supabase.from('companies').delete().eq('id', company.id);
     setCompanies(prev => prev.filter(c => c.id !== company.id));
   }, []);
+
+  // ── Manual add ───────────────────────────────────────────────────────────────
+
+  const addManualCompany = useCallback(async () => {
+    const name = addForm.name.trim();
+    if (!name) return;
+    const existing = companiesRef.current.find(c => c.name.toLowerCase() === name.toLowerCase());
+    if (existing) { alert(`${name} is already in Signal Watch.`); return; }
+    setAddingManual(true);
+    try {
+      const { data, error } = await supabase.from('companies').insert({
+        name,
+        website: addForm.website.trim() || null,
+        hq: addForm.hq.trim() || null,
+        contacts: [],
+      }).select('*').single();
+      if (error) throw error;
+      setCompanies(prev => [data, ...prev]);
+      setAddForm({ name: '', website: '', hq: '' });
+      setShowAddForm(false);
+    } catch (e) {
+      alert('Error adding company: ' + e.message);
+    } finally {
+      setAddingManual(false);
+    }
+  }, [addForm]);
 
   // ── Export CSV ───────────────────────────────────────────────────────────────
 
@@ -733,6 +752,10 @@ export default function SignalWatchPage({ onNavigate, icp }) {
         if (parseInt(filters.icp) > c.icp_score) return false;
       }
 
+      if (filters.sig !== 'all' && c.overall_score) {
+        if (parseInt(filters.sig) > c.overall_score) return false;
+      }
+
       return true;
     });
   };
@@ -769,7 +792,7 @@ export default function SignalWatchPage({ onNavigate, icp }) {
     const id = company.id || company._tempId;
     setExpandedCards(prev => ({ ...prev, [id]: true }));
     // Clear filters so the card is visible
-    setFilters({ series: 'all', employees: 'all', distance: 'all', icp: 'all' });
+    setFilters({ series: 'all', employees: 'all', distance: 'all', icp: 'all', sig: 'all' });
     setSearch('');
     setTimeout(() => {
       cardRefs.current[id]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -786,12 +809,6 @@ export default function SignalWatchPage({ onNavigate, icp }) {
         <div className="page-header-actions">
           {companies.length > 0 && (
             <>
-              <select value={sortBy} onChange={e => setSortBy(e.target.value)} style={{ width: 'auto', padding: '7px 10px' }}>
-                <option value="score">Sort: SIG Score</option>
-                <option value="icp">Sort: ICP Score</option>
-                <option value="distance">Sort: Distance</option>
-                <option value="name">Sort: Name</option>
-              </select>
               {(scanningAll || autoDeepQueue.length > 0) && (
                 <button className="btn btn-secondary" onClick={() => { cancelRef.current.cancelled = true; setScanningAll(false); setAutoDeepQueue([]); autoDeepRunning.current = false; localStorage.removeItem('ph_scan_active'); }}>
                   ⏹ Stop
@@ -817,6 +834,9 @@ export default function SignalWatchPage({ onNavigate, icp }) {
               </button>
             </>
           )}
+          <button className="btn btn-secondary" onClick={() => setShowAddForm(v => !v)}>
+            ➕ Add Company
+          </button>
           <button className="btn btn-secondary" onClick={() => fileInputRef.current?.click()}>
             📂 Import CSV
           </button>
@@ -845,6 +865,48 @@ export default function SignalWatchPage({ onNavigate, icp }) {
       </div>
 
       <div className="page-body">
+        {showAddForm && (
+          <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '16px', marginBottom: 16, display: 'flex', gap: 10, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+            <div style={{ flex: 2, minWidth: 160 }}>
+              <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 4 }}>Company Name *</label>
+              <input
+                type="text"
+                placeholder="e.g. Skillcat"
+                value={addForm.name}
+                onChange={e => setAddForm(f => ({ ...f, name: e.target.value }))}
+                onKeyDown={e => e.key === 'Enter' && addManualCompany()}
+                autoFocus
+              />
+            </div>
+            <div style={{ flex: 3, minWidth: 200 }}>
+              <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 4 }}>Website</label>
+              <input
+                type="text"
+                placeholder="e.g. https://www.skillcatapp.com"
+                value={addForm.website}
+                onChange={e => setAddForm(f => ({ ...f, website: e.target.value }))}
+                onKeyDown={e => e.key === 'Enter' && addManualCompany()}
+              />
+            </div>
+            <div style={{ flex: 2, minWidth: 140 }}>
+              <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 4 }}>HQ / City</label>
+              <input
+                type="text"
+                placeholder="e.g. Boston, MA"
+                value={addForm.hq}
+                onChange={e => setAddForm(f => ({ ...f, hq: e.target.value }))}
+                onKeyDown={e => e.key === 'Enter' && addManualCompany()}
+              />
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button className="btn btn-primary" onClick={addManualCompany} disabled={!addForm.name.trim() || addingManual}>
+                {addingManual ? <><span className="spinner" /> Adding…</> : '+ Add'}
+              </button>
+              <button className="btn btn-ghost btn-sm" onClick={() => { setShowAddForm(false); setAddForm({ name: '', website: '', hq: '' }); }}>Cancel</button>
+            </div>
+          </div>
+        )}
+
         {companies.length > 0 && (
           <div className="stats-row cols-4" style={{ marginBottom: 16 }}>
             <div className="stat-card"><div className="stat-val">{companies.length}</div><div className="stat-label">Total Companies</div></div>
@@ -1025,6 +1087,14 @@ export default function SignalWatchPage({ onNavigate, icp }) {
                     ))}
                   </div>
                 </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', whiteSpace: 'nowrap' }}>SIG Score</span>
+                  <div style={{ display: 'flex', gap: 4 }}>
+                    {[['all','All'],['7','7+'],['5','5+'],['3','3+']].map(([v,l]) => (
+                      <button key={v} className={`filter-btn${filters.sig === v ? ' active' : ''}`} style={{ padding: '4px 9px', fontSize: 11 }} onClick={() => setFilter('sig', v)}>{l}</button>
+                    ))}
+                  </div>
+                </div>
                 <input
                   type="text"
                   placeholder="Search…"
@@ -1033,10 +1103,10 @@ export default function SignalWatchPage({ onNavigate, icp }) {
                   style={{ marginLeft: 'auto', width: 160, padding: '5px 10px', fontSize: 12 }}
                 />
               </div>
-              {(filters.series !== 'all' || filters.employees !== 'all' || filters.distance !== 'all' || filters.icp !== 'all' || search) && (
+              {(filters.series !== 'all' || filters.employees !== 'all' || filters.distance !== 'all' || filters.icp !== 'all' || filters.sig !== 'all' || search) && (
                 <div style={{ marginTop: 8, fontSize: 12, color: 'var(--text-muted)' }}>
                   Showing {filtered.length} of {companies.length} companies &nbsp;
-                  <button className="btn btn-ghost btn-xs" onClick={() => { setFilters({ series: 'all', employees: 'all', distance: 'all', icp: 'all' }); setSearch(''); }}>
+                  <button className="btn btn-ghost btn-xs" onClick={() => { setFilters({ series: 'all', employees: 'all', distance: 'all', icp: 'all', sig: 'all' }); setSearch(''); }}>
                     Clear filters
                   </button>
                 </div>
