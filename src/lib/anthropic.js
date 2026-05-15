@@ -74,8 +74,9 @@ Trigger categories to surface:
 - social: exec posts about brand challenges, growth goals, or culture shifts
 
 ${profile}
+For each contact listed, search for their LinkedIn profile URL (linkedin.com/in/...) and check it for recent posts. Also find the company's LinkedIn page URL (linkedin.com/company/...) and check it for recent posts, announcements, or hiring activity. Only include URLs you find with confidence — never guess.
 Return ONLY valid JSON object, no markdown:
-{"companyName":"str","website":"https://domain.com or null","scanDate":"today","overallScore":1-10,"icpScore":1-10,"icpReason":"str","icpTier":"str","fundingStage":"Seed|Series A|Series B|Series C|Series D+|Unknown","employeeCountNum":integer_or_null,"summary":"2-3 sentences","triggers":[{"category":"str","headline":"str","detail":"str","urgency":"str","source":"str","date":"str"}],"recommendedAngle":"str","contactAngles":[{"name":"str","title":"str","angle":"str"}],"lat":number_or_null,"lng":number_or_null,"noNewsFound":false}
+{"companyName":"str","website":"https://domain.com or null","companyLinkedinUrl":"https://linkedin.com/company/... or null","scanDate":"today","overallScore":1-10,"icpScore":1-10,"icpReason":"str","icpTier":"str","fundingStage":"Seed|Series A|Series B|Series C|Series D+|Unknown","employeeCountNum":integer_or_null,"summary":"2-3 sentences","triggers":[{"category":"str","headline":"str","detail":"str","urgency":"str","source":"str","date":"str"}],"recommendedAngle":"str","contactAngles":[{"name":"str","title":"str","angle":"str","linkedinUrl":"https://linkedin.com/in/... or null"}],"lat":number_or_null,"lng":number_or_null,"noNewsFound":false}
 For lat/lng: return the approximate latitude and longitude of the company headquarters city.
 For website: search for and return the company's actual primary website URL. Verify it exists.`;
 }
@@ -205,12 +206,12 @@ export async function scanDeepDive(company, icp = DEFAULT_ICP) {
   const data = await withTimeout(
     callClaude({
       model: 'claude-sonnet-4-6',
-      max_tokens: 2500,
+      max_tokens: 4000,
       system: buildDeepSystem(icp),
       tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 2 }],
       messages: [{
         role: 'user',
-        content: `Search for recent signals about ${company.name}${company.website ? ` (${company.website})` : ''}. Check: company news, LinkedIn company page, Twitter/X, job boards (brand/marketing/comms roles).${linkedInClause}${nameSearchClause} Look for posts about growth, brand, team changes, or challenges. Find up to 3 trigger events from the last 90 days. Do 1-2 searches max.${!websiteKnown ? ' Also find their website.' : ''} Return JSON only.${contactStr ? ` Contacts: ${contactStr}.` : ''}`,
+        content: `Search for recent signals about ${company.name}${company.website ? ` (${company.website})` : ''}. Check: company news, LinkedIn company page, Twitter/X, job boards (brand/marketing/comms roles).${linkedInClause}${nameSearchClause} Look for posts about growth, brand, team changes, or challenges. Find up to 3 trigger events from the last 90 days.${contactStr ? ` For each contact, also find their LinkedIn profile URL (linkedin.com/in/...) — include it in contactAngles.linkedinUrl if found with confidence. Contacts: ${contactStr}.` : ''} Do 1-2 searches max.${!websiteKnown ? ' Also find their website.' : ''} Return JSON only.`,
       }],
     }),
     TIMEOUT_MS

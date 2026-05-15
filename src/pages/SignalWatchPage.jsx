@@ -344,11 +344,32 @@ export default function SignalWatchPage({ onNavigate, icp }) {
       lng: result.lng || null,
       scan_date: new Date().toISOString(),
       ...(overwriteWebsite ? { deep_scanned: true } : {}),
-      // Deep scan always saves website; batch scan skips (low-confidence guesses)
       ...(result.website && overwriteWebsite ? { website: result.website } : {}),
+      ...(result.companyLinkedinUrl ? { company_linkedin: result.companyLinkedinUrl } : {}),
     };
     const { error } = await supabase.from('companies').update(update).eq('id', companyId);
     if (error) throw new Error(error.message);
+
+    // Merge any discovered LinkedIn URLs back into the contacts array
+    const discoveredUrls = (result.contactAngles || []).filter(ca => ca.linkedinUrl);
+    if (discoveredUrls.length > 0) {
+      const currentCompany = companiesRef.current.find(c => c.id === companyId);
+      if (currentCompany) {
+        const existingContacts = currentCompany.contacts || [];
+        let updated = false;
+        const mergedContacts = existingContacts.map(ct => {
+          if (ct.linkedin) return ct; // already has a URL, don't overwrite
+          const match = discoveredUrls.find(ca => ca.name?.toLowerCase() === ct.name?.toLowerCase());
+          if (match?.linkedinUrl) { updated = true; return { ...ct, linkedin: match.linkedinUrl }; }
+          return ct;
+        });
+        if (updated) {
+          await supabase.from('companies').update({ contacts: mergedContacts }).eq('id', companyId);
+          update.contacts = mergedContacts;
+        }
+      }
+    }
+
     setCompanies(prev => prev.map(c => c.id === companyId ? { ...c, ...update } : c));
   }, []);
 
@@ -1296,6 +1317,11 @@ function CompanyCard({ company, distMiles, status, isScanning, isAddingToPipelin
                   🌐 {company.website.replace(/https?:\/\//, '')}
                 </a>
               )}
+              {company.company_linkedin && (
+                <a href={company.company_linkedin} target="_blank" rel="noreferrer" style={{ color: '#0a66c2', fontWeight: 600 }}>
+                  in LinkedIn
+                </a>
+              )}
             </div>
           </div>
 
@@ -1340,15 +1366,21 @@ function CompanyCard({ company, distMiles, status, isScanning, isAddingToPipelin
             <div style={{ marginBottom: 12 }}>
               <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--text-muted)', letterSpacing: '.06em', textTransform: 'uppercase', marginBottom: 8 }}>Angles by Contact</div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {company.contact_angles.map((ca, i) => (
-                  <div key={i} style={{ padding: '10px 12px', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 6 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                      <span style={{ fontWeight: 800, fontSize: 13, color: '#15803d' }}>{ca.name}</span>
-                      {ca.title && <span style={{ fontSize: 11, color: '#16a34a', background: '#dcfce7', padding: '1px 8px', borderRadius: 3, fontWeight: 600 }}>{ca.title}</span>}
+                {company.contact_angles.map((ca, i) => {
+                  const linkedinUrl = ca.linkedinUrl || (company.contacts || []).find(ct => ct.name?.toLowerCase() === ca.name?.toLowerCase())?.linkedin;
+                  return (
+                    <div key={i} style={{ padding: '10px 12px', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 6 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4, flexWrap: 'wrap' }}>
+                        <span style={{ fontWeight: 800, fontSize: 13, color: '#15803d' }}>{ca.name}</span>
+                        {ca.title && <span style={{ fontSize: 11, color: '#16a34a', background: '#dcfce7', padding: '1px 8px', borderRadius: 3, fontWeight: 600 }}>{ca.title}</span>}
+                        {linkedinUrl && (
+                          <a href={linkedinUrl} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: '#0a66c2', background: '#e8f0fe', border: '1px solid #c7d7f7', padding: '1px 8px', borderRadius: 3, fontWeight: 600, textDecoration: 'none' }}>LinkedIn ↗</a>
+                        )}
+                      </div>
+                      <p style={{ fontSize: 12, color: '#166534', lineHeight: 1.55, margin: 0 }}>{ca.angle}</p>
                     </div>
-                    <p style={{ fontSize: 12, color: '#166534', lineHeight: 1.55, margin: 0 }}>{ca.angle}</p>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}
