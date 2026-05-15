@@ -40,6 +40,7 @@ export default function PipelinePage() {
   const [filter, setFilter]       = useState('all');
   const [search, setSearch]       = useState('');
   const [selected, setSelected]   = useState(null);
+  const [expandedRows, setExpandedRows] = useState({});
   const [draftModal, setDraftModal] = useState(null);
   const [responseModal, setResponseModal] = useState(null);
   const [notesEntry, setNotesEntry] = useState(null);
@@ -156,6 +157,7 @@ export default function PipelinePage() {
               <table>
                 <thead>
                   <tr>
+                    <th style={{ width: 28 }}></th>
                     <th>Company</th>
                     <th>ICP</th>
                     <th>Touches</th>
@@ -175,9 +177,20 @@ export default function PipelinePage() {
                     const primary = (company.contacts || [])[0];
                     const due = nextTouchDue(entry, touches);
                     const isDue = due.includes('Due');
+                    const isExpanded = !!expandedRows[entry.id];
 
                     return (
+                      <>
                       <tr key={entry.id}>
+                        <td style={{ verticalAlign: 'top', paddingTop: 14 }}>
+                          <button
+                            onClick={() => setExpandedRows(r => ({ ...r, [entry.id]: !r[entry.id] }))}
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 12, padding: 0, lineHeight: 1 }}
+                            title={isExpanded ? 'Collapse' : 'Expand'}
+                          >
+                            {isExpanded ? '▾' : '▸'}
+                          </button>
+                        </td>
                         <td>
                           <div>
                             <div style={{ fontWeight: 700, fontSize: 13 }}>{company.name || '—'}</div>
@@ -252,6 +265,71 @@ export default function PipelinePage() {
                           </div>
                         </td>
                       </tr>
+                      {isExpanded && (
+                        <tr key={`${entry.id}-expanded`} style={{ background: 'var(--surface)' }}>
+                          <td />
+                          <td colSpan={6} style={{ padding: '12px 16px 16px', borderTop: '1px solid var(--border)' }}>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+                              {/* Left: contacts */}
+                              <div>
+                                <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 8 }}>Contacts</div>
+                                {(company.contacts || []).length === 0 ? (
+                                  <div style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 8 }}>No contacts</div>
+                                ) : (
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 10 }}>
+                                    {(company.contacts || []).map((c, i) => (
+                                      <div key={i} style={{ fontSize: 12 }}>
+                                        <div style={{ fontWeight: 600 }}>{c.name}{c.title ? <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}> · {c.title}</span> : ''}</div>
+                                        {c.email && <a href={`https://mail.google.com/mail/?view=cm&to=${encodeURIComponent(c.email)}`} target="_blank" rel="noreferrer" style={{ color: 'var(--text-faint)', fontSize: 12 }}>{c.email}</a>}
+                                        {c.linkedin && <a href={c.linkedin} target="_blank" rel="noreferrer" style={{ color: 'var(--blue)', fontSize: 11 }}>LinkedIn ↗</a>}
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                                <AddContactForm
+                                  companyId={company.id}
+                                  existingContacts={company.contacts || []}
+                                  onSaved={(updated) => setCompanies(prev => ({ ...prev, [company.id]: { ...company, contacts: updated } }))}
+                                />
+                              </div>
+                              {/* Right: scan intel */}
+                              <div>
+                                {company.recommended_angle && (
+                                  <div style={{ marginBottom: 12 }}>
+                                    <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 4 }}>Recommended Angle</div>
+                                    <div style={{ fontSize: 12, color: 'var(--text)' }}>{company.recommended_angle}</div>
+                                  </div>
+                                )}
+                                {company.summary && (
+                                  <div style={{ marginBottom: 12 }}>
+                                    <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 4 }}>Summary</div>
+                                    <div style={{ fontSize: 12, color: 'var(--text)', lineHeight: 1.5 }}>{company.summary}</div>
+                                  </div>
+                                )}
+                                {(company.triggers || []).length > 0 && (
+                                  <div>
+                                    <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 4 }}>Triggers</div>
+                                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                                      {company.triggers.map((t, i) => (
+                                        <span key={i} style={{ fontSize: 11, padding: '2px 8px', borderRadius: 10, background: 'var(--surface-2)', color: 'var(--text-muted)', border: '1px solid var(--border)' }}>
+                                          {typeof t === 'string' ? t : t.category || t.label || JSON.stringify(t)}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+                                {entry.notes && (
+                                  <div style={{ marginTop: 12 }}>
+                                    <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 4 }}>Notes</div>
+                                    <div style={{ fontSize: 12, color: 'var(--text)', lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>{entry.notes}</div>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                      </>
                     );
                   })}
                 </tbody>
@@ -287,6 +365,49 @@ export default function PipelinePage() {
         />
       )}
     </>
+  );
+}
+
+// ── Add Contact Form ─────────────────────────────────────────────────────────
+
+function AddContactForm({ companyId, existingContacts, onSaved }) {
+  const [show, setShow] = useState(false);
+  const [form, setForm] = useState({ name: '', title: '', email: '', linkedin: '' });
+  const [saving, setSaving] = useState(false);
+
+  const save = async () => {
+    if (!form.name.trim()) return;
+    setSaving(true);
+    try {
+      const updated = [...existingContacts, { name: form.name.trim(), title: form.title.trim(), email: form.email.trim(), linkedin: form.linkedin.trim() }];
+      await supabase.from('companies').update({ contacts: updated, updated_at: new Date().toISOString() }).eq('id', companyId);
+      onSaved(updated);
+      setForm({ name: '', title: '', email: '', linkedin: '' });
+      setShow(false);
+    } catch (e) {
+      alert('Error saving contact: ' + e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!show) return (
+    <button className="btn btn-ghost btn-xs" onClick={() => setShow(true)} style={{ marginTop: 8 }}>+ Add Contact</button>
+  );
+
+  return (
+    <div style={{ marginTop: 8, padding: '12px', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 6 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
+        <input type="text" placeholder="Name *" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} style={{ fontSize: 12 }} />
+        <input type="text" placeholder="Title" value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} style={{ fontSize: 12 }} />
+        <input type="email" placeholder="Email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} style={{ fontSize: 12 }} />
+        <input type="text" placeholder="LinkedIn URL" value={form.linkedin} onChange={e => setForm(f => ({ ...f, linkedin: e.target.value }))} style={{ fontSize: 12 }} />
+      </div>
+      <div style={{ display: 'flex', gap: 8 }}>
+        <button className="btn btn-primary btn-sm" onClick={save} disabled={!form.name.trim() || saving}>{saving ? 'Saving…' : 'Save Contact'}</button>
+        <button className="btn btn-ghost btn-sm" onClick={() => { setShow(false); setForm({ name: '', title: '', email: '', linkedin: '' }); }}>Cancel</button>
+      </div>
+    </div>
   );
 }
 

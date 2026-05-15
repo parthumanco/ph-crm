@@ -147,7 +147,7 @@ export default function EmailDraftModal({ entry, company, touchNumber, contacts,
           {touchNumber === 1 && (
             <div className="form-row">
               <label>Outreach Angle (edit if needed)</label>
-              <textarea rows={2} value={angle} onChange={e => setAngle(e.target.value)} placeholder="e.g. You just raised your Series B. Your product is ahead of your brand." />
+              <textarea rows={4} value={angle} onChange={e => setAngle(e.target.value)} placeholder="e.g. You just raised your Series B. Your product is ahead of your brand." style={{ fontSize: 13, lineHeight: 1.6 }} />
             </div>
           )}
 
@@ -230,7 +230,19 @@ export default function EmailDraftModal({ entry, company, touchNumber, contacts,
                 <span>📌</span>
                 <span>
                   <strong>To:</strong> {contact.name}{contact.title ? `, ${contact.title}` : ''}
-                  {contact.email ? ` · ${contact.email}` : ''}
+                  {contact.email ? (
+                    <>
+                      {' · '}
+                      <a
+                        href={`https://mail.google.com/mail/?view=cm&to=${encodeURIComponent(contact.email)}${editedSubject ? `&su=${encodeURIComponent(editedSubject)}` : ''}${editedBody ? `&body=${encodeURIComponent(editedBody)}` : ''}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        style={{ color: 'var(--accent)', fontWeight: 600 }}
+                      >
+                        {contact.email}
+                      </a>
+                    </>
+                  ) : ''}
                 </span>
               </div>
             </>

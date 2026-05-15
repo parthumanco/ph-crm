@@ -912,7 +912,7 @@ export default function SignalWatchPage({ onNavigate, icp }) {
             <div className="stat-card"><div className="stat-val">{companies.length}</div><div className="stat-label">Total Companies</div></div>
             <div className="stat-card"><div className="stat-val">{scanned}</div><div className="stat-label">Scanned</div></div>
             <div className="stat-card"><div className="stat-val">{hot}</div><div className="stat-label">Score 7+ (Hot)</div></div>
-            <div className="stat-card"><div className="stat-val">{added}</div><div className="stat-label">In Pipeline</div></div>
+            <div className="stat-card" onClick={() => onNavigate('pipeline')} style={{ cursor: 'pointer' }} title="Go to Pipeline"><div className="stat-val" style={{ color: 'var(--blue)' }}>{added}</div><div className="stat-label">In Pipeline</div></div>
           </div>
         )}
 
@@ -1135,6 +1135,7 @@ export default function SignalWatchPage({ onNavigate, icp }) {
                     forceExpanded={expandedCards[key]}
                     onExpandedChange={(val) => setExpandedCards(prev => ({ ...prev, [key]: val }))}
                     cardRef={el => { cardRefs.current[key] = el; }}
+                    onUpdateContacts={(updatedContacts) => setCompanies(prev => prev.map(c => (c.id || c._tempId) === key ? { ...c, contacts: updatedContacts } : c))}
                   />
                 );
               })}
@@ -1146,7 +1147,48 @@ export default function SignalWatchPage({ onNavigate, icp }) {
   );
 }
 
-function CompanyCard({ company, distMiles, status, isScanning, isAddingToPipeline, isAddedToPipeline, onScan, onAddToPipeline, onNavigatePipeline, onDelete, forceExpanded, onExpandedChange, cardRef }) {
+function AddContactForm({ companyId, existingContacts, onSaved }) {
+  const [show, setShow] = useState(false);
+  const [form, setForm] = useState({ name: '', title: '', email: '', linkedin: '' });
+  const [saving, setSaving] = useState(false);
+
+  const save = async () => {
+    if (!form.name.trim()) return;
+    setSaving(true);
+    try {
+      const updated = [...existingContacts, { name: form.name.trim(), title: form.title.trim(), email: form.email.trim(), linkedin: form.linkedin.trim() }];
+      await supabase.from('companies').update({ contacts: updated, updated_at: new Date().toISOString() }).eq('id', companyId);
+      onSaved(updated);
+      setForm({ name: '', title: '', email: '', linkedin: '' });
+      setShow(false);
+    } catch (e) {
+      alert('Error saving contact: ' + e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!show) return (
+    <button className="btn btn-ghost btn-xs" onClick={() => setShow(true)}>+ Add Contact</button>
+  );
+
+  return (
+    <div style={{ marginTop: 8, padding: '12px', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 6 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
+        <input type="text" placeholder="Name *" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} style={{ fontSize: 12 }} />
+        <input type="text" placeholder="Title" value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} style={{ fontSize: 12 }} />
+        <input type="email" placeholder="Email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} style={{ fontSize: 12 }} />
+        <input type="text" placeholder="LinkedIn URL" value={form.linkedin} onChange={e => setForm(f => ({ ...f, linkedin: e.target.value }))} style={{ fontSize: 12 }} />
+      </div>
+      <div style={{ display: 'flex', gap: 8 }}>
+        <button className="btn btn-primary btn-sm" onClick={save} disabled={!form.name.trim() || saving}>{saving ? 'Saving…' : 'Save Contact'}</button>
+        <button className="btn btn-ghost btn-sm" onClick={() => { setShow(false); setForm({ name: '', title: '', email: '', linkedin: '' }); }}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
+function CompanyCard({ company, distMiles, status, isScanning, isAddingToPipeline, isAddedToPipeline, onScan, onAddToPipeline, onNavigatePipeline, onDelete, forceExpanded, onExpandedChange, cardRef, onUpdateContacts }) {
   const [expanded, setExpanded] = useState(false);
   const hasResult = company.scan_date && !company._error;
 
@@ -1300,22 +1342,23 @@ function CompanyCard({ company, distMiles, status, isScanning, isAddingToPipelin
           )}
 
           {/* Contacts */}
-          {(company.contacts || []).length > 0 && (
-            <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
-              <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--text-muted)', letterSpacing: '.06em', textTransform: 'uppercase', marginBottom: 8 }}>Contacts</div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+            <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--text-muted)', letterSpacing: '.06em', textTransform: 'uppercase', marginBottom: 8 }}>Contacts</div>
+            {(company.contacts || []).length > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 10 }}>
                 {company.contacts.map((ct, i) => (
                   <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
                     <span style={{ fontWeight: 700, fontSize: 13, minWidth: 120 }}>
                       {ct.linkedin ? <a href={ct.linkedin} target="_blank" rel="noreferrer" style={{ color: 'var(--accent)' }}>{ct.name}</a> : ct.name}
                     </span>
                     {ct.title && <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{ct.title}</span>}
-                    {ct.email && <a href={`mailto:${ct.email}`} style={{ fontSize: 12, color: 'var(--accent)' }}>{ct.email}</a>}
+                    {ct.email && <a href={`https://mail.google.com/mail/?view=cm&to=${encodeURIComponent(ct.email)}`} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: 'var(--accent)' }}>{ct.email}</a>}
                   </div>
                 ))}
               </div>
-            </div>
-          )}
+            )}
+            <AddContactForm companyId={company.id} existingContacts={company.contacts || []} onSaved={onUpdateContacts} />
+          </div>
 
         </div>
       )}
