@@ -41,6 +41,7 @@ export default function PipelinePage() {
   const [search, setSearch]       = useState('');
   const [selected, setSelected]   = useState(null);
   const [expandedRows, setExpandedRows] = useState({});
+  const [primaryContacts, setPrimaryContacts] = useState({});
   const [draftModal, setDraftModal] = useState(null);
   const [responseModal, setResponseModal] = useState(null);
   const [notesEntry, setNotesEntry] = useState(null);
@@ -57,6 +58,9 @@ export default function PipelinePage() {
     (comps || []).forEach(c => { compMap[c.id] = c; });
     setCompanies(compMap);
     setTouches(tchs || []);
+    const primMap = {};
+    (ents || []).forEach(e => { primMap[e.id] = e.primary_contact_index || 0; });
+    setPrimaryContacts(primMap);
     setLoading(false);
   }, []);
 
@@ -223,7 +227,7 @@ export default function PipelinePage() {
                                   className={`touch-pill${cls ? ' ' + cls : ''}`}
                                   title={`${TOUCH_LABELS[n]?.label}${t?.status === 'ready' ? ' · Draft saved — click to edit' : ' · Click to draft'}`}
                                   style={{ cursor: 'pointer' }}
-                                  onClick={() => setDraftModal({ entry, company, touchNumber: n, touchType: TOUCH_LABELS[n]?.type || 'email', contacts: company.contacts || [], existingTouch: touchMap[n] || null, t1Subject: touchMap[1]?.subject_line || null })}
+                                  onClick={() => setDraftModal({ entry, company, touchNumber: n, touchType: TOUCH_LABELS[n]?.type || 'email', contacts: company.contacts || [], existingTouch: touchMap[n] || null, t1Subject: touchMap[1]?.subject_line || null, defaultContactIndex: primaryContacts[entry.id] || 0 })}
                                 >
                                   {n}
                                 </div>
@@ -276,6 +280,11 @@ export default function PipelinePage() {
                                 <ContactList
                                   companyId={company.id}
                                   contacts={company.contacts || []}
+                                  primaryIndex={primaryContacts[entry.id] || 0}
+                                  onSetPrimary={async (idx) => {
+                                    await supabase.from('pipeline_entries').update({ primary_contact_index: idx }).eq('id', entry.id);
+                                    setPrimaryContacts(prev => ({ ...prev, [entry.id]: idx }));
+                                  }}
                                   onUpdated={(updated) => setCompanies(prev => ({ ...prev, [company.id]: { ...company, contacts: updated } }))}
                                 />
                               </div>
@@ -357,7 +366,7 @@ export default function PipelinePage() {
 
 // ── Contact List (with edit) ──────────────────────────────────────────────────
 
-function ContactList({ companyId, contacts, onUpdated }) {
+function ContactList({ companyId, contacts, primaryIndex = 0, onSetPrimary, onUpdated }) {
   const [editingIdx, setEditingIdx] = useState(null);
   const [editForm, setEditForm] = useState({});
 
@@ -387,13 +396,18 @@ function ContactList({ companyId, contacts, onUpdated }) {
               </div>
             </div>
           ) : (
-            <div key={i} style={{ fontSize: 12 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div key={i} style={{ fontSize: 12, borderRadius: 6, border: `1px solid ${i === primaryIndex ? 'var(--accent)' : 'var(--border)'}`, overflow: 'hidden' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', background: i === primaryIndex ? 'var(--accent)11' : 'var(--surface)' }}>
+                <button
+                  title={i === primaryIndex ? 'Primary contact' : 'Set as primary contact'}
+                  onClick={() => onSetPrimary?.(i)}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, padding: 0, lineHeight: 1, opacity: i === primaryIndex ? 1 : 0.3 }}
+                >⭐</button>
                 <span style={{ fontWeight: 600 }}>{c.name}{c.title ? <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}> · {c.title}</span> : ''}</span>
+                {c.email && <a href={`https://mail.google.com/mail/?view=cm&to=${encodeURIComponent(c.email)}`} target="_blank" rel="noreferrer" style={{ color: 'var(--text-faint)', marginLeft: 4 }}>{c.email}</a>}
+                {c.linkedin && <a href={c.linkedin} target="_blank" rel="noreferrer" style={{ color: 'var(--blue)', fontSize: 11 }}>LinkedIn ↗</a>}
                 <button className="btn btn-ghost btn-xs" style={{ color: 'var(--text-faint)', marginLeft: 'auto' }} onClick={() => { setEditingIdx(i); setEditForm({ ...c }); }}>✏️ Edit</button>
               </div>
-              {c.email && <a href={`https://mail.google.com/mail/?view=cm&to=${encodeURIComponent(c.email)}`} target="_blank" rel="noreferrer" style={{ color: 'var(--text-faint)' }}>{c.email}</a>}
-              {c.linkedin && <><br /><a href={c.linkedin} target="_blank" rel="noreferrer" style={{ color: 'var(--blue)', fontSize: 11 }}>LinkedIn ↗</a></>}
             </div>
           )
         ))}

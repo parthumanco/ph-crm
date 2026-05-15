@@ -328,6 +328,8 @@ export default function SignalWatchPage({ onNavigate, icp }) {
 
   // ── Save scan result to Supabase ─────────────────────────────────────────────
 
+  const stripEmDash = str => str ? str.replace(/—/g, ',') : str;
+
   const saveScanResult = useCallback(async (companyId, result, overwriteWebsite = false) => {
     const update = {
       icp_tier: result.icpTier || null,
@@ -336,10 +338,10 @@ export default function SignalWatchPage({ onNavigate, icp }) {
       funding_stage: result.fundingStage || null,
       employee_count_num: result.employeeCountNum ? Math.round(result.employeeCountNum) : null,
       employee_count: result.employeeCountNum ? String(Math.round(result.employeeCountNum)) : null,
-      summary: result.summary || null,
-      triggers: result.triggers || [],
-      recommended_angle: result.recommendedAngle || null,
-      contact_angles: result.contactAngles || [],
+      summary: stripEmDash(result.summary) || null,
+      triggers: (result.triggers || []).map(t => ({ ...t, headline: stripEmDash(t.headline), detail: stripEmDash(t.detail) })),
+      recommended_angle: stripEmDash(result.recommendedAngle) || null,
+      contact_angles: (result.contactAngles || []).map(ca => ({ ...ca, angle: stripEmDash(ca.angle) })),
       lat: result.lat || null,
       lng: result.lng || null,
       scan_date: new Date().toISOString(),
@@ -350,20 +352,32 @@ export default function SignalWatchPage({ onNavigate, icp }) {
     const { error } = await supabase.from('companies').update(update).eq('id', companyId);
     if (error) throw new Error(error.message);
 
-    // Merge any discovered LinkedIn URLs back into the contacts array
+    // Merge LinkedIn URLs and discovered contacts back into the contacts array
     const discoveredUrls = (result.contactAngles || []).filter(ca => ca.linkedinUrl);
-    if (discoveredUrls.length > 0) {
+    const newlyFound = (result.discoveredContacts || []).filter(dc => dc.name);
+    if (discoveredUrls.length > 0 || newlyFound.length > 0) {
       const currentCompany = companiesRef.current.find(c => c.id === companyId);
       if (currentCompany) {
         const existingContacts = currentCompany.contacts || [];
-        let updated = false;
-        const mergedContacts = existingContacts.map(ct => {
-          if (ct.linkedin) return ct; // already has a URL, don't overwrite
+        const existingNames = new Set(existingContacts.map(ct => ct.name?.toLowerCase()));
+
+        // Add LinkedIn URLs to existing contacts that don't have one
+        let mergedContacts = existingContacts.map(ct => {
+          if (ct.linkedin) return ct;
           const match = discoveredUrls.find(ca => ca.name?.toLowerCase() === ct.name?.toLowerCase());
-          if (match?.linkedinUrl) { updated = true; return { ...ct, linkedin: match.linkedinUrl }; }
-          return ct;
+          return match?.linkedinUrl ? { ...ct, linkedin: match.linkedinUrl } : ct;
         });
-        if (updated) {
+
+        // Append newly discovered contacts not already in the list
+        for (const dc of newlyFound) {
+          if (!existingNames.has(dc.name.toLowerCase())) {
+            mergedContacts.push({ name: dc.name, title: dc.title || '', email: '', linkedin: dc.linkedinUrl || '' });
+            existingNames.add(dc.name.toLowerCase());
+          }
+        }
+
+        const contactsChanged = JSON.stringify(mergedContacts) !== JSON.stringify(existingContacts);
+        if (contactsChanged) {
           await supabase.from('companies').update({ contacts: mergedContacts }).eq('id', companyId);
           update.contacts = mergedContacts;
         }
@@ -1361,37 +1375,14 @@ function CompanyCard({ company, distMiles, status, isScanning, isAddingToPipelin
             </div>
           )}
 
-          {/* Per-contact angles */}
-          {(company.contact_angles || []).length > 0 && (
-            <div style={{ marginBottom: 12 }}>
-              <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--text-muted)', letterSpacing: '.06em', textTransform: 'uppercase', marginBottom: 8 }}>Angles by Contact</div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {company.contact_angles.map((ca, i) => {
-                  const linkedinUrl = ca.linkedinUrl || (company.contacts || []).find(ct => ct.name?.toLowerCase() === ca.name?.toLowerCase())?.linkedin;
-                  return (
-                    <div key={i} style={{ padding: '10px 12px', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 6 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4, flexWrap: 'wrap' }}>
-                        <span style={{ fontWeight: 800, fontSize: 13, color: '#15803d' }}>{ca.name}</span>
-                        {ca.title && <span style={{ fontSize: 11, color: '#16a34a', background: '#dcfce7', padding: '1px 8px', borderRadius: 3, fontWeight: 600 }}>{ca.title}</span>}
-                        {linkedinUrl && (
-                          <a href={linkedinUrl} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: '#0a66c2', background: '#e8f0fe', border: '1px solid #c7d7f7', padding: '1px 8px', borderRadius: 3, fontWeight: 600, textDecoration: 'none' }}>LinkedIn ↗</a>
-                        )}
-                      </div>
-                      <p style={{ fontSize: 12, color: '#166534', lineHeight: 1.55, margin: 0 }}>{ca.angle}</p>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          {/* Contacts */}
+          {/* Contacts (merged with angles) */}
           <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
             <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--text-muted)', letterSpacing: '.06em', textTransform: 'uppercase', marginBottom: 8 }}>Contacts</div>
             {(company.contacts || []).length > 0 && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 10 }}>
-                {company.contacts.map((ct, i) => (
-                  editingIdx === i ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 10 }}>
+                {company.contacts.map((ct, i) => {
+                  const angle = (company.contact_angles || []).find(ca => ca.name?.toLowerCase() === ct.name?.toLowerCase());
+                  return editingIdx === i ? (
                     <div key={i} style={{ padding: '10px', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 6 }}>
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
                         <input type="text" placeholder="Name *" value={editForm.name || ''} onChange={e => setEditForm(f => ({ ...f, name: e.target.value }))} style={{ fontSize: 12 }} />
@@ -1405,16 +1396,25 @@ function CompanyCard({ company, distMiles, status, isScanning, isAddingToPipelin
                       </div>
                     </div>
                   ) : (
-                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-                      <span style={{ fontWeight: 700, fontSize: 13, minWidth: 120 }}>
-                        {ct.linkedin ? <a href={ct.linkedin} target="_blank" rel="noreferrer" style={{ color: 'var(--accent)' }}>{ct.name}</a> : ct.name}
-                      </span>
-                      {ct.title && <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{ct.title}</span>}
-                      {ct.email && <a href={`https://mail.google.com/mail/?view=cm&to=${encodeURIComponent(ct.email)}`} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: 'var(--accent)' }}>{ct.email}</a>}
-                      <button className="btn btn-ghost btn-xs" style={{ marginLeft: 'auto', color: 'var(--text-faint)' }} onClick={() => { setEditingIdx(i); setEditForm({ ...ct }); }}>✏️ Edit</button>
+                    <div key={i} style={{ borderRadius: 6, border: '1px solid var(--border)', overflow: 'hidden' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', padding: '8px 12px', background: 'var(--surface)' }}>
+                        <span style={{ fontWeight: 700, fontSize: 13 }}>
+                          {ct.linkedin ? <a href={ct.linkedin} target="_blank" rel="noreferrer" style={{ color: 'var(--accent)' }}>{ct.name}</a> : ct.name}
+                        </span>
+                        {ct.title && <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{ct.title}</span>}
+                        {ct.email && <a href={`https://mail.google.com/mail/?view=cm&to=${encodeURIComponent(ct.email)}`} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: 'var(--accent)' }}>{ct.email}</a>}
+                        {ct.linkedin && <a href={ct.linkedin} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: '#0a66c2', background: '#e8f0fe', border: '1px solid #c7d7f7', padding: '1px 8px', borderRadius: 3, fontWeight: 600, textDecoration: 'none' }}>LinkedIn ↗</a>}
+                        <button className="btn btn-ghost btn-xs" style={{ marginLeft: 'auto', color: 'var(--text-faint)' }} onClick={() => { setEditingIdx(i); setEditForm({ ...ct }); }}>✏️ Edit</button>
+                      </div>
+                      {angle?.angle && (
+                        <div style={{ padding: '8px 12px', background: '#f0fdf4', borderTop: '1px solid #bbf7d0' }}>
+                          <span style={{ fontSize: 10, fontWeight: 800, color: '#15803d', textTransform: 'uppercase', letterSpacing: '.04em' }}>Outreach Angle · </span>
+                          <span style={{ fontSize: 12, color: '#166534', lineHeight: 1.55 }}>{angle.angle}</span>
+                        </div>
+                      )}
                     </div>
-                  )
-                ))}
+                  );
+                })}
               </div>
             )}
             <AddContactForm companyId={company.id} existingContacts={company.contacts || []} onSaved={onUpdateContacts} />

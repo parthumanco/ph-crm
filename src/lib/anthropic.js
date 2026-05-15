@@ -44,6 +44,7 @@ function buildBatchSystem(icp) {
   const profile = buildIcpProfile(icp);
   return `Sales intelligence analyst scoring companies for Part Human outreach.
 ${profile}
+NEVER use em dashes (—) anywhere in your response. Use commas or periods instead.
 Return ONLY a JSON array, same order as input. Short strings only.
 Each object schema:
 {"companyName":"str","website":"https://domain.com or null — only include if you are confident this is correct, never guess","overallScore":1-10,"icpScore":1-10,"icpReason":"max 15 words","icpTier":"Ambitious Scale-Up|Category Challenger|Innovation Team","fundingStage":"Seed|Series A|Series B|Series C|Series D+|Unknown","employeeCountNum":integer_or_null,"summary":"max 25 words","triggers":[{"category":"leadership|funding|expansion|product|pain|hiring","headline":"max 8 words","detail":"max 20 words","urgency":"high|medium|low","source":"str","date":"str"}],"recommendedAngle":"max 30 words","contactAngles":[{"name":"str","title":"str","angle":"max 30 words"}],"lat":number_or_null,"lng":number_or_null,"noNewsFound":false}
@@ -74,9 +75,13 @@ Trigger categories to surface:
 - social: exec posts about brand challenges, growth goals, or culture shifts
 
 ${profile}
-For each contact listed, search for their LinkedIn profile URL (linkedin.com/in/...) and check it for recent posts. Also find the company's LinkedIn page URL (linkedin.com/company/...) and check it for recent posts, announcements, or hiring activity. Only include URLs you find with confidence — never guess.
+For each contact listed, search for their LinkedIn profile URL (linkedin.com/in/...) and check it for recent posts. Also find the company's LinkedIn page URL (linkedin.com/company/...) and check it for recent posts, announcements, or hiring activity. While on the company LinkedIn page, look for other people who list this company as their employer — especially founders, C-suite, VPs, and marketing/brand/comms leaders.
+
+CRITICAL RULE FOR LINKEDIN URLs: NEVER construct or guess a LinkedIn URL from a person's name (e.g. do NOT assume linkedin.com/in/firstname-lastname). Only include a linkedinUrl if that exact URL appeared in your actual web search results. If you did not find the URL in search results, set linkedinUrl to null. A missing URL is far better than a wrong one.
+NEVER use em dashes (—) anywhere in your response. Use commas or periods instead.
 Return ONLY valid JSON object, no markdown:
-{"companyName":"str","website":"https://domain.com or null","companyLinkedinUrl":"https://linkedin.com/company/... or null","scanDate":"today","overallScore":1-10,"icpScore":1-10,"icpReason":"str","icpTier":"str","fundingStage":"Seed|Series A|Series B|Series C|Series D+|Unknown","employeeCountNum":integer_or_null,"summary":"2-3 sentences","triggers":[{"category":"str","headline":"str","detail":"str","urgency":"str","source":"str","date":"str"}],"recommendedAngle":"str","contactAngles":[{"name":"str","title":"str","angle":"str","linkedinUrl":"https://linkedin.com/in/... or null"}],"lat":number_or_null,"lng":number_or_null,"noNewsFound":false}
+{"companyName":"str","website":"https://domain.com or null","companyLinkedinUrl":"https://linkedin.com/company/... or null","scanDate":"today","overallScore":1-10,"icpScore":1-10,"icpReason":"str","icpTier":"str","fundingStage":"Seed|Series A|Series B|Series C|Series D+|Unknown","employeeCountNum":integer_or_null,"summary":"2-3 sentences","triggers":[{"category":"str","headline":"str","detail":"str","urgency":"str","source":"str","date":"str"}],"recommendedAngle":"str","contactAngles":[{"name":"str","title":"str","angle":"str","linkedinUrl":"https://linkedin.com/in/... or null"}],"discoveredContacts":[{"name":"str","title":"str","linkedinUrl":"https://linkedin.com/in/... or null"}],"lat":number_or_null,"lng":number_or_null,"noNewsFound":false}
+discoveredContacts: people you found working at this company who were NOT in the provided contact list. Max 5. Only include if found with confidence. For all linkedinUrl fields: only include URLs that appeared explicitly in your search results — never construct them from names.
 For lat/lng: return the approximate latitude and longitude of the company headquarters city.
 For website: search for and return the company's actual primary website URL. Verify it exists.`;
 }

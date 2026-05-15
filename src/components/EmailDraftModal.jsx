@@ -10,9 +10,9 @@ const TOUCH_META = {
   5: { label: 'Touch 5 — Close the Loop',   type: 'email',    desc: 'Graceful final note, leave door open, Day 28.' },
 };
 
-export default function EmailDraftModal({ entry, company, touchNumber, contacts, existingTouch, onClose, onMarkSent, onSave, t1Subject }) {
+export default function EmailDraftModal({ entry, company, touchNumber, contacts, existingTouch, onClose, onMarkSent, onSave, t1Subject, defaultContactIndex = 0 }) {
   const meta = TOUCH_META[touchNumber] || {};
-  const [selectedContact, setSelectedContact] = useState(0);
+  const [selectedContact, setSelectedContact] = useState(defaultContactIndex);
   const [draft, setDraft]           = useState(null);
   const [generating, setGenerating] = useState(false);
   const [editedBody, setEditedBody] = useState('');
@@ -20,11 +20,25 @@ export default function EmailDraftModal({ entry, company, touchNumber, contacts,
   const [copied, setCopied]         = useState(false);
   const [saving, setSaving]         = useState(false);
   const [saveConfirmed, setSaveConfirmed] = useState(false);
-  const [angle, setAngle]           = useState(company.recommended_angle || '');
+  const [angle, setAngle]           = useState(() => {
+    const ct = contacts[defaultContactIndex];
+    const contactAngle = ct && (company.contact_angles || []).find(ca => ca.name?.toLowerCase() === ct.name?.toLowerCase());
+    return contactAngle?.angle || company.recommended_angle || '';
+  });
 
   const contact = contacts[selectedContact] || { name: 'the decision-maker', title: '', email: '' };
 
   const isSent = existingTouch?.status === 'sent';
+
+  // When contact changes, load their specific outreach angle
+  useEffect(() => {
+    if (isSent) return;
+    const ct = contacts[selectedContact];
+    if (!ct) return;
+    const contactAngle = (company.contact_angles || []).find(ca => ca.name?.toLowerCase() === ct.name?.toLowerCase());
+    setAngle(contactAngle?.angle || company.recommended_angle || '');
+    setDraft(null); // clear draft so user regenerates for new contact
+  }, [selectedContact]);
 
   // Load existing saved draft on open (including sent)
   useEffect(() => {
@@ -144,10 +158,17 @@ export default function EmailDraftModal({ entry, company, touchNumber, contacts,
             </div>
           )}
 
-          {touchNumber === 1 && (
+          {!isSent && (
             <div className="form-row">
-              <label>Outreach Angle (edit if needed)</label>
-              <textarea rows={4} value={angle} onChange={e => setAngle(e.target.value)} placeholder="e.g. You just raised your Series B. Your product is ahead of your brand." style={{ fontSize: 13, lineHeight: 1.6 }} />
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                Outreach Angle
+                {(company.contact_angles || []).find(ca => ca.name?.toLowerCase() === contact.name?.toLowerCase()) ? (
+                  <span style={{ fontSize: 10, background: '#dcfce7', color: '#15803d', padding: '1px 7px', borderRadius: 3, fontWeight: 700 }}>Contact-specific</span>
+                ) : (
+                  <span style={{ fontSize: 10, background: 'var(--surface)', color: 'var(--text-muted)', padding: '1px 7px', borderRadius: 3, fontWeight: 600 }}>Company default</span>
+                )}
+              </label>
+              <textarea rows={3} value={angle} onChange={e => setAngle(e.target.value)} placeholder="e.g. You just raised your Series B. Your product is ahead of your brand." style={{ fontSize: 13, lineHeight: 1.6 }} />
             </div>
           )}
 
