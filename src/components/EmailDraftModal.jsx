@@ -47,7 +47,7 @@ export default function EmailDraftModal({ entry, company, touchNumber, contacts,
     try {
       let result;
       if (touchNumber === 3) {
-        result = await generateLinkedInDrafts(company, contact);
+        result = await generateLinkedInDrafts(company, contact, t1Subject);
       } else {
         result = await generateEmailDraft(touchNumber, company, contact, angle, undefined, t1Subject);
       }

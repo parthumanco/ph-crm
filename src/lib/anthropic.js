@@ -341,20 +341,23 @@ export async function generateEmailDraft(touchNumber, company, contact, angle, i
   return result;
 }
 
-export async function generateLinkedInDrafts(company, contact) {
+export async function generateLinkedInDrafts(company, contact, t1Subject = null) {
   const data = await withTimeout(
     callClaude({
       model: 'claude-sonnet-4-6',
       max_tokens: 600,
       system: `You are a copywriter for Part Human. Write in their voice: direct, warm, human, no jargon. Never use em dashes (—). Return only valid JSON.`,
-      messages: [{ role: 'user', content: TOUCH_PROMPTS[3](company, contact) }],
+      messages: [{ role: 'user', content: TOUCH_PROMPTS[3](company, contact, null, t1Subject) }],
     }),
     TIMEOUT_MS
   );
 
   const text = data.content?.find(b => b.type === 'text')?.text || '';
   const cleaned = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
-  const result = JSON.parse(cleaned);
+  const s = cleaned.indexOf('{');
+  const e = cleaned.lastIndexOf('}');
+  if (s === -1 || e === -1) throw new Error('No JSON found in LinkedIn draft response');
+  const result = JSON.parse(cleaned.slice(s, e + 1));
   if (result.connection_note) result.connection_note = result.connection_note.replace(/—/g, ',');
   if (result.acceptance_dm) result.acceptance_dm = result.acceptance_dm.replace(/—/g, ',');
   return result;
