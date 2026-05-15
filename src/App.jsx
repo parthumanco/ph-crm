@@ -60,7 +60,7 @@ export default function App() {
           <SignalWatchPage onNavigate={setPage} icp={icp} />
         </PageSlot>
         <PageSlot active={page === 'pipeline'}>
-          <PipelinePage />
+          <PipelinePage icp={icp} />
         </PageSlot>
         <PageSlot active={page === 'report'}>
           <WeeklyReportPage icp={icp} />

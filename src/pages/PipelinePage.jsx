@@ -32,7 +32,7 @@ function nextTouchDue(entry, touches) {
   return `In ${7 - days}d`;
 }
 
-export default function PipelinePage() {
+export default function PipelinePage({ icp = {} }) {
   const [entries, setEntries]     = useState([]);
   const [companies, setCompanies] = useState({});
   const [touches, setTouches]     = useState([]);
@@ -227,7 +227,7 @@ export default function PipelinePage() {
                                   className={`touch-pill${cls ? ' ' + cls : ''}`}
                                   title={`${TOUCH_LABELS[n]?.label}${t?.status === 'ready' ? ' · Draft saved — click to edit' : ' · Click to draft'}`}
                                   style={{ cursor: 'pointer' }}
-                                  onClick={() => setDraftModal({ entry, company, touchNumber: n, touchType: TOUCH_LABELS[n]?.type || 'email', contacts: company.contacts || [], existingTouch: touchMap[n] || null, t1Subject: touchMap[1]?.subject_line || null, defaultContactIndex: primaryContacts[entry.id] || 0 })}
+                                  onClick={() => setDraftModal({ entry, company, touchNumber: n, touchType: TOUCH_LABELS[n]?.type || 'email', contacts: company.contacts || [], existingTouch: touchMap[n] || null, t1Subject: touchMap[1]?.subject_line || null, defaultContactIndex: primaryContacts[entry.id] || 0, emailSignature: icp.emailSignature || '' })}
                                 >
                                   {n}
                                 </div>

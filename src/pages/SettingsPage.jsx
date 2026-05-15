@@ -32,6 +32,12 @@ const FIELD_META = [
     hint: 'Tone and style rules applied to every generated email.',
     rows: 3,
   },
+  {
+    key: 'emailSignature',
+    label: 'Email Signature',
+    hint: 'Appended automatically when opening Gmail. Include your name, title, and any links.',
+    rows: 4,
+  },
 ];
 
 export default function SettingsPage({ icp, onIcpSaved }) {

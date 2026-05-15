@@ -10,7 +10,7 @@ const TOUCH_META = {
   5: { label: 'Touch 5 — Close the Loop',   type: 'email',    desc: 'Graceful final note, leave door open, Day 28.' },
 };
 
-export default function EmailDraftModal({ entry, company, touchNumber, contacts, existingTouch, onClose, onMarkSent, onSave, t1Subject, defaultContactIndex = 0 }) {
+export default function EmailDraftModal({ entry, company, touchNumber, contacts, existingTouch, onClose, onMarkSent, onSave, t1Subject, defaultContactIndex = 0, emailSignature = '' }) {
   const meta = TOUCH_META[touchNumber] || {};
   const [selectedContact, setSelectedContact] = useState(defaultContactIndex);
   const [draft, setDraft]           = useState(null);
@@ -255,7 +255,7 @@ export default function EmailDraftModal({ entry, company, touchNumber, contacts,
                     <>
                       {' · '}
                       <a
-                        href={`https://mail.google.com/mail/?view=cm&to=${encodeURIComponent(contact.email)}${editedSubject ? `&su=${encodeURIComponent(editedSubject)}` : ''}${editedBody ? `&body=${encodeURIComponent(editedBody)}` : ''}`}
+                        href={`https://mail.google.com/mail/?view=cm&to=${encodeURIComponent(contact.email)}${editedSubject ? `&su=${encodeURIComponent(editedSubject)}` : ''}${editedBody || emailSignature ? `&body=${encodeURIComponent(editedBody + (emailSignature ? '\n\n' + emailSignature : ''))}` : ''}`}
                         target="_blank"
                         rel="noreferrer"
                         style={{ color: 'var(--accent)', fontWeight: 600 }}

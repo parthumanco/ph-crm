@@ -20,6 +20,8 @@ Best triggers: Recent funding, new CEO/CMO, rapid hiring, product launch, market
 "Innovation Team": Corporate skunkworks, new business units with disruption mandate`,
 
   outreachVoice: `Direct, warm, human, no jargon. Reference specific trigger, connect to brand gap. Never use em dashes (—). Write like a smart colleague reaching out, not a salesperson pitching.`,
+
+  emailSignature: ``,
 };
 
 export function buildIcpProfile(icp = DEFAULT_ICP) {
