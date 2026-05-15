@@ -1157,7 +1157,8 @@ function AddContactForm({ companyId, existingContacts, onSaved }) {
     setSaving(true);
     try {
       const updated = [...existingContacts, { name: form.name.trim(), title: form.title.trim(), email: form.email.trim(), linkedin: form.linkedin.trim() }];
-      await supabase.from('companies').update({ contacts: updated, updated_at: new Date().toISOString() }).eq('id', companyId);
+      const { error } = await supabase.from('companies').update({ contacts: updated }).eq('id', companyId);
+      if (error) throw error;
       onSaved(updated);
       setForm({ name: '', title: '', email: '', linkedin: '' });
       setShow(false);
@@ -1190,6 +1191,8 @@ function AddContactForm({ companyId, existingContacts, onSaved }) {
 
 function CompanyCard({ company, distMiles, status, isScanning, isAddingToPipeline, isAddedToPipeline, onScan, onAddToPipeline, onNavigatePipeline, onDelete, forceExpanded, onExpandedChange, cardRef, onUpdateContacts }) {
   const [expanded, setExpanded] = useState(false);
+  const [editingIdx, setEditingIdx] = useState(null);
+  const [editForm, setEditForm] = useState({});
   const hasResult = company.scan_date && !company._error;
 
   useEffect(() => {
@@ -1200,6 +1203,15 @@ function CompanyCard({ company, distMiles, status, isScanning, isAddingToPipelin
     setExpanded(val);
     onExpandedChange?.(val);
   };
+
+  const saveContactEdit = async () => {
+    const updated = (company.contacts || []).map((c, i) => i === editingIdx ? { ...editForm } : c);
+    const { error } = await supabase.from('companies').update({ contacts: updated }).eq('id', company.id);
+    if (error) { alert('Error saving: ' + error.message); return; }
+    onUpdateContacts(updated);
+    setEditingIdx(null);
+  };
+
   const sc = company.overall_score ? scoreColor(company.overall_score) : null;
 
   return (
@@ -1345,15 +1357,31 @@ function CompanyCard({ company, distMiles, status, isScanning, isAddingToPipelin
           <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
             <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--text-muted)', letterSpacing: '.06em', textTransform: 'uppercase', marginBottom: 8 }}>Contacts</div>
             {(company.contacts || []).length > 0 && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 10 }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 10 }}>
                 {company.contacts.map((ct, i) => (
-                  <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-                    <span style={{ fontWeight: 700, fontSize: 13, minWidth: 120 }}>
-                      {ct.linkedin ? <a href={ct.linkedin} target="_blank" rel="noreferrer" style={{ color: 'var(--accent)' }}>{ct.name}</a> : ct.name}
-                    </span>
-                    {ct.title && <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{ct.title}</span>}
-                    {ct.email && <a href={`https://mail.google.com/mail/?view=cm&to=${encodeURIComponent(ct.email)}`} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: 'var(--accent)' }}>{ct.email}</a>}
-                  </div>
+                  editingIdx === i ? (
+                    <div key={i} style={{ padding: '10px', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 6 }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
+                        <input type="text" placeholder="Name *" value={editForm.name || ''} onChange={e => setEditForm(f => ({ ...f, name: e.target.value }))} style={{ fontSize: 12 }} />
+                        <input type="text" placeholder="Title" value={editForm.title || ''} onChange={e => setEditForm(f => ({ ...f, title: e.target.value }))} style={{ fontSize: 12 }} />
+                        <input type="email" placeholder="Email" value={editForm.email || ''} onChange={e => setEditForm(f => ({ ...f, email: e.target.value }))} style={{ fontSize: 12 }} />
+                        <input type="text" placeholder="LinkedIn URL" value={editForm.linkedin || ''} onChange={e => setEditForm(f => ({ ...f, linkedin: e.target.value }))} style={{ fontSize: 12 }} />
+                      </div>
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        <button className="btn btn-primary btn-sm" onClick={saveContactEdit}>Save</button>
+                        <button className="btn btn-ghost btn-sm" onClick={() => setEditingIdx(null)}>Cancel</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                      <span style={{ fontWeight: 700, fontSize: 13, minWidth: 120 }}>
+                        {ct.linkedin ? <a href={ct.linkedin} target="_blank" rel="noreferrer" style={{ color: 'var(--accent)' }}>{ct.name}</a> : ct.name}
+                      </span>
+                      {ct.title && <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{ct.title}</span>}
+                      {ct.email && <a href={`https://mail.google.com/mail/?view=cm&to=${encodeURIComponent(ct.email)}`} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: 'var(--accent)' }}>{ct.email}</a>}
+                      <button className="btn btn-ghost btn-xs" style={{ marginLeft: 'auto', color: 'var(--text-faint)' }} onClick={() => { setEditingIdx(i); setEditForm({ ...ct }); }}>✏️ Edit</button>
+                    </div>
+                  )
                 ))}
               </div>
             )}

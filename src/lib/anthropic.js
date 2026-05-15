@@ -190,10 +190,17 @@ export async function scanDeepDive(company, icp = DEFAULT_ICP) {
     })
     .filter(Boolean).join('; ');
 
-  const contactNames = contacts.map(ct => ct.name).filter(Boolean);
+  const contactsWithLinkedIn = contacts.filter(ct => ct.linkedin);
+  const contactsWithoutLinkedIn = contacts.filter(ct => !ct.linkedin && ct.name);
+
+  const linkedInClause = contactsWithLinkedIn.length
+    ? ` Check these specific LinkedIn profiles for recent posts: ${contactsWithLinkedIn.map(ct => `${ct.name} (${ct.linkedin})`).join(', ')}.`
+    : '';
+  const nameSearchClause = contactsWithoutLinkedIn.length
+    ? ` Also search LinkedIn and Twitter/X for recent posts by: ${contactsWithoutLinkedIn.map(ct => `"${ct.name}" ${company.name}`).join(', ')}.`
+    : '';
 
   const websiteKnown = !!company.website;
-  const query = `${company.name}${company.hq ? ` ${company.hq}` : ''} news funding hiring LinkedIn 2025`;
 
   const data = await withTimeout(
     callClaude({
@@ -203,7 +210,7 @@ export async function scanDeepDive(company, icp = DEFAULT_ICP) {
       tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 2 }],
       messages: [{
         role: 'user',
-        content: `Search for recent signals about ${company.name}${company.website ? ` (${company.website})` : ''}. Check: company news, LinkedIn company page, Twitter/X, job boards (brand/marketing/comms roles).${contactNames.length ? ` Also search for recent LinkedIn and Twitter/X posts by these specific contacts: ${contactNames.join(', ')} — look for posts about growth, brand, team changes, or challenges.` : ''} Find up to 3 trigger events from the last 90 days. Do 1-2 searches max.${!websiteKnown ? ' Also find their website.' : ''} Return JSON only.${contactStr ? ` Contacts: ${contactStr}.` : ''}`,
+        content: `Search for recent signals about ${company.name}${company.website ? ` (${company.website})` : ''}. Check: company news, LinkedIn company page, Twitter/X, job boards (brand/marketing/comms roles).${linkedInClause}${nameSearchClause} Look for posts about growth, brand, team changes, or challenges. Find up to 3 trigger events from the last 90 days. Do 1-2 searches max.${!websiteKnown ? ' Also find their website.' : ''} Return JSON only.${contactStr ? ` Contacts: ${contactStr}.` : ''}`,
       }],
     }),
     TIMEOUT_MS

@@ -273,23 +273,10 @@ export default function PipelinePage() {
                               {/* Left: contacts */}
                               <div>
                                 <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 8 }}>Contacts</div>
-                                {(company.contacts || []).length === 0 ? (
-                                  <div style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 8 }}>No contacts</div>
-                                ) : (
-                                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 10 }}>
-                                    {(company.contacts || []).map((c, i) => (
-                                      <div key={i} style={{ fontSize: 12 }}>
-                                        <div style={{ fontWeight: 600 }}>{c.name}{c.title ? <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}> · {c.title}</span> : ''}</div>
-                                        {c.email && <a href={`https://mail.google.com/mail/?view=cm&to=${encodeURIComponent(c.email)}`} target="_blank" rel="noreferrer" style={{ color: 'var(--text-faint)', fontSize: 12 }}>{c.email}</a>}
-                                        {c.linkedin && <a href={c.linkedin} target="_blank" rel="noreferrer" style={{ color: 'var(--blue)', fontSize: 11 }}>LinkedIn ↗</a>}
-                                      </div>
-                                    ))}
-                                  </div>
-                                )}
-                                <AddContactForm
+                                <ContactList
                                   companyId={company.id}
-                                  existingContacts={company.contacts || []}
-                                  onSaved={(updated) => setCompanies(prev => ({ ...prev, [company.id]: { ...company, contacts: updated } }))}
+                                  contacts={company.contacts || []}
+                                  onUpdated={(updated) => setCompanies(prev => ({ ...prev, [company.id]: { ...company, contacts: updated } }))}
                                 />
                               </div>
                               {/* Right: scan intel */}
@@ -368,6 +355,54 @@ export default function PipelinePage() {
   );
 }
 
+// ── Contact List (with edit) ──────────────────────────────────────────────────
+
+function ContactList({ companyId, contacts, onUpdated }) {
+  const [editingIdx, setEditingIdx] = useState(null);
+  const [editForm, setEditForm] = useState({});
+
+  const saveEdit = async () => {
+    const updated = contacts.map((c, i) => i === editingIdx ? { ...editForm } : c);
+    const { error } = await supabase.from('companies').update({ contacts: updated }).eq('id', companyId);
+    if (error) { alert('Error saving: ' + error.message); return; }
+    onUpdated(updated);
+    setEditingIdx(null);
+  };
+
+  return (
+    <div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 10 }}>
+        {contacts.map((c, i) => (
+          editingIdx === i ? (
+            <div key={i} style={{ padding: '10px', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 6 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
+                <input type="text" placeholder="Name *" value={editForm.name || ''} onChange={e => setEditForm(f => ({ ...f, name: e.target.value }))} style={{ fontSize: 12 }} />
+                <input type="text" placeholder="Title" value={editForm.title || ''} onChange={e => setEditForm(f => ({ ...f, title: e.target.value }))} style={{ fontSize: 12 }} />
+                <input type="email" placeholder="Email" value={editForm.email || ''} onChange={e => setEditForm(f => ({ ...f, email: e.target.value }))} style={{ fontSize: 12 }} />
+                <input type="text" placeholder="LinkedIn URL" value={editForm.linkedin || ''} onChange={e => setEditForm(f => ({ ...f, linkedin: e.target.value }))} style={{ fontSize: 12 }} />
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button className="btn btn-primary btn-sm" onClick={saveEdit}>Save</button>
+                <button className="btn btn-ghost btn-sm" onClick={() => setEditingIdx(null)}>Cancel</button>
+              </div>
+            </div>
+          ) : (
+            <div key={i} style={{ fontSize: 12 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ fontWeight: 600 }}>{c.name}{c.title ? <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}> · {c.title}</span> : ''}</span>
+                <button className="btn btn-ghost btn-xs" style={{ color: 'var(--text-faint)', marginLeft: 'auto' }} onClick={() => { setEditingIdx(i); setEditForm({ ...c }); }}>✏️ Edit</button>
+              </div>
+              {c.email && <a href={`https://mail.google.com/mail/?view=cm&to=${encodeURIComponent(c.email)}`} target="_blank" rel="noreferrer" style={{ color: 'var(--text-faint)' }}>{c.email}</a>}
+              {c.linkedin && <><br /><a href={c.linkedin} target="_blank" rel="noreferrer" style={{ color: 'var(--blue)', fontSize: 11 }}>LinkedIn ↗</a></>}
+            </div>
+          )
+        ))}
+      </div>
+      <AddContactForm companyId={companyId} existingContacts={contacts} onSaved={onUpdated} />
+    </div>
+  );
+}
+
 // ── Add Contact Form ─────────────────────────────────────────────────────────
 
 function AddContactForm({ companyId, existingContacts, onSaved }) {
@@ -380,7 +415,8 @@ function AddContactForm({ companyId, existingContacts, onSaved }) {
     setSaving(true);
     try {
       const updated = [...existingContacts, { name: form.name.trim(), title: form.title.trim(), email: form.email.trim(), linkedin: form.linkedin.trim() }];
-      await supabase.from('companies').update({ contacts: updated, updated_at: new Date().toISOString() }).eq('id', companyId);
+      const { error } = await supabase.from('companies').update({ contacts: updated }).eq('id', companyId);
+      if (error) throw error;
       onSaved(updated);
       setForm({ name: '', title: '', email: '', linkedin: '' });
       setShow(false);
