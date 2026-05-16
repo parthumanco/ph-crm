@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, Fragment } from 'react';
 import { supabase } from '../lib/supabase';
 import EmailDraftModal from '../components/EmailDraftModal';
 
@@ -213,8 +213,8 @@ export default function PipelinePage({ icp = {} }) {
                     const isExpanded = !!expandedRows[entry.id];
 
                     return (
-                      <>
-                      <tr key={entry.id}>
+                      <Fragment key={entry.id}>
+                      <tr>
                         <td style={{ verticalAlign: 'top', paddingTop: 14 }}>
                           <button
                             onClick={() => setExpandedRows(r => ({ ...r, [entry.id]: !r[entry.id] }))}
@@ -365,7 +365,7 @@ export default function PipelinePage({ icp = {} }) {
                           </td>
                         </tr>
                       )}
-                      </>
+                      </Fragment>
                     );
                   })}
                 </tbody>
