@@ -947,7 +947,7 @@ export default function SignalWatchPage({ onNavigate, icp }) {
             <div className="stat-card"><div className="stat-val">{companies.length}</div><div className="stat-label">Total Companies</div></div>
             <div className="stat-card"><div className="stat-val">{scanned}</div><div className="stat-label">Scanned</div></div>
             <div className="stat-card"><div className="stat-val">{hot}</div><div className="stat-label">Score 7+ (Hot)</div></div>
-            <div className="stat-card" onClick={() => onNavigate('pipeline')} style={{ cursor: 'pointer' }} title="Go to Pipeline"><div className="stat-val" style={{ color: 'var(--blue)' }}>{added}</div><div className="stat-label">In Pipeline</div></div>
+            <div className="stat-card" onClick={() => onNavigate('pipeline')} style={{ cursor: 'pointer' }} title="Go to Pipeline"><div className="stat-val">{added}</div><div className="stat-label">In Pipeline</div></div>
           </div>
         )}
 
