@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabase';
-import { scanBatch, scanDeepDive, weeklyRescanBatch } from '../lib/anthropic';
+import { scanBatch, scanDeepDive, weeklyRescanBatch, geocodeHqBatch } from '../lib/anthropic';
 import { loadLastWeeklyScan, saveLastWeeklyScan, isWeeklyScanDue, markWeeklyScanViewed } from '../lib/settings';
 
 const TRIGGER_CATEGORIES = [
@@ -120,6 +120,8 @@ export default function SignalWatchPage({ onNavigate, icp }) {
   const [weeklyScanChanges, setWeeklyScanChanges]   = useState([]);
   const [lastWeeklyScan, setLastWeeklyScan]         = useState(null);
   const [serverScanNotification, setServerScanNotification] = useState(null);
+  const [hqFillRunning, setHqFillRunning]   = useState(false);
+  const [hqFillProgress, setHqFillProgress] = useState({ done: 0, total: 0 });
   const [showAddForm, setShowAddForm] = useState(false);
   const [addForm, setAddForm] = useState({ name: '', website: '', hq: '' });
   const [addingManual, setAddingManual] = useState(false);
@@ -486,6 +488,38 @@ export default function SignalWatchPage({ onNavigate, icp }) {
     }
     processNext();
   }, [autoDeepQueue]);
+
+  // ── Fill missing HQ (one-time geocode pass) ──────────────────────────────────
+
+  const fillMissingHq = useCallback(async () => {
+    const missing = companiesRef.current.filter(c => c.id && !c.hq);
+    if (!missing.length) { alert('All companies already have HQ data.'); return; }
+    setHqFillRunning(true);
+    setHqFillProgress({ done: 0, total: missing.length });
+    const BATCH = 50;
+    let done = 0;
+    for (let i = 0; i < missing.length; i += BATCH) {
+      if (cancelRef.current.cancelled) break;
+      const batch = missing.slice(i, i + BATCH);
+      try {
+        const results = await geocodeHqBatch(batch);
+        for (let j = 0; j < batch.length; j++) {
+          const r = results[j];
+          if (!r || (!r.hq && !r.lat)) continue;
+          const update = {};
+          if (r.hq)  update.hq  = r.hq;
+          if (r.lat) update.lat = r.lat;
+          if (r.lng) update.lng = r.lng;
+          await supabase.from('companies').update(update).eq('id', batch[j].id);
+          setCompanies(prev => prev.map(c => c.id === batch[j].id ? { ...c, ...update } : c));
+        }
+      } catch (e) { console.warn('HQ batch error', e); }
+      done = Math.min(i + BATCH, missing.length);
+      setHqFillProgress({ done, total: missing.length });
+    }
+    setHqFillRunning(false);
+    cancelRef.current = { cancelled: false };
+  }, []);
 
   // ── Weekly rescan ────────────────────────────────────────────────────────────
 
@@ -881,6 +915,16 @@ export default function SignalWatchPage({ onNavigate, icp }) {
                 title="Re-score all companies against current ICP settings"
               >
                 🔄 Rescan All
+              </button>
+            )}
+            {companies.filter(c => !c.hq).length > 0 && (
+              <button
+                className="btn btn-secondary"
+                disabled={hqFillRunning || scanningAll || weeklyScanRunning}
+                onClick={fillMissingHq}
+                title={`Fill HQ for ${companies.filter(c => !c.hq).length} companies missing location data`}
+              >
+                {hqFillRunning ? `📍 Filling HQ… ${hqFillProgress.done}/${hqFillProgress.total}` : `📍 Fill Missing HQ (${companies.filter(c => !c.hq).length})`}
               </button>
             )}
             {companies.length > 0 && (

@@ -88,6 +88,35 @@ For lat/lng: geocode the hq field. ALWAYS base lat/lng on the confirmed hq locat
 For website: search for and return the company's actual primary website URL. Verify it exists.`;
 }
 
+// ── HQ geocode batch — lightweight, no scoring ───────────────────────────────
+export async function geocodeHqBatch(companies) {
+  const list = companies.map((c, i) =>
+    `${i + 1}. ${c.name}${c.website ? ` (${c.website})` : ''}`
+  ).join('\n');
+
+  const data = await withTimeout(
+    callClaude({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 4000,
+      system: `You are a geocoding assistant. For each company, identify its headquarters city and return coordinates.
+Return ONLY a JSON array, same order as input.
+Each object: {"name":"str","hq":"City, State or City, Country","lat":number_or_null,"lng":number_or_null}
+Use your knowledge of where each company is actually headquartered. Format US cities as "City, ST", international as "City, Country".
+If you genuinely don't know a company, set hq to null and lat/lng to null.
+CRITICAL: JSON array only. No markdown.`,
+      messages: [{ role: 'user', content: `Identify headquarters for these companies:\n${list}` }],
+    }),
+    60000
+  );
+
+  const text = data.content?.find(b => b.type === 'text')?.text || '';
+  const fenceStripped = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
+  const arrStart = fenceStripped.indexOf('[');
+  const arrEnd = fenceStripped.lastIndexOf(']');
+  if (arrStart === -1) return [];
+  return JSON.parse(fenceStripped.slice(arrStart, arrEnd + 1));
+}
+
 export async function scanBatch(companies, icp = DEFAULT_ICP) {
   const list = companies.map((c, i) => {
     const contactList = (c.contacts || [])
