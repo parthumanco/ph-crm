@@ -12,7 +12,7 @@ const NAV = [
   { id: 'pipeline', label: 'Pipeline',       icon: '🔥' },
   { id: 'discover', label: 'Discover',       icon: '🧭' },
   { id: 'report',   label: 'Weekly Report',  icon: '📋' },
-  { id: 'chat',     label: 'AI Assistant',   icon: '💬' },
+  { id: 'chat',     label: 'Little Stevie',   icon: '💬' },
   { id: 'settings', label: 'ICP Settings',   icon: '⚙️'  },
 ];
 
@@ -21,7 +21,7 @@ const PAGE_TITLES = {
   pipeline: { title: 'Pipeline',      sub: 'Active prospects & touch cadence' },
   discover: { title: 'Discover',      sub: 'Find new companies to add to your watch list' },
   report:   { title: 'Weekly Report', sub: 'AI briefing & draft outreach' },
-  chat:     { title: 'AI Assistant',  sub: 'Ask anything about your pipeline' },
+  chat:     { title: 'Little Stevie',  sub: 'Ask anything about your pipeline' },
   settings: { title: 'ICP Settings',  sub: 'Ideal customer profile & outreach voice' },
 };
 
