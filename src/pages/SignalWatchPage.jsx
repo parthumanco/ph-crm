@@ -777,7 +777,8 @@ export default function SignalWatchPage({ onNavigate, icp }) {
         if (filters.employees === '500_plus' && n < 500)              return false;
       }
 
-      if (filters.distance !== 'all' && c.lat && c.lng) {
+      if (filters.distance !== 'all') {
+        if (!c.lat || !c.lng) return false; // no coords = can't verify distance, exclude
         const miles = haversineDistance(ANDOVER_LAT, ANDOVER_LNG, c.lat, c.lng);
         const max = parseInt(filters.distance);
         if (miles > max) return false;
