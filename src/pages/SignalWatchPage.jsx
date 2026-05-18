@@ -867,6 +867,14 @@ export default function SignalWatchPage({ onNavigate, icp }) {
               >
                 🔍 Deep Scan All
               </button>
+              <button
+                className="btn btn-secondary"
+                disabled={weeklyScanRunning || scanningAll || autoDeepQueue.length > 0}
+                onClick={runWeeklyRescan}
+                title="Re-score all companies against current ICP settings"
+              >
+                🔄 Rescan All
+              </button>
             </>
           )}
           <button className="btn btn-secondary" onClick={() => setShowAddForm(v => !v)}>
