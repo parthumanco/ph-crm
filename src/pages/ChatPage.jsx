@@ -48,7 +48,7 @@ async function buildPipelineSummary() {
 
 export default function ChatPage() {
   const [messages, setMessages]   = useState([
-    { role: 'assistant', content: 'Hey! I\'m your Part Human sales assistant. I have full visibility into your pipeline.\n\nAsk me anything — who to prioritize, what to say next, or just get a read on where things stand.' }
+    { role: 'assistant', content: 'Hi, I\'m Little Stevie, your Part Human sales assistant. I have full visibility into your pipeline.\n\nAsk me anything — who to prioritize, what to say next, or just get a read on where things stand.' }
   ]);
   const [input, setInput]         = useState('');
   const [sending, setSending]     = useState(false);
