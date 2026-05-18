@@ -37,13 +37,13 @@
   --purple: #3a1170;
   --blue: #2f69bc;
 
-  /* Sidebar — Part Human Deep Purple */
-  --sidebar-bg: #3a1170;
-  --sidebar-text: #f0eaf8;
-  --sidebar-muted: #9b89b5;
-  --sidebar-active-bg: rgba(247, 94, 42, 0.18);
-  --sidebar-hover-bg: rgba(255, 255, 255, 0.07);
-  --sidebar-border: rgba(255,255,255,0.08);
+  /* Sidebar — Part Human Blue */
+  --sidebar-bg: #2f69bc;
+  --sidebar-text: #f0f5ff;
+  --sidebar-muted: #a8c0e8;
+  --sidebar-active-bg: rgba(247, 94, 42, 0.22);
+  --sidebar-hover-bg: rgba(255, 255, 255, 0.10);
+  --sidebar-border: rgba(255,255,255,0.12);
 
   --radius: 8px;
   --radius-sm: 5px;
@@ -163,8 +163,8 @@ body {
 
 /* Unified top header injected by App.jsx */
 .app-page-header {
-  background: var(--surface);
-  border-bottom: 2px solid var(--border);
+  background: #f5ede0;
+  border-bottom: 2px solid #e8d8c4;
   padding: 18px 32px 14px;
   display: flex;
   align-items: center;
@@ -176,7 +176,7 @@ body {
 
 .app-page-title {
   font-family: 'Playfair Display', Georgia, serif;
-  font-size: 24px;
+  font-size: 34px;
   font-weight: 800;
   letter-spacing: -0.02em;
   color: var(--text);
