@@ -48,7 +48,7 @@ NEVER use em dashes (—) anywhere in your response. Use commas or periods inste
 Return ONLY a JSON array, same order as input. Short strings only.
 Each object schema:
 {"companyName":"str","website":"https://domain.com or null — only include if you are confident this is correct, never guess","overallScore":1-10,"icpScore":1-10,"icpReason":"max 15 words","icpTier":"Ambitious Scale-Up|Category Challenger|Innovation Team","fundingStage":"Seed|Series A|Series B|Series C|Series D+|Unknown","employeeCountNum":integer_or_null,"summary":"max 25 words","triggers":[{"category":"leadership|funding|expansion|product|pain|hiring","headline":"max 8 words","detail":"max 20 words","urgency":"high|medium|low","source":"str","date":"str"}],"recommendedAngle":"max 30 words","contactAngles":[{"name":"str","title":"str","angle":"max 30 words"}],"lat":number_or_null,"lng":number_or_null,"noNewsFound":false}
-For lat/lng: return the approximate latitude and longitude of the company headquarters city. If unknown, return null.
+For lat/lng: geocode the exact HQ location provided in the input (e.g. "Boston, MA" → 42.3601, -71.0589). If no HQ is provided, use your best knowledge of the company's actual headquarters city. Return null only if truly unknown. ALWAYS base lat/lng on the stated HQ field, not the company's general reputation or country of origin.
 For website: return the company's primary domain if you know it with confidence. Return null if unsure — do not guess.
 If contacts listed, populate contactAngles per contact tailored to their role.
 If unknown company: noNewsFound:true, triggers:[], overallScore:3, icpScore:3, lat:null, lng:null.
@@ -82,7 +82,7 @@ NEVER use em dashes (—) anywhere in your response. Use commas or periods inste
 Return ONLY valid JSON object, no markdown:
 {"companyName":"str","website":"https://domain.com or null","companyLinkedinUrl":"https://linkedin.com/company/... or null","scanDate":"today","overallScore":1-10,"icpScore":1-10,"icpReason":"str","icpTier":"str","fundingStage":"Seed|Series A|Series B|Series C|Series D+|Unknown","employeeCountNum":integer_or_null,"summary":"2-3 sentences","triggers":[{"category":"str","headline":"str","detail":"str","urgency":"str","source":"str","date":"str"}],"recommendedAngle":"str","contactAngles":[{"name":"str","title":"str","angle":"str","linkedinUrl":"https://linkedin.com/in/... or null"}],"discoveredContacts":[{"name":"str","title":"str","linkedinUrl":"https://linkedin.com/in/... or null"}],"lat":number_or_null,"lng":number_or_null,"noNewsFound":false}
 discoveredContacts: people you found working at this company who were NOT in the provided contact list. Max 5. Only include if found with confidence. For all linkedinUrl fields: only include URLs that appeared explicitly in your search results — never construct them from names.
-For lat/lng: return the approximate latitude and longitude of the company headquarters city.
+For lat/lng: geocode the exact HQ location provided in the input (e.g. "Boston, MA" → 42.3601, -71.0589). If no HQ is provided, use your best knowledge of the company's actual headquarters city. ALWAYS base lat/lng on the stated HQ field, not the company's general reputation or country of origin.
 For website: search for and return the company's actual primary website URL. Verify it exists.`;
 }
 
