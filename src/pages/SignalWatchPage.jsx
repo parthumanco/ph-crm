@@ -840,9 +840,9 @@ export default function SignalWatchPage({ onNavigate, icp }) {
         <div className="page-header-left">
           <p>Import companies, scan for triggers, add high-value prospects to the pipeline</p>
         </div>
-        <div className="page-header-actions" style={{ flexDirection: 'column', alignItems: 'flex-end', gap: 8 }}>
+        <div className="page-header-actions" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 8 }}>
           {/* Row 1: scan actions */}
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-start' }}>
             {companies.length > 0 && (scanningAll || autoDeepQueue.length > 0) && (
               <button className="btn btn-secondary" onClick={() => { cancelRef.current.cancelled = true; setScanningAll(false); setAutoDeepQueue([]); autoDeepRunning.current = false; localStorage.removeItem('ph_scan_active'); }}>
                 ⏹ Stop
@@ -887,7 +887,7 @@ export default function SignalWatchPage({ onNavigate, icp }) {
             )}
           </div>
           {/* Row 2: data actions */}
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-start' }}>
             <button className="btn btn-secondary" onClick={() => setShowAddForm(v => !v)}>
               ➕ Add Company
             </button>
