@@ -37,8 +37,8 @@
   --purple: #3a1170;
   --blue: #2f69bc;
 
-  /* Sidebar — Black */
-  --sidebar-bg: #0a0a0a;
+  /* Sidebar — Deep Navy */
+  --sidebar-bg: #0d1035;
   --sidebar-text: #f0f0f0;
   --sidebar-muted: #888888;
   --sidebar-active-bg: rgba(247, 94, 42, 0.20);
@@ -88,6 +88,7 @@ body {
   display: block;
   width: 130px;
   height: auto;
+  filter: drop-shadow(0 0 6px rgba(255, 160, 40, 0.75)) drop-shadow(0 0 18px rgba(247, 94, 42, 0.5));
 }
 
 .sidebar-logo-tag {
