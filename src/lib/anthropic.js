@@ -488,7 +488,7 @@ Suggest 20 real companies that match both the ICP above and the search criteria.
 
   const data = await withTimeout(
     callClaude({
-      model: 'claude-sonnet-4-6-20250514',
+      model: 'claude-sonnet-4-6',
       max_tokens: 4000,
       system,
       messages: [{ role: 'user', content: userMsg }],
