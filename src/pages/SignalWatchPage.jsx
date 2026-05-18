@@ -122,6 +122,7 @@ export default function SignalWatchPage({ onNavigate, icp }) {
   const [serverScanNotification, setServerScanNotification] = useState(null);
   const [hqFillRunning, setHqFillRunning]   = useState(false);
   const [hqFillProgress, setHqFillProgress] = useState({ done: 0, total: 0 });
+  const [hqFillDone, setHqFillDone]         = useState(false);
   const [showAddForm, setShowAddForm] = useState(false);
   const [addForm, setAddForm] = useState({ name: '', website: '', hq: '' });
   const [addingManual, setAddingManual] = useState(false);
@@ -518,6 +519,7 @@ export default function SignalWatchPage({ onNavigate, icp }) {
       setHqFillProgress({ done, total: missing.length });
     }
     setHqFillRunning(false);
+    setHqFillDone(true);
     cancelRef.current = { cancelled: false };
   }, []);
 
@@ -917,7 +919,7 @@ export default function SignalWatchPage({ onNavigate, icp }) {
                 🔄 Rescan All
               </button>
             )}
-            {companies.filter(c => !c.hq).length > 0 && (
+            {!hqFillDone && companies.filter(c => !c.hq).length > 0 && (
               <button
                 className="btn btn-secondary"
                 disabled={hqFillRunning || scanningAll || weeklyScanRunning}
