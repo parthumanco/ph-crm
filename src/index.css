@@ -1,3 +1,11 @@
+@font-face {
+  font-family: 'Grift';
+  src: url('/fonts/Grift-SemiBoldItalic.otf') format('opentype');
+  font-weight: 600;
+  font-style: italic;
+  font-display: swap;
+}
+
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
@@ -176,10 +184,11 @@ body {
 }
 
 .app-page-title {
-  font-family: 'Playfair Display', Georgia, serif;
+  font-family: 'Grift', 'Playfair Display', Georgia, serif;
   font-size: 34px;
-  font-weight: 800;
-  letter-spacing: -0.02em;
+  font-weight: 600;
+  font-style: italic;
+  letter-spacing: -0.01em;
   color: #ffffff;
   line-height: 1.1;
 }
