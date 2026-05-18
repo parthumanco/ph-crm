@@ -837,7 +837,9 @@ export default function SignalWatchPage({ onNavigate, icp }) {
   return (
     <>
       <div className="page-header">
-        <div className="page-header-left"></div>
+        <div className="page-header-left">
+          <p>Import companies, scan for triggers, add high-value prospects to the pipeline</p>
+        </div>
         <div className="page-header-actions" style={{ flexDirection: 'column', alignItems: 'flex-end', gap: 8 }}>
           {/* Row 1: scan actions */}
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
