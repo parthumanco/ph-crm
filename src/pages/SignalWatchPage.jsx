@@ -345,6 +345,8 @@ export default function SignalWatchPage({ onNavigate, icp }) {
       lat: result.lat || null,
       lng: result.lng || null,
       scan_date: new Date().toISOString(),
+      // Persist AI-identified HQ if the company didn't already have one
+      ...(result.hq && !companiesRef.current.find(c => c.id === companyId)?.hq ? { hq: result.hq } : {}),
       ...(overwriteWebsite ? { deep_scanned: true } : {}),
       ...(result.website && overwriteWebsite ? { website: result.website } : {}),
       ...(result.companyLinkedinUrl ? { company_linkedin: result.companyLinkedinUrl } : {}),
