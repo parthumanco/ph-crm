@@ -48,11 +48,16 @@ export default function PipelinePage({ icp = {} }) {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [{ data: ents }, { data: comps }, { data: tchs }] = await Promise.all([
+    // Load entries and touches first
+    const [{ data: ents }, { data: tchs }] = await Promise.all([
       supabase.from('pipeline_entries').select('*').order('created_at', { ascending: false }),
-      supabase.from('companies').select('*'),
       supabase.from('touches').select('*'),
     ]);
+    // Fetch only the specific companies referenced by pipeline entries
+    const companyIds = (ents || []).map(e => e.company_id).filter(Boolean);
+    const { data: comps } = companyIds.length
+      ? await supabase.from('companies').select('*').in('id', companyIds)
+      : { data: [] };
     setEntries(ents || []);
     const compMap = {};
     (comps || []).forEach(c => { compMap[c.id] = c; });
