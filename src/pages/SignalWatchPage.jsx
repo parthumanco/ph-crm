@@ -841,17 +841,20 @@ export default function SignalWatchPage({ onNavigate, icp }) {
           <h2>📡 Signal Watch</h2>
           <p>Import companies, scan for triggers, add high-value prospects to the pipeline</p>
         </div>
-        <div className="page-header-actions">
-          {companies.length > 0 && (
-            <>
-              {(scanningAll || autoDeepQueue.length > 0) && (
-                <button className="btn btn-secondary" onClick={() => { cancelRef.current.cancelled = true; setScanningAll(false); setAutoDeepQueue([]); autoDeepRunning.current = false; localStorage.removeItem('ph_scan_active'); }}>
-                  ⏹ Stop
-                </button>
-              )}
+        <div className="page-header-actions" style={{ flexDirection: 'column', alignItems: 'flex-end', gap: 8 }}>
+          {/* Row 1: scan actions */}
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+            {companies.length > 0 && (scanningAll || autoDeepQueue.length > 0) && (
+              <button className="btn btn-secondary" onClick={() => { cancelRef.current.cancelled = true; setScanningAll(false); setAutoDeepQueue([]); autoDeepRunning.current = false; localStorage.removeItem('ph_scan_active'); }}>
+                ⏹ Stop
+              </button>
+            )}
+            {companies.length > 0 && (
               <button className="btn btn-primary" onClick={scanAll} disabled={scanningAll || !unscannedCount}>
                 {unscannedCount ? `▶ Resume Scan (${unscannedCount} left)` : '✅ All Scanned'}
               </button>
+            )}
+            {companies.length > 0 && (
               <button
                 className="btn btn-secondary"
                 disabled={autoDeepQueue.length > 0 || scanningAll}
@@ -867,6 +870,8 @@ export default function SignalWatchPage({ onNavigate, icp }) {
               >
                 🔍 Deep Scan All
               </button>
+            )}
+            {companies.length > 0 && (
               <button
                 className="btn btn-secondary"
                 disabled={weeklyScanRunning || scanningAll || autoDeepQueue.length > 0}
@@ -875,27 +880,30 @@ export default function SignalWatchPage({ onNavigate, icp }) {
               >
                 🔄 Rescan All
               </button>
-            </>
-          )}
-          <button className="btn btn-secondary" onClick={() => setShowAddForm(v => !v)}>
-            ➕ Add Company
-          </button>
-          <button className="btn btn-secondary" onClick={() => fileInputRef.current?.click()}>
-            📂 Import CSV
-          </button>
-          {companies.length > 0 && (
-            <button className="btn btn-secondary" onClick={exportCSV} title="Download all companies as CSV">
-              ⬇️ Export CSV
+            )}
+            {companies.length > 0 && (
+              <button className="btn btn-ghost btn-sm" onClick={clearAll} style={{ color: 'var(--red)' }} title="Delete Signal Watch companies (keeps pipeline)">
+                🗑️ Clear All
+              </button>
+            )}
+          </div>
+          {/* Row 2: data actions */}
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+            <button className="btn btn-secondary" onClick={() => setShowAddForm(v => !v)}>
+              ➕ Add Company
             </button>
-          )}
-          {companies.length > 0 && (
-            <button className="btn btn-ghost btn-sm" onClick={clearAll} style={{ color: 'var(--red)' }} title="Delete Signal Watch companies (keeps pipeline)">
-              🗑️ Clear All
+            <button className="btn btn-secondary" onClick={() => fileInputRef.current?.click()}>
+              📂 Import CSV
             </button>
-          )}
-          <button className="btn btn-ghost btn-sm" onClick={startFresh} style={{ color: 'var(--red)', fontWeight: 700 }} title="Wipe everything and start over">
-            ⚠️ Start Fresh
-          </button>
+            {companies.length > 0 && (
+              <button className="btn btn-secondary" onClick={exportCSV} title="Download all companies as CSV">
+                ⬇️ Export CSV
+              </button>
+            )}
+            <button className="btn btn-ghost btn-sm" onClick={startFresh} style={{ color: 'var(--red)', fontWeight: 700 }} title="Wipe everything and start over">
+              ⚠️ Start Fresh
+            </button>
+          </div>
           <input
             ref={fileInputRef}
             type="file"
