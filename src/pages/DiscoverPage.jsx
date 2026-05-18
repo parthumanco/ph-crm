@@ -81,7 +81,8 @@ export default function DiscoverPage({ icp }) {
     setSuccessMsg('');
     try {
       const companies = await discoverCompanies(full, icp);
-      setResults(companies);
+      const filtered = companies.filter(c => !existingNames.has(c.name?.toLowerCase().trim()));
+      setResults(filtered);
     } catch (err) {
       setError(err.message || 'Something went wrong. Please try again.');
     } finally {
@@ -321,7 +322,7 @@ export default function DiscoverPage({ icp }) {
               Select All
             </label>
             <span style={{ fontSize: 14, color: 'var(--text-muted)', flex: 1 }}>
-              {results.length} companies found
+              {results.length} new companies found (already-watched companies excluded)
               {selected.size > 0 && <> &bull; <strong style={{ color: 'var(--text)' }}>{selected.size} selected</strong></>}
             </span>
 
