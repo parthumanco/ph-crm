@@ -461,6 +461,69 @@ Be direct, specific, and actionable. Never use em dashes (—). Reference actual
   return text.replace(/—/g, ',');
 }
 
+// ── Company Discovery ─────────────────────────────────────────────────────────
+
+export async function discoverCompanies(criteria, icp = DEFAULT_ICP) {
+  const profile = buildIcpProfile(icp);
+
+  const system = `You are a B2B sales prospecting expert. Based on the ideal customer profile and search criteria, identify real companies that would be strong prospects. Return ONLY a JSON array — no markdown, no explanation, no commentary.
+
+Each object schema:
+{"name":"str","website":"https://... or null","hq":"City, ST","description":"1 sentence about what they do","whyItFits":"1 sentence on why they match the criteria","fundingStage":"Seed|Series A|Series B|Series C|Series D+|Unknown","employeeCount":integer_or_null}
+
+Rules:
+- Return exactly 20 companies (or fewer if genuinely hard to find 20 strong matches).
+- Only include real, verifiable companies.
+- website: only include if you are confident it is correct. Set to null if unsure.
+- employeeCount: your best estimate as an integer, or null if unknown.
+- NEVER use em dashes (—). Use commas or periods instead.
+- CRITICAL: JSON array only. No markdown fences.`;
+
+  const userMsg = `${profile}
+
+SEARCH CRITERIA:
+${criteria}
+
+Suggest 20 real companies that match both the ICP above and the search criteria. Return ONLY the JSON array.`;
+
+  const data = await withTimeout(
+    callClaude({
+      model: 'claude-sonnet-4-6-20250514',
+      max_tokens: 4000,
+      system,
+      messages: [{ role: 'user', content: userMsg }],
+    }),
+    90000
+  );
+
+  const text = data.content?.find(b => b.type === 'text')?.text || '';
+  const fenceStripped = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
+  const arrStart = fenceStripped.indexOf('[');
+  const arrEnd = fenceStripped.lastIndexOf(']');
+  if (arrStart === -1) throw new Error('No JSON array found in discover response');
+  const slice = arrEnd !== -1 ? fenceStripped.slice(arrStart, arrEnd + 1) : fenceStripped.slice(arrStart);
+  try {
+    return JSON.parse(slice);
+  } catch {
+    // Recover complete top-level objects if JSON was truncated
+    const recovered = [];
+    let depth = 0, objStart = -1;
+    for (let i = 0; i < slice.length; i++) {
+      const ch = slice[i];
+      if (ch === '{') { if (depth === 0) objStart = i; depth++; }
+      else if (ch === '}') {
+        depth--;
+        if (depth === 0 && objStart !== -1) {
+          try { recovered.push(JSON.parse(slice.slice(objStart, i + 1))); } catch { /* skip */ }
+          objStart = -1;
+        }
+      }
+    }
+    if (recovered.length === 0) throw new Error('Discover returned unparseable JSON');
+    return recovered;
+  }
+}
+
 // ── Response analysis ─────────────────────────────────────────────────────────
 
 export async function analyzeResponse(company, contact, touchNumber, responseText) {
