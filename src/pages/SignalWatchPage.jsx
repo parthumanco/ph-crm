@@ -123,6 +123,9 @@ export default function SignalWatchPage({ onNavigate, icp }) {
   const [hqFillRunning, setHqFillRunning]   = useState(false);
   const [hqFillProgress, setHqFillProgress] = useState({ done: 0, total: 0 });
   const [hqFillDone, setHqFillDone]         = useState(false);
+  const [deepScanMinIcp, setDeepScanMinIcp] = useState('all');
+  const [deepScanDropdownOpen, setDeepScanDropdownOpen] = useState(false);
+  const deepScanDropdownRef = useRef();
   const [showAddForm, setShowAddForm] = useState(false);
   const [addForm, setAddForm] = useState({ name: '', website: '', hq: '' });
   const [addingManual, setAddingManual] = useState(false);
@@ -851,6 +854,14 @@ export default function SignalWatchPage({ onNavigate, icp }) {
   });
 
   const filtered = applyFilters(sorted, activeScanId);
+
+  // Companies in the current filtered view that are eligible for deep scan
+  const filteredDeepScanQueue = filtered.filter(c => {
+    if (!c.scan_date || c.deep_scanned || c._error || !c.id) return false;
+    if (deepScanMinIcp !== 'all' && (c.icp_score || 0) < parseInt(deepScanMinIcp)) return false;
+    return true;
+  }).sort((a, b) => Math.max(b.overall_score || 0, b.icp_score || 0) - Math.max(a.overall_score || 0, a.icp_score || 0));
+
   const scanned  = companies.filter(c => c.scan_date).length;
   const hot      = companies.filter(c => (c.overall_score || 0) >= 7).length;
   const added    = Object.values(addedToPipeline).filter(Boolean).length;
@@ -873,94 +884,145 @@ export default function SignalWatchPage({ onNavigate, icp }) {
     }, 100);
   };
 
+  const toolbarLabel = txt => (
+    <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.07em', textTransform: 'uppercase', color: 'var(--text-muted)', minWidth: 48, flexShrink: 0 }}>{txt}</span>
+  );
+  const toolbarDivider = (
+    <div style={{ width: 1, height: 18, background: 'var(--border)', flexShrink: 0 }} />
+  );
+
   return (
     <>
       <div className="page-header">
         <div className="page-header-left">
           <p>Import companies, scan for triggers, add high-value prospects to the pipeline</p>
         </div>
-        <div className="page-header-actions" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 8 }}>
-          {/* Row 1: scan actions */}
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-start' }}>
-            {companies.length > 0 && (scanningAll || autoDeepQueue.length > 0) && (
-              <button className="btn btn-secondary" onClick={() => { cancelRef.current.cancelled = true; setScanningAll(false); setAutoDeepQueue([]); autoDeepRunning.current = false; localStorage.removeItem('ph_scan_active'); }}>
-                ⏹ Stop
-              </button>
-            )}
-            {companies.length > 0 && (
-              <button className="btn btn-primary" onClick={scanAll} disabled={scanningAll || !unscannedCount}>
-                {unscannedCount ? `▶ Resume Scan (${unscannedCount} left)` : '✅ All Scanned'}
-              </button>
-            )}
-            {companies.length > 0 && (
+      </div>
+
+      {/* ── Toolbar ── */}
+      <div style={{ background: 'var(--bg)', borderBottom: '1px solid var(--border)', padding: '8px 32px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+
+        {/* Row 1: Scan */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          {toolbarLabel('Scan')}
+          {companies.length > 0 && (scanningAll || autoDeepQueue.length > 0) && (
+            <button className="btn btn-secondary" onClick={() => { cancelRef.current.cancelled = true; setScanningAll(false); setAutoDeepQueue([]); autoDeepRunning.current = false; localStorage.removeItem('ph_scan_active'); }}>
+              ⏹ Stop
+            </button>
+          )}
+          {companies.length > 0 && (
+            <button className="btn btn-primary" onClick={scanAll} disabled={scanningAll || !unscannedCount}>
+              {unscannedCount ? `▶ Resume Scan (${unscannedCount} left)` : '✅ All Scanned'}
+            </button>
+          )}
+          {companies.length > 0 && (
+            <button className="btn btn-secondary" disabled={weeklyScanRunning || scanningAll || autoDeepQueue.length > 0} onClick={runWeeklyRescan} title="Re-score all companies against current ICP settings">
+              🔄 Rescan All
+            </button>
+          )}
+        </div>
+
+        {/* Row 2: Deep Scan */}
+        {companies.length > 0 && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            {toolbarLabel('Deep')}
+            <button
+              className="btn btn-secondary"
+              disabled={autoDeepQueue.length > 0 || scanningAll}
+              onClick={() => {
+                const toDeep = companiesRef.current
+                  .filter(c => c.scan_date && !c.deep_scanned && !c._error && c.id)
+                  .sort((a, b) => Math.max(b.overall_score || 0, b.icp_score || 0) - Math.max(a.overall_score || 0, a.icp_score || 0));
+                if (!toDeep.length) { alert('All companies have already been deep scanned.'); return; }
+                cancelRef.current = { cancelled: false };
+                setAutoDeepQueue(toDeep);
+                setAutoDeepProgress({ done: 0, total: toDeep.length });
+              }}
+            >
+              🔍 Deep Scan All
+            </button>
+            {toolbarDivider}
+            <div ref={deepScanDropdownRef} style={{ position: 'relative' }}>
               <button
                 className="btn btn-secondary"
                 disabled={autoDeepQueue.length > 0 || scanningAll}
-                onClick={() => {
-                  const toDeep = companiesRef.current
-                    .filter(c => c.scan_date && !c.deep_scanned && !c._error && c.id)
-                    .sort((a, b) => Math.max(b.overall_score || 0, b.icp_score || 0) - Math.max(a.overall_score || 0, a.icp_score || 0));
-                  if (!toDeep.length) { alert('All companies have already been deep scanned.'); return; }
-                  cancelRef.current = { cancelled: false };
-                  setAutoDeepQueue(toDeep);
-                  setAutoDeepProgress({ done: 0, total: toDeep.length });
-                }}
+                onClick={() => setDeepScanDropdownOpen(o => !o)}
+                title="Deep scan companies matching current filters"
               >
-                🔍 Deep Scan All
+                🎯 Deep Scan Filtered ▾
               </button>
-            )}
-            {companies.length > 0 && (
-              <button
-                className="btn btn-secondary"
-                disabled={weeklyScanRunning || scanningAll || autoDeepQueue.length > 0}
-                onClick={runWeeklyRescan}
-                title="Re-score all companies against current ICP settings"
-              >
-                🔄 Rescan All
-              </button>
-            )}
-            {!hqFillDone && companies.filter(c => !c.hq).length > 0 && (
-              <button
-                className="btn btn-secondary"
-                disabled={hqFillRunning || scanningAll || weeklyScanRunning}
-                onClick={fillMissingHq}
-                title={`Fill HQ for ${companies.filter(c => !c.hq).length} companies missing location data`}
-              >
-                {hqFillRunning ? `📍 Filling HQ… ${hqFillProgress.done}/${hqFillProgress.total}` : `📍 Fill Missing HQ (${companies.filter(c => !c.hq).length})`}
-              </button>
-            )}
-            {companies.length > 0 && (
-              <button className="btn btn-ghost btn-sm" onClick={clearAll} style={{ color: 'var(--red)' }} title="Delete Signal Watch companies (keeps pipeline)">
-                🗑️ Clear All
-              </button>
-            )}
+              {deepScanDropdownOpen && (
+                <>
+                  <div style={{ position: 'fixed', inset: 0, zIndex: 99 }} onClick={() => setDeepScanDropdownOpen(false)} />
+                  <div style={{ position: 'absolute', top: 'calc(100% + 4px)', left: 0, zIndex: 100, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, boxShadow: '0 4px 16px rgba(0,0,0,0.12)', minWidth: 210, overflow: 'hidden' }}>
+                    <div style={{ padding: '8px 12px 6px', fontSize: 10, fontWeight: 700, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--text-muted)', borderBottom: '1px solid var(--border)' }}>
+                      Min ICP Score
+                    </div>
+                    {[
+                      { val: 'all', label: 'Any ICP — all unscanned' },
+                      { val: '5',   label: 'ICP 5+ only' },
+                      { val: '7',   label: 'ICP 7+ only' },
+                      { val: '8',   label: 'ICP 8+ only' },
+                    ].map(({ val, label }) => {
+                      const queue = filtered.filter(c => {
+                        if (!c.scan_date || c.deep_scanned || c._error || !c.id) return false;
+                        if (val !== 'all' && (c.icp_score || 0) < parseInt(val)) return false;
+                        return true;
+                      });
+                      return (
+                        <button
+                          key={val}
+                          onClick={() => {
+                            if (!queue.length) { alert('No eligible companies for this filter.'); setDeepScanDropdownOpen(false); return; }
+                            setDeepScanMinIcp(val);
+                            cancelRef.current = { cancelled: false };
+                            const sorted = [...queue].sort((a, b) => Math.max(b.overall_score || 0, b.icp_score || 0) - Math.max(a.overall_score || 0, a.icp_score || 0));
+                            setAutoDeepQueue(sorted);
+                            setAutoDeepProgress({ done: 0, total: sorted.length });
+                            setDeepScanDropdownOpen(false);
+                          }}
+                          style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', padding: '8px 12px', background: 'none', border: 'none', cursor: queue.length ? 'pointer' : 'not-allowed', textAlign: 'left', fontSize: 13, color: queue.length ? 'var(--text)' : 'var(--text-muted)', gap: 12 }}
+                          onMouseEnter={e => { if (queue.length) e.currentTarget.style.background = 'var(--bg)'; }}
+                          onMouseLeave={e => { e.currentTarget.style.background = 'none'; }}
+                        >
+                          <span>{label}</span>
+                          <span style={{ fontSize: 11, fontWeight: 600, color: queue.length ? 'var(--accent)' : 'var(--text-muted)', flexShrink: 0 }}>{queue.length} co.</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
+            </div>
           </div>
-          {/* Row 2: data actions */}
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-start' }}>
-            <button className="btn btn-secondary" onClick={() => setShowAddForm(v => !v)}>
-              ➕ Add Company
+        )}
+
+        {/* Row 3: Data */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          {toolbarLabel('Data')}
+          <button className="btn btn-secondary" onClick={() => setShowAddForm(v => !v)}>➕ Add Company</button>
+          <button className="btn btn-secondary" onClick={() => fileInputRef.current?.click()}>📂 Import CSV</button>
+          {companies.length > 0 && (
+            <button className="btn btn-secondary" onClick={exportCSV} title="Download all companies as CSV">⬇️ Export CSV</button>
+          )}
+          {!hqFillDone && companies.filter(c => !c.hq).length > 0 && (
+            <button
+              className="btn btn-secondary"
+              disabled={hqFillRunning || scanningAll || weeklyScanRunning}
+              onClick={fillMissingHq}
+              title={`Fill HQ for ${companies.filter(c => !c.hq).length} companies missing location data`}
+            >
+              {hqFillRunning ? `📍 Filling HQ… ${hqFillProgress.done}/${hqFillProgress.total}` : `📍 Fill Missing HQ (${companies.filter(c => !c.hq).length})`}
             </button>
-            <button className="btn btn-secondary" onClick={() => fileInputRef.current?.click()}>
-              📂 Import CSV
-            </button>
-            {companies.length > 0 && (
-              <button className="btn btn-secondary" onClick={exportCSV} title="Download all companies as CSV">
-                ⬇️ Export CSV
-              </button>
-            )}
-            <button className="btn btn-ghost btn-sm" onClick={startFresh} style={{ color: 'var(--red)', fontWeight: 700 }} title="Wipe everything and start over">
-              ⚠️ Start Fresh
-            </button>
-          </div>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".csv"
-            multiple
-            style={{ display: 'none' }}
-            onChange={e => handleFiles(e.target.files)}
-          />
+          )}
+          {toolbarDivider}
+          {companies.length > 0 && (
+            <button className="btn btn-ghost btn-sm" onClick={clearAll} style={{ color: 'var(--red)' }} title="Delete Signal Watch companies (keeps pipeline)">🗑️ Clear All</button>
+          )}
+          <button className="btn btn-ghost btn-sm" onClick={startFresh} style={{ color: 'var(--red)', fontWeight: 700 }} title="Wipe everything and start over">⚠️ Start Fresh</button>
         </div>
+
+        <input ref={fileInputRef} type="file" accept=".csv" multiple style={{ display: 'none' }} onChange={e => handleFiles(e.target.files)} />
       </div>
 
       <div className="page-body">
