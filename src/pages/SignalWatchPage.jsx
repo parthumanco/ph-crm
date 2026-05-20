@@ -496,21 +496,46 @@ export default function SignalWatchPage({ onNavigate, icp }) {
         }
 
         // ── LinkedIn post scan ───────────────────────────────────────────────
-        // Look for trigger events in recent LinkedIn posts from known contacts.
+        // Search recent posts from known contacts for trigger events.
+        // Posts are stored in linkedin_posts (for display in the card) and
+        // any is_trigger:true posts are also promoted into the triggers array.
         try {
           const postScanCompany = companiesRef.current.find(c => c.id === company.id);
           const contactsWithLinkedIn = (postScanCompany?.contacts || []).filter(ct => ct.name && ct.linkedin);
           if (contactsWithLinkedIn.length > 0) {
             setScanStatus(s => ({ ...s, [key]: 'Scanning LinkedIn posts…' }));
-            const existingTriggers = postScanCompany?.triggers || [];
-            const newTriggers = await scanLinkedInPosts(contactsWithLinkedIn, company.name, existingTriggers);
-            if (newTriggers.length > 0) {
-              const existingHeadlines = new Set(existingTriggers.map(t => (t.headline || '').toLowerCase().trim()));
-              const dedupedNew = newTriggers.filter(t => !existingHeadlines.has((t.headline || '').toLowerCase().trim()));
-              if (dedupedNew.length > 0) {
-                const merged = [...existingTriggers, ...dedupedNew];
-                await supabase.from('companies').update({ triggers: merged }).eq('id', company.id);
-                setCompanies(prev => prev.map(c => c.id === company.id ? { ...c, triggers: merged } : c));
+            const existingPosts = postScanCompany?.linkedin_posts || [];
+            const newPosts = await scanLinkedInPosts(contactsWithLinkedIn, company.name, existingPosts);
+            if (newPosts.length > 0) {
+              // Dedup against existing posts by headline
+              const existingHeadlines = new Set(existingPosts.map(p => (p.headline || '').toLowerCase().trim()));
+              const dedupedPosts = newPosts.filter(p => !existingHeadlines.has((p.headline || '').toLowerCase().trim()));
+              if (dedupedPosts.length > 0) {
+                const scannedAt = new Date().toISOString();
+                const stamped = dedupedPosts.map(p => ({ ...p, scanned_at: scannedAt }));
+                const mergedPosts = [...existingPosts, ...stamped];
+
+                // Promote is_trigger:true posts into the triggers array
+                const existingTriggers = postScanCompany?.triggers || [];
+                const existingTriggerHeadlines = new Set(existingTriggers.map(t => (t.headline || '').toLowerCase().trim()));
+                const triggerPosts = stamped.filter(p => p.is_trigger && !existingTriggerHeadlines.has((p.headline || '').toLowerCase().trim()));
+                const mergedTriggers = triggerPosts.length
+                  ? [...existingTriggers, ...triggerPosts.map(p => ({
+                      category: p.category || 'social',
+                      headline: p.headline,
+                      detail: p.summary ? p.summary.slice(0, 80) : '',
+                      urgency: p.urgency || 'medium',
+                      source: p.url || 'linkedin',
+                      date: p.date || null,
+                    }))]
+                  : existingTriggers;
+
+                const updatePayload = {
+                  linkedin_posts: mergedPosts,
+                  ...(triggerPosts.length ? { triggers: mergedTriggers } : {}),
+                };
+                await supabase.from('companies').update(updatePayload).eq('id', company.id);
+                setCompanies(prev => prev.map(c => c.id === company.id ? { ...c, ...updatePayload } : c));
               }
             }
           }
@@ -1866,6 +1891,36 @@ function CompanyCard({ company, distMiles, status, isScanning, scanningAll, week
                           <span style={{ fontSize: 12, color: '#166534', lineHeight: 1.55 }}>{angle.angle}</span>
                         </div>
                       )}
+                      {(() => {
+                        const ctPosts = (company.linkedin_posts || []).filter(p => p.contact_name?.toLowerCase().trim() === ct.name?.toLowerCase().trim());
+                        if (!ctPosts.length) return null;
+                        return (
+                          <div style={{ borderTop: '1px solid #e0e7ff', background: '#f8f9ff' }}>
+                            <div style={{ padding: '6px 12px 3px', fontSize: 10, fontWeight: 800, color: '#4338ca', textTransform: 'uppercase', letterSpacing: '.04em' }}>
+                              LinkedIn Posts
+                            </div>
+                            {ctPosts.map((p, pi) => (
+                              <div key={pi} style={{ padding: '6px 12px 8px', borderTop: pi > 0 ? '1px solid #e0e7ff' : 'none' }}>
+                                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+                                  <div style={{ flex: 1 }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+                                      {p.is_trigger && (
+                                        <span style={{ fontSize: 9, fontWeight: 700, background: '#fef3c7', color: '#92400e', padding: '1px 5px', borderRadius: 3, textTransform: 'uppercase', letterSpacing: '.04em', flexShrink: 0 }}>Trigger</span>
+                                      )}
+                                      <span style={{ fontSize: 12, fontWeight: 600, color: '#1e1b4b' }}>{p.headline}</span>
+                                      {p.date && <span style={{ fontSize: 10, color: '#6b7280', flexShrink: 0 }}>{p.date}</span>}
+                                    </div>
+                                    {p.summary && <p style={{ fontSize: 12, color: '#374151', lineHeight: 1.5, margin: 0 }}>{p.summary}</p>}
+                                  </div>
+                                  {p.url && (
+                                    <a href={p.url} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: '#4338ca', fontWeight: 600, textDecoration: 'none', flexShrink: 0, paddingTop: 2 }}>View ↗</a>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        );
+                      })()}
                     </div>
                   );
                 })}

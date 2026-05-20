@@ -326,6 +326,7 @@ export default function PipelinePage({ icp = {} }) {
                                     defaultContactIndex: primaryIdx,
                                     emailSignature: icp.emailSignature || '',
                                     engagementType: company.engagement_type || 'Sprint',
+                                    linkedinPosts: company.linkedin_posts || [],
                                   })}
                                   onContextMenu={(e) => handleTouchRightClick(e, primaryTouchMap[n])}
                                 >
@@ -568,6 +569,7 @@ function ContactTouchGrid({ entry, company, contacts, primaryIndex, onSetPrimary
                           defaultContactIndex: contactIdx,
                           emailSignature: icp.emailSignature || '',
                           engagementType: company.engagement_type || 'Sprint',
+                          linkedinPosts: company.linkedin_posts || [],
                         })}
                         onContextMenu={(e) => onRightClick?.(e, t)}
                       >

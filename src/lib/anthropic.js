@@ -358,33 +358,42 @@ export async function scanDeepDive(company, icp = DEFAULT_ICP, existingEngagemen
 
 // ── LinkedIn post scan — trigger events from contact activity ─────────────────
 
-export async function scanLinkedInPosts(contacts, companyName, existingTriggers = []) {
+export async function scanLinkedInPosts(contacts, companyName, existingPosts = []) {
   const contactsWithLinkedIn = contacts.filter(ct => ct.name && ct.linkedin);
   if (!contactsWithLinkedIn.length) return [];
 
-  const maxUses = Math.min(contactsWithLinkedIn.length + 1, 4);
+  const maxUses = Math.min(contactsWithLinkedIn.length + 1, 5);
   const contactList = contactsWithLinkedIn
     .map(ct => `${ct.name}${ct.title ? `, ${ct.title}` : ''}: ${ct.linkedin}`)
     .join('\n');
-  const existingHeadlines = existingTriggers.map(t => t.headline).join('; ');
+  const existingHeadlines = existingPosts.map(p => p.headline).join('; ');
 
   const data = await withTimeout(
     callClaude({
       model: 'claude-sonnet-4-6',
-      max_tokens: 1500,
-      system: `You are a sales intelligence researcher scanning LinkedIn for B2B trigger events.
+      max_tokens: 2000,
+      system: `You are a sales intelligence researcher scanning LinkedIn for B2B trigger events from decision-maker posts.
 
-Search each contact's LinkedIn profile and recent posts for signals from the last 90 days: hiring announcements, new initiatives, market expansion, product launches, leadership changes, rebranding, organizational shifts, fundraising, or candid posts about challenges/pain.
+Search each contact's LinkedIn profile and recent posts. For each meaningful post found, return a structured record with enough detail that a sales rep can reference the post specifically in outreach.
 
-Return ONLY a JSON array of NEW trigger events not already covered by existing signals:
-[{"category":"leadership|funding|expansion|product|pain|hiring","headline":"max 8 words","detail":"max 20 words","urgency":"high|medium|low","source":"linkedin","date":"approx date or null"}]
+Return ONLY a JSON array:
+[{
+  "contact_name": "exact name from list",
+  "headline": "max 10 words summarizing what they posted",
+  "summary": "2-3 sentences: what they said, why it signals intent, what it reveals about priorities",
+  "url": "direct URL to the LinkedIn post if found, else the profile URL",
+  "date": "approximate date e.g. May 2026 or null",
+  "category": "leadership|funding|expansion|product|pain|hiring|social",
+  "urgency": "high|medium|low",
+  "is_trigger": true if this signals a buying trigger for brand/marketing services, false if just informational
+}]
 
-If no meaningful new triggers found beyond what's already known, return [].
+If no posts found for a contact, omit them. If nothing meaningful found at all, return [].
 JSON array only. No markdown.`,
       tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: maxUses }],
       messages: [{
         role: 'user',
-        content: `Search LinkedIn for recent posts and activity from these ${companyName} decision-makers:\n\n${contactList}\n\nFor each profile, look for posts in the last 90 days that reveal business intent, strategic moves, team changes, or pain points. Check both their posts and any company page updates they've shared.${existingHeadlines ? `\n\nAlready have these signals — don't duplicate: ${existingHeadlines}` : ''}\n\nReturn JSON array of new trigger events only.`,
+        content: `Search LinkedIn for recent posts (last 90 days) from these ${companyName} decision-makers:\n\n${contactList}\n\nFor each person, find their most relevant recent posts about: company direction, team growth, market moves, product launches, challenges, culture, or personal career updates that signal business intent.\n\nCapture the post content, URL, and why it matters for a brand strategy conversation.${existingHeadlines ? `\n\nAlready have these — skip duplicates: ${existingHeadlines}` : ''}\n\nReturn JSON array of post records.`,
       }],
     }),
     TIMEOUT_MS
@@ -483,27 +492,30 @@ VOICE RULES (non-negotiable):
 `;
 
 const TOUCH_PROMPTS = {
-  1: (company, contact, angle, t1Subject, engType = 'Sprint') => {
+  1: (company, contact, angle, t1Subject, engType = 'Sprint', linkedinPosts = []) => {
     const eng = ENGAGEMENT_META[engType] || ENGAGEMENT_META.Sprint;
     const roleCtx = getRoleContext(contact.title);
     const angleText = angle || company.recommended_angle || '';
     const angleNote = engType !== 'Sprint' && /sprint/i.test(angleText)
       ? `\nNOTE: The angle above was written for a Sprint engagement. Use it for context and insight only — do NOT use Sprint-specific language (e.g. "two-week sprint") in the email. The CTA must reflect the ${eng.name} engagement instead.`
       : '';
+    const postContext = linkedinPosts.length
+      ? `\n\nRecent LinkedIn activity from ${contact.name}:\n${linkedinPosts.map(p => `- ${p.headline}: ${p.summary}${p.url ? ` (${p.url})` : ''}`).join('\n')}\nIf any of these posts are relevant, reference them naturally in paragraph 1 instead of or alongside the trigger event — be specific, not generic.`
+      : '';
     return `Write a Touch 1 cold outreach email for Part Human (brand strategy agency) to ${contact.name}, ${contact.title} at ${company.name}.
 
 Context about ${company.name}: ${company.summary || ''}
-Trigger event / outreach angle: ${angleText}${angleNote}
+Trigger event / outreach angle: ${angleText}${angleNote}${postContext}
 Engagement type: ${eng.name} (${eng.price}, ${eng.duration}) — ${eng.hook}
 Role framing: ${roleCtx}
 ${EMAIL_RULES}
 FORMULA (4 short paragraphs, strict order):
-1. TRIGGER: Acknowledge the specific trigger event. Congratulate or reference it naturally. 1-2 sentences.
+1. TRIGGER: Acknowledge the specific trigger event or a relevant LinkedIn post. Congratulate or reference it naturally. 1-2 sentences.
 2. PAIN: Name the brand gap this trigger creates. Use the role framing above to make it specific to ${contact.title}. 2 sentences.
 3. HUMAN TRUTH: The real cost of that gap in human terms. Not business-speak. 2 sentences.
 4. CTA: Invite to a ${eng.cta}. Reference the ${eng.name} by name. Low-pressure. 1-2 sentences.
 
-Subject line: Short, specific, references the trigger. Not generic.
+Subject line: Short, specific, references the trigger or post. Not generic.
 
 Return JSON: {"subject":"str","body":"str"}. Body uses \\n for line breaks between paragraphs. No markdown in body.`;
   },
@@ -522,11 +534,14 @@ RULES:
 Return JSON: {"subject":"Re: ${t1Subject || '[original subject]'}","body":"str"}. Body uses \\n for line breaks.`;
   },
 
-  3: (company, contact, angle, t1Subject, engType = 'Sprint') => {
+  3: (company, contact, angle, t1Subject, engType = 'Sprint', linkedinPosts = []) => {
     const eng = ENGAGEMENT_META[engType] || ENGAGEMENT_META.Sprint;
+    const postRef = linkedinPosts.length
+      ? `\n\nRecent posts from ${contact.name} you can reference:\n${linkedinPosts.map(p => `- "${p.headline}" (${p.date || 'recent'}): ${p.summary}`).join('\n')}\nIn the post-acceptance DM, reference one of these specifically by name rather than using a placeholder.`
+      : '';
     return `Write two LinkedIn messages for Part Human reaching out to ${contact.name}, ${contact.title} at ${company.name}.
 
-Context: ${company.summary || ''}${t1Subject ? `\nPrevious outreach subject: "${t1Subject}"` : ''}
+Context: ${company.summary || ''}${t1Subject ? `\nPrevious outreach subject: "${t1Subject}"` : ''}${postRef}
 Engagement context: ${eng.name} — ${eng.hook}
 ${EMAIL_RULES}
 Message 1 — CONNECTION REQUEST NOTE (300 characters max):
@@ -535,7 +550,7 @@ Message 1 — CONNECTION REQUEST NOTE (300 characters max):
 - Warm, human, brief.
 
 Message 2 — POST-ACCEPTANCE DM (after they accept):
-- Reference a recent post or content they shared. Use "[their recent post about X]" as placeholder.
+- Reference a recent post or content they shared${linkedinPosts.length ? ' — use the specific post data provided above' : '. Use "[their recent post about X]" as placeholder'}.
 - Add genuine perspective on it.
 - Soft segue toward a conversation about ${eng.name.toLowerCase()}.
 - 3-4 sentences max.
@@ -574,7 +589,7 @@ Return JSON: {"subject":"str","body":"str"}. Body uses \\n for line breaks.`;
   },
 };
 
-export async function generateEmailDraft(touchNumber, company, contact, angle, icp = DEFAULT_ICP, t1Subject = null, engagementType = 'Sprint') {
+export async function generateEmailDraft(touchNumber, company, contact, angle, icp = DEFAULT_ICP, t1Subject = null, engagementType = 'Sprint', linkedinPosts = []) {
   const promptFn = TOUCH_PROMPTS[touchNumber];
   if (!promptFn) throw new Error(`No prompt for touch ${touchNumber}`);
 
@@ -582,12 +597,17 @@ export async function generateEmailDraft(touchNumber, company, contact, angle, i
   const { outreachVoice, aboutCompany } = icp;
   const systemContext = `You are a copywriter for Part Human. ${aboutCompany ? aboutCompany.split('.')[0] + '.' : 'Brand strategy agency.'} Write in their voice: direct, warm, human, no jargon. Never use em dashes (—). Return only valid JSON as specified.${outreachVoice ? '\n\nVOICE GUIDANCE: ' + outreachVoice : ''}\n\nENGAGEMENT CONTEXT: You are writing for a ${eng.name} engagement (${eng.price}, ${eng.duration}). ${eng.hook}.`;
 
+  // Filter posts to just this contact
+  const contactPosts = linkedinPosts.filter(p =>
+    p.contact_name?.toLowerCase().trim() === contact.name?.toLowerCase().trim()
+  );
+
   const data = await withTimeout(
     callClaude({
       model: 'claude-sonnet-4-6',
       max_tokens: 1000,
       system: systemContext,
-      messages: [{ role: 'user', content: promptFn(company, contact, angle, t1Subject, engagementType) }],
+      messages: [{ role: 'user', content: promptFn(company, contact, angle, t1Subject, engagementType, contactPosts) }],
     }),
     TIMEOUT_MS
   );
@@ -604,14 +624,17 @@ export async function generateEmailDraft(touchNumber, company, contact, angle, i
   return result;
 }
 
-export async function generateLinkedInDrafts(company, contact, t1Subject = null, engagementType = 'Sprint') {
+export async function generateLinkedInDrafts(company, contact, t1Subject = null, engagementType = 'Sprint', linkedinPosts = []) {
   const eng = ENGAGEMENT_META[engagementType] || ENGAGEMENT_META.Sprint;
+  const contactPosts = linkedinPosts.filter(p =>
+    p.contact_name?.toLowerCase().trim() === contact.name?.toLowerCase().trim()
+  );
   const data = await withTimeout(
     callClaude({
       model: 'claude-sonnet-4-6',
       max_tokens: 600,
       system: `You are a copywriter for Part Human. Write in their voice: direct, warm, human, no jargon. Never use em dashes (—). Return only valid JSON.\n\nENGAGEMENT CONTEXT: ${eng.name} (${eng.price}, ${eng.duration}). ${eng.hook}.`,
-      messages: [{ role: 'user', content: TOUCH_PROMPTS[3](company, contact, null, t1Subject, engagementType) }],
+      messages: [{ role: 'user', content: TOUCH_PROMPTS[3](company, contact, null, t1Subject, engagementType, contactPosts) }],
     }),
     TIMEOUT_MS
   );
