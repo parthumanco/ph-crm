@@ -454,8 +454,8 @@ export default function SignalWatchPage({ onNavigate, icp }) {
 
   // ── Batch scan all ───────────────────────────────────────────────────────────
 
-  const scanAll = useCallback(async () => {
-    const unscanned = companies.filter(c => !c.scan_date && !c._error && c.id);
+  const scanAll = useCallback(async (orderedList = null) => {
+    const unscanned = (orderedList || companies).filter(c => !c.scan_date && !c._error && c.id);
     if (!unscanned.length) { localStorage.removeItem('ph_scan_active'); return; }
     cancelRef.current = { cancelled: false };
     localStorage.setItem('ph_scan_active', 'true');
@@ -958,7 +958,7 @@ export default function SignalWatchPage({ onNavigate, icp }) {
             </button>
           )}
           {companies.length > 0 && (
-            <button className="btn btn-primary" onClick={scanAll} disabled={scanningAll || !unscannedCount}>
+            <button className="btn btn-primary" onClick={() => scanAll(filtered)} disabled={scanningAll || !unscannedCount}>
               {unscannedCount ? `▶ Resume Scan (${unscannedCount} left)` : '✅ All Scanned'}
             </button>
           )}
