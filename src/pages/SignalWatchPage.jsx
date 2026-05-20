@@ -405,9 +405,12 @@ export default function SignalWatchPage({ onNavigate, icp }) {
       // Persist AI-identified HQ if the company didn't already have one
       ...(result.hq && !companiesRef.current.find(c => c.id === companyId)?.hq ? { hq: result.hq } : {}),
       ...(result.industry ? { industry: result.industry } : {}),
-      // Only set engagement_type from deep scan (overwriteWebsite = true) — batch/rescan lack sufficient signal
-      ...(overwriteWebsite && result.recommendedEngagement && !companiesRef.current.find(c => c.id === companyId)?.engagement_type
+      // Deep scan: always write engagement_type (has full web research signal)
+      // Rescan: clear engagement_type for non-deep-scanned companies (removes stale batch-scan Sprint values)
+      ...(overwriteWebsite && result.recommendedEngagement
         ? { engagement_type: inferEngagementType(result.recommendedEngagement, result.employeeCountNum, result.fundingStage, result.triggers || []) }
+        : !overwriteWebsite && !companiesRef.current.find(c => c.id === companyId)?.deep_scanned
+        ? { engagement_type: null }
         : {}),
       ...(overwriteWebsite ? { deep_scanned: true } : {}),
       ...(result.website && overwriteWebsite ? { website: result.website } : {}),
