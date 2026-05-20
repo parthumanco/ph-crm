@@ -127,6 +127,7 @@ export default function SignalWatchPage({ onNavigate, icp }) {
   const [hqFillDone, setHqFillDone]         = useState(false);
   const [deepScanMinIcp, setDeepScanMinIcp] = useState('all');
   const [deepScanDropdownOpen, setDeepScanDropdownOpen] = useState(false);
+  const [rescanFilteredDropdownOpen, setRescanFilteredDropdownOpen] = useState(false);
   const [showAddForm, setShowAddForm] = useState(false);
   const [addForm, setAddForm] = useState({ name: '', website: '', hq: '' });
   const [addingManual, setAddingManual] = useState(false);
@@ -454,8 +455,8 @@ export default function SignalWatchPage({ onNavigate, icp }) {
 
   // ── Batch scan all ───────────────────────────────────────────────────────────
 
-  const scanAll = useCallback(async (orderedList = null) => {
-    const unscanned = (orderedList || companies).filter(c => !c.scan_date && !c._error && c.id);
+  const scanAll = useCallback(async () => {
+    const unscanned = companies.filter(c => !c.scan_date && !c._error && c.id);
     if (!unscanned.length) { localStorage.removeItem('ph_scan_active'); return; }
     cancelRef.current = { cancelled: false };
     localStorage.setItem('ph_scan_active', 'true');
@@ -565,8 +566,8 @@ export default function SignalWatchPage({ onNavigate, icp }) {
 
   // ── Weekly rescan ────────────────────────────────────────────────────────────
 
-  const runWeeklyRescan = useCallback(async () => {
-    const toScan = companiesRef.current.filter(c => c.scan_date && c.id);
+  const runWeeklyRescan = useCallback(async (subset = null) => {
+    const toScan = (subset || companiesRef.current).filter(c => c.scan_date && c.id);
     if (!toScan.length) return;
     setWeeklyScanRunning(true);
     setWeeklyScanDue(false);
@@ -958,7 +959,7 @@ export default function SignalWatchPage({ onNavigate, icp }) {
             </button>
           )}
           {companies.length > 0 && (
-            <button className="btn btn-primary" onClick={() => scanAll(filtered)} disabled={scanningAll || !unscannedCount}>
+            <button className="btn btn-primary" onClick={scanAll} disabled={scanningAll || !unscannedCount}>
               {unscannedCount ? `▶ Resume Scan (${unscannedCount} left)` : '✅ All Scanned'}
             </button>
           )}
@@ -966,6 +967,54 @@ export default function SignalWatchPage({ onNavigate, icp }) {
             <button className="btn btn-secondary" disabled={weeklyScanRunning || scanningAll || autoDeepQueue.length > 0} onClick={runWeeklyRescan} title="Re-score all companies against current ICP settings">
               🔄 Rescan All
             </button>
+          )}
+          {companies.length > 0 && (
+            <div style={{ position: 'relative' }}>
+              <button
+                className="btn btn-secondary"
+                disabled={weeklyScanRunning || scanningAll || autoDeepQueue.length > 0}
+                onClick={() => setRescanFilteredDropdownOpen(o => !o)}
+                title="Rescan companies matching current filters"
+              >
+                🎯 Rescan Filtered ▾
+              </button>
+              {rescanFilteredDropdownOpen && (
+                <>
+                  <div style={{ position: 'fixed', inset: 0, zIndex: 99 }} onClick={() => setRescanFilteredDropdownOpen(false)} />
+                  <div style={{ position: 'absolute', top: 'calc(100% + 4px)', left: 0, zIndex: 100, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, boxShadow: '0 4px 16px rgba(0,0,0,0.12)', minWidth: 210, overflow: 'hidden' }}>
+                    <div style={{ padding: '8px 12px 6px', fontSize: 10, fontWeight: 700, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--text-muted)', borderBottom: '1px solid var(--border)' }}>
+                      Rescan current filter
+                    </div>
+                    {[
+                      { val: 'all',    label: 'All filtered companies' },
+                      { val: 'scored', label: 'ICP 7+ only' },
+                    ].map(({ val, label }) => {
+                      const queue = filtered.filter(c => {
+                        if (!c.scan_date || !c.id || c._error) return false;
+                        if (val === 'scored' && (c.icp_score || 0) < 7) return false;
+                        return true;
+                      });
+                      return (
+                        <button
+                          key={val}
+                          onClick={() => {
+                            if (!queue.length) { alert('No eligible companies for this filter.'); setRescanFilteredDropdownOpen(false); return; }
+                            runWeeklyRescan(queue);
+                            setRescanFilteredDropdownOpen(false);
+                          }}
+                          style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', padding: '8px 12px', background: 'none', border: 'none', cursor: queue.length ? 'pointer' : 'not-allowed', textAlign: 'left', fontSize: 13, color: queue.length ? 'var(--text)' : 'var(--text-muted)', gap: 12 }}
+                          onMouseEnter={e => { if (queue.length) e.currentTarget.style.background = 'var(--bg)'; }}
+                          onMouseLeave={e => { e.currentTarget.style.background = 'none'; }}
+                        >
+                          <span>{label}</span>
+                          <span style={{ fontSize: 11, fontWeight: 600, color: queue.length ? 'var(--accent)' : 'var(--text-muted)', flexShrink: 0 }}>{queue.length} co.</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
+            </div>
           )}
         </div>
 
