@@ -73,7 +73,8 @@ const ENGAGEMENT_SCAN_GUIDE = `recommendedEngagement: Choose the best Part Human
 - "Growth" ($75-150K, 4-6 months): Series A/B, 30-150 employees, brand lagging behind company growth
 - "Acceleration" ($200-500K, 6-12 months): Series B/C, 100-500 employees, scaling into new markets or major funding round
 - "Enterprise" ($500K+, 12+ months): Series C+, 500+ employees, complex multi-workstream transformation
-Default to "Sprint" if uncertain.`;
+Default to "Sprint" if uncertain.
+IMPORTANT: Write recommendedAngle and all contactAngles specifically for the recommendedEngagement you chose. Do NOT use Sprint-specific language (e.g. "two-week sprint", "focused sprint") unless Sprint is the recommendedEngagement. The angle should reference the scale, scope, and outcomes appropriate for that engagement tier.`;
 
 // ── ICP / Signal Watch scanning ──────────────────────────────────────────────
 
@@ -284,7 +285,7 @@ export async function weeklyRescanBatch(companies, icp = DEFAULT_ICP) {
   }
 }
 
-export async function scanDeepDive(company, icp = DEFAULT_ICP) {
+export async function scanDeepDive(company, icp = DEFAULT_ICP, existingEngagementType = null) {
   const contacts = company.contacts || [];
   const contactStr = contacts
     .map(ct => {
@@ -313,7 +314,7 @@ export async function scanDeepDive(company, icp = DEFAULT_ICP) {
       tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 2 }],
       messages: [{
         role: 'user',
-        content: `Search for recent signals about ${company.name}${company.website ? ` (${company.website})` : ''}. Check: company news, LinkedIn company page, Twitter/X, job boards (brand/marketing/comms roles).${linkedInClause}${nameSearchClause} Look for posts about growth, brand, team changes, or challenges. Find up to 3 trigger events from the last 90 days.${contactStr ? ` For each contact, also find their LinkedIn profile URL (linkedin.com/in/...) — include it in contactAngles.linkedinUrl if found with confidence. Contacts: ${contactStr}.` : ''} Do 1-2 searches max.${!websiteKnown ? ' Also find their website.' : ''} Return JSON only.`,
+        content: `Search for recent signals about ${company.name}${company.website ? ` (${company.website})` : ''}. Check: company news, LinkedIn company page, Twitter/X, job boards (brand/marketing/comms roles).${linkedInClause}${nameSearchClause} Look for posts about growth, brand, team changes, or challenges. Find up to 3 trigger events from the last 90 days.${contactStr ? ` For each contact, also find their LinkedIn profile URL (linkedin.com/in/...) — include it in contactAngles.linkedinUrl if found with confidence. Contacts: ${contactStr}.` : ''} Do 1-2 searches max.${!websiteKnown ? ' Also find their website.' : ''}${existingEngagementType ? ` The engagement type is already set to "${existingEngagementType}" — write recommendedAngle and contactAngles for that engagement tier unless the company profile clearly warrants a different one.` : ''} Return JSON only.`,
       }],
     }),
     TIMEOUT_MS

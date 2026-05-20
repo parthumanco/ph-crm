@@ -409,7 +409,7 @@ export default function SignalWatchPage({ onNavigate, icp }) {
     setScanning(s => ({ ...s, [key]: true }));
     setScanStatus(s => ({ ...s, [key]: 'Searching the web…' }));
     try {
-      const result = await scanDeepDive(company, icp);
+      const result = await scanDeepDive(company, icp, company.engagement_type || null);
       if (company.id) await saveScanResult(company.id, result, true);
 
       // ── Contact enrichment pass ──────────────────────────────────────────
