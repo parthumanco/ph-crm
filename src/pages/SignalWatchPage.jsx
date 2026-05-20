@@ -472,6 +472,8 @@ export default function SignalWatchPage({ onNavigate, icp }) {
       if (company.id) {
         const current = companiesRef.current.find(c => c.id === company.id);
         const needsEnrich = (current?.contacts || []).filter(ct => ct.name && (!ct.email || !ct.linkedin));
+        // latestContacts tracks any changes from enrichment so the LinkedIn scan sees fresh URLs
+        let latestContacts = current?.contacts || [];
         if (needsEnrich.length > 0) {
           setScanStatus(s => ({ ...s, [key]: `Enriching ${needsEnrich.length} contact${needsEnrich.length > 1 ? 's' : ''}…` }));
           try {
@@ -489,6 +491,7 @@ export default function SignalWatchPage({ onNavigate, icp }) {
             if (changed) {
               await supabase.from('companies').update({ contacts: allContacts }).eq('id', company.id);
               setCompanies(prev => prev.map(c => c.id === company.id ? { ...c, contacts: allContacts } : c));
+              latestContacts = allContacts; // use freshly enriched contacts for LinkedIn scan
             }
           } catch (enrichErr) {
             console.warn('Contact enrichment failed (non-fatal):', enrichErr.message);
@@ -497,11 +500,12 @@ export default function SignalWatchPage({ onNavigate, icp }) {
 
         // ── LinkedIn post scan ───────────────────────────────────────────────
         // Search recent posts from known contacts for trigger events.
-        // Posts are stored in linkedin_posts (for display in the card) and
-        // any is_trigger:true posts are also promoted into the triggers array.
+        // Uses latestContacts (post-enrichment) so newly-found LinkedIn URLs
+        // are included. Searches by name+company even without a URL.
         try {
           const postScanCompany = companiesRef.current.find(c => c.id === company.id);
-          const contactsWithLinkedIn = (postScanCompany?.contacts || []).filter(ct => ct.name && ct.linkedin);
+          // All named contacts — scanLinkedInPosts will search by name if no URL
+          const contactsWithLinkedIn = latestContacts.filter(ct => ct.name);
           if (contactsWithLinkedIn.length > 0) {
             setScanStatus(s => ({ ...s, [key]: 'Scanning LinkedIn posts…' }));
             const existingPosts = postScanCompany?.linkedin_posts || [];

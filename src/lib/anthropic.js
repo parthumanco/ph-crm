@@ -359,12 +359,15 @@ export async function scanDeepDive(company, icp = DEFAULT_ICP, existingEngagemen
 // ── LinkedIn post scan — trigger events from contact activity ─────────────────
 
 export async function scanLinkedInPosts(contacts, companyName, existingPosts = []) {
-  const contactsWithLinkedIn = contacts.filter(ct => ct.name && ct.linkedin);
-  if (!contactsWithLinkedIn.length) return [];
+  const namedContacts = contacts.filter(ct => ct.name);
+  if (!namedContacts.length) return [];
 
-  const maxUses = Math.min(contactsWithLinkedIn.length + 1, 5);
-  const contactList = contactsWithLinkedIn
-    .map(ct => `${ct.name}${ct.title ? `, ${ct.title}` : ''}: ${ct.linkedin}`)
+  const maxUses = Math.min(namedContacts.length * 2, 6);
+  // Contacts with URLs get direct profile links; without URLs Claude searches by name
+  const contactList = namedContacts
+    .map(ct => ct.linkedin
+      ? `${ct.name}${ct.title ? `, ${ct.title}` : ''}: ${ct.linkedin}`
+      : `${ct.name}${ct.title ? `, ${ct.title}` : ''} at ${companyName} (search for their LinkedIn profile)`)
     .join('\n');
   const existingHeadlines = existingPosts.map(p => p.headline).join('; ');
 
