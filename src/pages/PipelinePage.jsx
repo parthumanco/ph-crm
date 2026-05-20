@@ -50,15 +50,17 @@ export default function PipelinePage({ icp = {} }) {
   const load = useCallback(async () => {
     setLoading(true);
     // Load entries and touches first
-    const [{ data: ents }, { data: tchs }] = await Promise.all([
+    const [{ data: ents, error: e1 }, { data: tchs, error: e2 }] = await Promise.all([
       supabase.from('pipeline_entries').select('*').order('created_at', { ascending: false }),
       supabase.from('touches').select('*'),
     ]);
+    if (e1 || e2) console.error('Pipeline load error:', e1 || e2);
     // Fetch only the specific companies referenced by pipeline entries
     const companyIds = (ents || []).map(e => e.company_id).filter(Boolean);
-    const { data: comps } = companyIds.length
+    const { data: comps, error: e3 } = companyIds.length
       ? await supabase.from('companies').select('*').in('id', companyIds)
       : { data: [] };
+    if (e3) console.error('Pipeline companies load error:', e3);
     setEntries(ents || []);
     const compMap = {};
     (comps || []).forEach(c => { compMap[c.id] = c; });
@@ -538,6 +540,7 @@ function ContactTouchGrid({ entry, company, contacts, primaryIndex, onSetPrimary
                           t1Subject: (contactTouches[1])?.subject_line || null,
                           defaultContactIndex: contactIdx,
                           emailSignature: icp.emailSignature || '',
+                          engagementType: company.engagement_type || 'Sprint',
                         })}
                         onContextMenu={(e) => onRightClick?.(e, t)}
                       >

@@ -121,6 +121,9 @@ export default function EmailDraftModal({ entry, company, touchNumber, contacts,
   };
 
   const markSent = () => {
+    const sentBody = touchNumber === 3
+      ? `CONNECTION NOTE:\n${draft.connection_note}\n\n---\nPOST-ACCEPTANCE DM:\n${draft.acceptance_dm}`
+      : editedBody;
     onMarkSent({
       id: existingTouch?.id,
       pipeline_entry_id: entry.id,
@@ -129,7 +132,7 @@ export default function EmailDraftModal({ entry, company, touchNumber, contacts,
       contact_name: contact.name,
       contact_title: contact.title,
       subject_line: editedSubject,
-      draft_content: editedBody,
+      draft_content: sentBody,
     });
   };
 

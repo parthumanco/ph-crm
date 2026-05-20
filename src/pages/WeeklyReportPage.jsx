@@ -36,11 +36,12 @@ export default function WeeklyReportPage({ icp = DEFAULT_ICP }) {
   const weekLabel = `Week of ${formatDate(weekStart)}`;
 
   const load = useCallback(async () => {
-    const [{ data: ents }, { data: comps }, { data: tchs }] = await Promise.all([
+    const [{ data: ents, error: e1 }, { data: comps, error: e2 }, { data: tchs, error: e3 }] = await Promise.all([
       supabase.from('pipeline_entries').select('*').eq('status', 'active'),
-      supabase.from('companies').select('*'),
+      supabase.from('companies').select('*').limit(2000),
       supabase.from('touches').select('*'),
     ]);
+    if (e1 || e2 || e3) console.error('WeeklyReport load error:', e1 || e2 || e3);
     setEntries(ents || []);
     const compMap = {};
     (comps || []).forEach(c => { compMap[c.id] = c; });
@@ -109,10 +110,10 @@ export default function WeeklyReportPage({ icp = DEFAULT_ICP }) {
       try {
         if (item.touchNumber === 3) {
           const { generateLinkedInDrafts } = await import('../lib/anthropic');
-          const result = await generateLinkedInDrafts(item.company, contact);
+          const result = await generateLinkedInDrafts(item.company, contact, null, item.company.engagement_type || 'Sprint');
           setEmailDrafts(d => ({ ...d, [item.key]: { type: 'linkedin', ...result, contact } }));
         } else {
-          const result = await generateEmailDraft(item.touchNumber, item.company, contact, item.company.recommended_angle, icp);
+          const result = await generateEmailDraft(item.touchNumber, item.company, contact, item.company.recommended_angle, icp, null, item.company.engagement_type || 'Sprint');
           setEmailDrafts(d => ({ ...d, [item.key]: { type: 'email', ...result, contact } }));
         }
       } catch (e) {

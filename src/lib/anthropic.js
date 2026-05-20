@@ -697,7 +697,11 @@ export async function analyzeResponse(company, contact, touchNumber, responseTex
 
   const text = data.content?.find(b => b.type === 'text')?.text || '';
   const cleaned = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
-  const result = JSON.parse(cleaned);
-  if (result.suggestedReply) result.suggestedReply = result.suggestedReply.replace(/—/g, ',');
-  return result;
+  try {
+    const result = JSON.parse(cleaned);
+    if (result.suggestedReply) result.suggestedReply = result.suggestedReply.replace(/—/g, ',');
+    return result;
+  } catch {
+    return { error: 'Could not parse AI response', raw: cleaned };
+  }
 }

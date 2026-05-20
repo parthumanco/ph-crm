@@ -126,7 +126,6 @@ export default function SignalWatchPage({ onNavigate, icp }) {
   const [hqFillDone, setHqFillDone]         = useState(false);
   const [deepScanMinIcp, setDeepScanMinIcp] = useState('all');
   const [deepScanDropdownOpen, setDeepScanDropdownOpen] = useState(false);
-  const deepScanDropdownRef = useRef();
   const [showAddForm, setShowAddForm] = useState(false);
   const [addForm, setAddForm] = useState({ name: '', website: '', hq: '' });
   const [addingManual, setAddingManual] = useState(false);
@@ -985,7 +984,7 @@ export default function SignalWatchPage({ onNavigate, icp }) {
               🔍 Deep Scan All
             </button>
             {toolbarDivider}
-            <div ref={deepScanDropdownRef} style={{ position: 'relative' }}>
+            <div style={{ position: 'relative' }}>
               <button
                 className="btn btn-secondary"
                 disabled={autoDeepQueue.length > 0 || scanningAll}
