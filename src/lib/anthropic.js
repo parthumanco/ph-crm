@@ -356,6 +356,53 @@ export async function scanDeepDive(company, icp = DEFAULT_ICP, existingEngagemen
   return jsonObj;
 }
 
+// ── LinkedIn post scan — trigger events from contact activity ─────────────────
+
+export async function scanLinkedInPosts(contacts, companyName, existingTriggers = []) {
+  const contactsWithLinkedIn = contacts.filter(ct => ct.name && ct.linkedin);
+  if (!contactsWithLinkedIn.length) return [];
+
+  const maxUses = Math.min(contactsWithLinkedIn.length + 1, 4);
+  const contactList = contactsWithLinkedIn
+    .map(ct => `${ct.name}${ct.title ? `, ${ct.title}` : ''}: ${ct.linkedin}`)
+    .join('\n');
+  const existingHeadlines = existingTriggers.map(t => t.headline).join('; ');
+
+  const data = await withTimeout(
+    callClaude({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 1500,
+      system: `You are a sales intelligence researcher scanning LinkedIn for B2B trigger events.
+
+Search each contact's LinkedIn profile and recent posts for signals from the last 90 days: hiring announcements, new initiatives, market expansion, product launches, leadership changes, rebranding, organizational shifts, fundraising, or candid posts about challenges/pain.
+
+Return ONLY a JSON array of NEW trigger events not already covered by existing signals:
+[{"category":"leadership|funding|expansion|product|pain|hiring","headline":"max 8 words","detail":"max 20 words","urgency":"high|medium|low","source":"linkedin","date":"approx date or null"}]
+
+If no meaningful new triggers found beyond what's already known, return [].
+JSON array only. No markdown.`,
+      tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: maxUses }],
+      messages: [{
+        role: 'user',
+        content: `Search LinkedIn for recent posts and activity from these ${companyName} decision-makers:\n\n${contactList}\n\nFor each profile, look for posts in the last 90 days that reveal business intent, strategic moves, team changes, or pain points. Check both their posts and any company page updates they've shared.${existingHeadlines ? `\n\nAlready have these signals — don't duplicate: ${existingHeadlines}` : ''}\n\nReturn JSON array of new trigger events only.`,
+      }],
+    }),
+    TIMEOUT_MS
+  );
+
+  const textBlocks = (data.content || []).filter(b => b.type === 'text');
+  for (let i = textBlocks.length - 1; i >= 0; i--) {
+    const raw = textBlocks[i]?.text || '';
+    const stripped = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
+    const s = stripped.indexOf('[');
+    const e = stripped.lastIndexOf(']');
+    if (s !== -1 && e !== -1) {
+      try { return JSON.parse(stripped.slice(s, e + 1)); } catch { /* try next */ }
+    }
+  }
+  return [];
+}
+
 // ── Contact enrichment via web search ────────────────────────────────────────
 
 export async function enrichContactsWithSearch(contacts, companyName) {

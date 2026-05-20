@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabase';
-import { scanBatch, scanDeepDive, weeklyRescanBatch, geocodeHqBatch, enrichContactsWithSearch, ENGAGEMENT_META, ENGAGEMENT_OPTIONS } from '../lib/anthropic';
+import { scanBatch, scanDeepDive, weeklyRescanBatch, geocodeHqBatch, enrichContactsWithSearch, scanLinkedInPosts, ENGAGEMENT_META, ENGAGEMENT_OPTIONS } from '../lib/anthropic';
 import { loadLastWeeklyScan, saveLastWeeklyScan, isWeeklyScanDue, markWeeklyScanViewed } from '../lib/settings';
 
 const TRIGGER_CATEGORIES = [
@@ -492,6 +492,29 @@ export default function SignalWatchPage({ onNavigate, icp }) {
           } catch (enrichErr) {
             console.warn('Contact enrichment failed (non-fatal):', enrichErr.message);
           }
+        }
+
+        // ── LinkedIn post scan ───────────────────────────────────────────────
+        // Look for trigger events in recent LinkedIn posts from known contacts.
+        try {
+          const postScanCompany = companiesRef.current.find(c => c.id === company.id);
+          const contactsWithLinkedIn = (postScanCompany?.contacts || []).filter(ct => ct.name && ct.linkedin);
+          if (contactsWithLinkedIn.length > 0) {
+            setScanStatus(s => ({ ...s, [key]: 'Scanning LinkedIn posts…' }));
+            const existingTriggers = postScanCompany?.triggers || [];
+            const newTriggers = await scanLinkedInPosts(contactsWithLinkedIn, company.name, existingTriggers);
+            if (newTriggers.length > 0) {
+              const existingHeadlines = new Set(existingTriggers.map(t => (t.headline || '').toLowerCase().trim()));
+              const dedupedNew = newTriggers.filter(t => !existingHeadlines.has((t.headline || '').toLowerCase().trim()));
+              if (dedupedNew.length > 0) {
+                const merged = [...existingTriggers, ...dedupedNew];
+                await supabase.from('companies').update({ triggers: merged }).eq('id', company.id);
+                setCompanies(prev => prev.map(c => c.id === company.id ? { ...c, triggers: merged } : c));
+              }
+            }
+          }
+        } catch (liErr) {
+          console.warn('LinkedIn post scan failed (non-fatal):', liErr.message);
         }
       }
 
