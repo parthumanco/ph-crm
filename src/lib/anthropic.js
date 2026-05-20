@@ -67,15 +67,34 @@ function getRoleContext(title) {
   return 'Frame around brand strategy, positioning, and the value of getting the message right at this stage of growth.';
 }
 
-const ENGAGEMENT_SCAN_GUIDE = `recommendedEngagement: You are REQUIRED to set this based on the employeeCountNum you are already filling in for this company. Apply these rules strictly:
-- employeeCountNum >= 500 → "Enterprise"
-- employeeCountNum 150-499 → "Acceleration"
-- employeeCountNum 50-149 → "Growth"
-- employeeCountNum 15-49 → "Foundation"
-- employeeCountNum < 15 OR truly unknown → "Sprint"
-If you do not know the employee count, ESTIMATE it from the company's sector, website sophistication, product maturity, and any other signals — then apply the rule above. Do not output Sprint simply because you are uncertain; make your best estimate and follow the rules.
-Funding stage can shift the recommendation up by one tier if it signals strong recent investment (e.g. a 40-person company that just closed Series B → Growth not Foundation).
-IMPORTANT: Write recommendedAngle and all contactAngles specifically for the recommendedEngagement you chose. Do NOT use Sprint-specific language (e.g. "two-week sprint", "focused sprint") unless Sprint is the recommendedEngagement.`;
+const ENGAGEMENT_SCAN_GUIDE = `recommendedEngagement: Use a two-step process — establish a BASELINE from headcount, then adjust UP based on need-state signals.
+
+STEP 1 — BASELINE from employeeCountNum (estimate confidently if unknown):
+- < 15 employees → Sprint
+- 15–49 → Foundation
+- 50–149 → Growth
+- 150–499 → Acceleration
+- 500+ → Enterprise
+
+STEP 2 — NEED-STATE UPLIFT (triggers that signal larger brand work is required):
+Each of the following shifts the baseline UP by one tier (stack up to +2 tiers max):
+- New CEO, CMO, CCO, Chief Brand Officer, or VP Marketing hired → repositioning signal (+1)
+- Series B or higher funding round closed → brand catching up to growth (+1)
+- Entering a new market, geography, or customer segment → GTM positioning needed (+1)
+- Major product launch, platform rebrand, or new vertical announced → positioning work (+1)
+- Rapid commercial team expansion (multiple sales/marketing hires) → scaling signal (+1)
+- Acquisition, merger, or spin-off → brand consolidation needed (+1 or +2)
+- Drug approval, FDA clearance, CE mark, or major regulatory milestone → commercial acceleration (+2)
+- IPO filed or announced → full brand transformation needed (+2)
+
+EXAMPLES:
+- 30-person SaaS co (baseline: Foundation) + new CMO hired → Growth
+- 80-person biotech (baseline: Growth) + FDA approval → Enterprise
+- 45-person Series B fintech (baseline: Foundation) + entering US market → Acceleration
+- 200-person company (baseline: Acceleration) + no major triggers → Acceleration
+
+Sprint is valid for small early-stage companies with no major signals. But for any company with a meaningful trigger, Sprint is rarely the right answer regardless of size.
+IMPORTANT: Write recommendedAngle and all contactAngles specifically for the recommendedEngagement you chose. Do NOT use Sprint-specific language unless Sprint is the recommendedEngagement.`;
 
 // ── ICP / Signal Watch scanning ──────────────────────────────────────────────
 

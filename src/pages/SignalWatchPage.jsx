@@ -31,19 +31,46 @@ function haversineDistance(lat1, lng1, lat2, lng2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-// Client-side engagement type correction — overrides AI if employee count contradicts Sprint recommendation
-function inferEngagementType(aiRecommended, employeeCount, fundingStage) {
-  const n = employeeCount ? Math.round(employeeCount) : null;
+// Client-side engagement type correction — baseline from headcount, uplift from need-state triggers
+const TIERS = ['Sprint', 'Foundation', 'Growth', 'Acceleration', 'Enterprise'];
+function tierIndex(t) { return TIERS.indexOf(t) === -1 ? 0 : TIERS.indexOf(t); }
+function tierAt(i)    { return TIERS[Math.min(Math.max(i, 0), TIERS.length - 1)]; }
+
+function inferEngagementType(aiRecommended, employeeCount, fundingStage, triggers = []) {
+  const n  = employeeCount ? Math.round(employeeCount) : null;
   const fs = (fundingStage || '').toLowerCase();
-  // If AI already recommended something other than Sprint, trust it
-  if (aiRecommended && aiRecommended !== 'Sprint') return aiRecommended;
-  // AI said Sprint — check if employee count contradicts that
-  if (!n) return aiRecommended || 'Sprint'; // genuinely unknown, keep Sprint
-  if (n >= 500) return 'Enterprise';
-  if (n >= 150) return 'Acceleration';
-  if (n >= 50)  return fs.includes('series b') || fs.includes('series c') ? 'Acceleration' : 'Growth';
-  if (n >= 15)  return 'Foundation';
-  return 'Sprint';
+
+  // Step 1: baseline from headcount
+  let baseline;
+  if (!n)      baseline = 'Sprint';
+  else if (n >= 500) baseline = 'Enterprise';
+  else if (n >= 150) baseline = 'Acceleration';
+  else if (n >= 50)  baseline = 'Growth';
+  else if (n >= 15)  baseline = 'Foundation';
+  else               baseline = 'Sprint';
+
+  // If AI recommended higher than our headcount baseline, trust the AI
+  const aiIdx       = tierIndex(aiRecommended || 'Sprint');
+  const baselineIdx = tierIndex(baseline);
+  let idx = Math.max(aiIdx, baselineIdx);
+
+  // Step 2: need-state uplift from triggers
+  let uplift = 0;
+  const cats     = triggers.map(t => (t.category || '').toLowerCase());
+  const details  = triggers.map(t => ((t.headline || '') + ' ' + (t.detail || '')).toLowerCase()).join(' ');
+  const urgHigh  = triggers.filter(t => t.urgency === 'high').length;
+
+  if (cats.includes('leadership'))  uplift += 1; // new CEO/CMO/CCO
+  if (cats.includes('funding') && (fs.includes('series b') || fs.includes('series c') || fs.includes('series d'))) uplift += 1;
+  if (cats.includes('expansion'))   uplift += 1; // new market/geo
+  if (cats.includes('product'))     uplift += 1; // launch/rebrand
+  if (/ipo|s-1|going public/.test(details))  uplift += 2;
+  if (/fda|approval|clearance|ce mark|drug approval/.test(details)) uplift += 2;
+  if (/acqui|merger|spin.?off/.test(details)) uplift += 1;
+  if (urgHigh >= 2) uplift += 1; // multiple high-urgency signals
+
+  uplift = Math.min(uplift, 2); // cap at +2 tiers
+  return tierAt(idx + uplift);
 }
 
 const BATCH_SIZE = 5;
@@ -373,7 +400,7 @@ export default function SignalWatchPage({ onNavigate, icp }) {
       ...(result.industry ? { industry: result.industry } : {}),
       // Only set engagement_type from scan if the company doesn't already have a manually-set one
       ...(result.recommendedEngagement && !companiesRef.current.find(c => c.id === companyId)?.engagement_type
-        ? { engagement_type: inferEngagementType(result.recommendedEngagement, result.employeeCountNum, result.fundingStage) }
+        ? { engagement_type: inferEngagementType(result.recommendedEngagement, result.employeeCountNum, result.fundingStage, result.triggers || []) }
         : {}),
       ...(overwriteWebsite ? { deep_scanned: true } : {}),
       ...(result.website && overwriteWebsite ? { website: result.website } : {}),
