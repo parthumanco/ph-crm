@@ -1378,6 +1378,7 @@ export default function SignalWatchPage({ onNavigate, icp }) {
                     distMiles={distMiles}
                     status={scanStatus[key]}
                     isScanning={scanning[key]}
+                    scanningAll={scanningAll}
                     isAddingToPipeline={addingToPipeline[key]}
                     isAddedToPipeline={addedToPipeline[company.id]}
                     onScan={() => scanOne(company)}
@@ -1445,13 +1446,17 @@ function AddContactForm({ companyId, existingContacts, onSaved }) {
   );
 }
 
-function CompanyCard({ company, distMiles, status, isScanning, isAddingToPipeline, isAddedToPipeline, onScan, onAddToPipeline, onNavigatePipeline, onDelete, forceExpanded, onExpandedChange, cardRef, onUpdateContacts, onUpdateEngagement }) {
+function CompanyCard({ company, distMiles, status, isScanning, scanningAll, isAddingToPipeline, isAddedToPipeline, onScan, onAddToPipeline, onNavigatePipeline, onDelete, forceExpanded, onExpandedChange, cardRef, onUpdateContacts, onUpdateEngagement }) {
   const [expanded, setExpanded] = useState(false);
   const [editingIdx, setEditingIdx] = useState(null);
   const [editForm, setEditForm] = useState({});
   const hasResult = company.scan_date && !company._error;
   const engType = company.engagement_type || 'Sprint';
   const engMeta = ENGAGEMENT_META[engType] || ENGAGEMENT_META.Sprint;
+
+  // Scan batch state: queued = waiting in batch, done = completed this session
+  const isDone    = status === 'Done';
+  const isQueued  = scanningAll && !company.scan_date && !isScanning && !isDone && !company._error;
 
   useEffect(() => {
     if (forceExpanded) setExpanded(true);
@@ -1472,8 +1477,16 @@ function CompanyCard({ company, distMiles, status, isScanning, isAddingToPipelin
 
   const sc = company.overall_score ? scoreColor(company.overall_score) : null;
 
+  const cardBorderStyle = isScanning
+    ? { borderLeft: '3px solid var(--accent)', boxShadow: '0 0 0 1px var(--accent)22' }
+    : isDone
+    ? { borderLeft: '3px solid #10b981' }
+    : isQueued
+    ? { borderLeft: '3px solid #f59e0b', opacity: 0.75 }
+    : {};
+
   return (
-    <div className="card" ref={cardRef}>
+    <div className="card" ref={cardRef} style={cardBorderStyle}>
       <div className="card-header" style={{ cursor: hasResult ? 'pointer' : 'default' }} onClick={() => hasResult && handleSetExpanded(!expanded)}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 0 }}>
           {company.website ? (
@@ -1516,9 +1529,15 @@ function CompanyCard({ company, distMiles, status, isScanning, isAddingToPipelin
               )}
             </>
           )}
-          {status && (
-            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-              {isScanning && <span className="spinner" style={{ marginRight: 4 }} />}{status}
+          {isQueued && (
+            <span style={{ fontSize: 10, fontWeight: 700, color: '#92400e', background: '#fef3c7', padding: '2px 7px', borderRadius: 4 }}>⏳ Queued</span>
+          )}
+          {isDone && (
+            <span style={{ fontSize: 10, fontWeight: 700, color: '#15803d', background: '#dcfce7', padding: '2px 7px', borderRadius: 4 }}>✓ Done</span>
+          )}
+          {isScanning && (
+            <span style={{ fontSize: 11, color: 'var(--accent)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 4 }}>
+              <span className="spinner" />{status || 'Scanning…'}
             </span>
           )}
           <button
