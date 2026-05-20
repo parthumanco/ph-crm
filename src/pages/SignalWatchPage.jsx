@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabase';
-import { scanBatch, scanDeepDive, weeklyRescanBatch, geocodeHqBatch } from '../lib/anthropic';
+import { scanBatch, scanDeepDive, weeklyRescanBatch, geocodeHqBatch, enrichContactsWithSearch } from '../lib/anthropic';
 import { loadLastWeeklyScan, saveLastWeeklyScan, isWeeklyScanDue, markWeeklyScanViewed } from '../lib/settings';
 
 const TRIGGER_CATEGORIES = [
@@ -111,6 +111,7 @@ export default function SignalWatchPage({ onNavigate, icp }) {
     distance: 'all',
     icp: 'all',
     sig: 'all',
+    industry: 'all',
   });
   const [autoDeepQueue, setAutoDeepQueue]           = useState([]);
   const [autoDeepProgress, setAutoDeepProgress]     = useState({ done: 0, total: 0 });
@@ -353,6 +354,7 @@ export default function SignalWatchPage({ onNavigate, icp }) {
       scan_date: new Date().toISOString(),
       // Persist AI-identified HQ if the company didn't already have one
       ...(result.hq && !companiesRef.current.find(c => c.id === companyId)?.hq ? { hq: result.hq } : {}),
+      ...(result.industry ? { industry: result.industry } : {}),
       ...(overwriteWebsite ? { deep_scanned: true } : {}),
       ...(result.website && overwriteWebsite ? { website: result.website } : {}),
       ...(result.companyLinkedinUrl ? { company_linkedin: result.companyLinkedinUrl } : {}),
@@ -405,6 +407,37 @@ export default function SignalWatchPage({ onNavigate, icp }) {
     try {
       const result = await scanDeepDive(company, icp);
       if (company.id) await saveScanResult(company.id, result, true);
+
+      // ── Contact enrichment pass ──────────────────────────────────────────
+      // After the deep scan merges discovered contacts, search for any still
+      // missing email or LinkedIn, cross-referencing name + company.
+      if (company.id) {
+        const current = companiesRef.current.find(c => c.id === company.id);
+        const needsEnrich = (current?.contacts || []).filter(ct => ct.name && (!ct.email || !ct.linkedin));
+        if (needsEnrich.length > 0) {
+          setScanStatus(s => ({ ...s, [key]: `Enriching ${needsEnrich.length} contact${needsEnrich.length > 1 ? 's' : ''}…` }));
+          try {
+            const enriched = await enrichContactsWithSearch(needsEnrich, company.name);
+            const allContacts = (current.contacts || []).map(ct => {
+              const e = enriched.find(ec => ec.name?.toLowerCase().trim() === ct.name?.toLowerCase().trim());
+              if (!e) return ct;
+              return {
+                ...ct,
+                ...(e.email    && !ct.email    ? { email:    e.email }    : {}),
+                ...(e.linkedin && !ct.linkedin ? { linkedin: e.linkedin } : {}),
+              };
+            });
+            const changed = JSON.stringify(allContacts) !== JSON.stringify(current.contacts);
+            if (changed) {
+              await supabase.from('companies').update({ contacts: allContacts }).eq('id', company.id);
+              setCompanies(prev => prev.map(c => c.id === company.id ? { ...c, contacts: allContacts } : c));
+            }
+          } catch (enrichErr) {
+            console.warn('Contact enrichment failed (non-fatal):', enrichErr.message);
+          }
+        }
+      }
+
       setScanStatus(s => ({ ...s, [key]: 'Done' }));
     } catch (e) {
       setCompanies(prev => prev.map(c => (c.id || c._tempId) === key ? { ...c, _error: e.message } : c));
@@ -566,6 +599,7 @@ export default function SignalWatchPage({ onNavigate, icp }) {
             employeeCountNum: r.employeeCountNum || prev.employee_count_num,
             recommendedAngle: r.recommendedAngle || prev.recommended_angle,
             contactAngles: r.contactAngles || prev.contact_angles || [],
+            industry: r.industry || prev.industry || null,
             lat: r.lat || prev.lat,
             lng: r.lng || prev.lng,
           }, false);
@@ -833,6 +867,10 @@ export default function SignalWatchPage({ onNavigate, icp }) {
         if (parseInt(filters.sig) > c.overall_score) return false;
       }
 
+      if (filters.industry !== 'all') {
+        if (!c.industry || c.industry !== filters.industry) return false;
+      }
+
       return true;
     });
   };
@@ -877,7 +915,7 @@ export default function SignalWatchPage({ onNavigate, icp }) {
     const id = company.id || company._tempId;
     setExpandedCards(prev => ({ ...prev, [id]: true }));
     // Clear filters so the card is visible
-    setFilters({ series: 'all', employees: 'all', distance: 'all', icp: 'all', sig: 'all' });
+    setFilters({ series: 'all', employees: 'all', distance: 'all', icp: 'all', sig: 'all', industry: 'all' });
     setSearch('');
     setTimeout(() => {
       cardRefs.current[id]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -1256,6 +1294,35 @@ export default function SignalWatchPage({ onNavigate, icp }) {
                     ))}
                   </div>
                 </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', whiteSpace: 'nowrap' }}>Industry</span>
+                  <select
+                    value={filters.industry}
+                    onChange={e => setFilter('industry', e.target.value)}
+                    style={{ fontSize: 12, padding: '4px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface)', color: filters.industry !== 'all' ? 'var(--accent)' : 'var(--text)', fontWeight: filters.industry !== 'all' ? 700 : 400, cursor: 'pointer', maxWidth: 200 }}
+                  >
+                    <option value="all">All Industries</option>
+                    <option value="Agriculture">Agriculture</option>
+                    <option value="Mining & Energy">Mining &amp; Energy</option>
+                    <option value="Utilities">Utilities</option>
+                    <option value="Construction">Construction</option>
+                    <option value="Manufacturing">Manufacturing</option>
+                    <option value="Wholesale & Retail">Wholesale &amp; Retail</option>
+                    <option value="Transportation">Transportation</option>
+                    <option value="Information & Tech">Information &amp; Tech</option>
+                    <option value="Finance & Insurance">Finance &amp; Insurance</option>
+                    <option value="Real Estate">Real Estate</option>
+                    <option value="Professional Services">Professional Services</option>
+                    <option value="Management">Management</option>
+                    <option value="Administrative Services">Administrative Services</option>
+                    <option value="Education">Education</option>
+                    <option value="Healthcare">Healthcare</option>
+                    <option value="Arts & Entertainment">Arts &amp; Entertainment</option>
+                    <option value="Hospitality & Food">Hospitality &amp; Food</option>
+                    <option value="Other Services">Other Services</option>
+                    <option value="Government">Government</option>
+                  </select>
+                </div>
                 <input
                   type="text"
                   placeholder="Search…"
@@ -1264,10 +1331,10 @@ export default function SignalWatchPage({ onNavigate, icp }) {
                   style={{ marginLeft: 'auto', width: 160, padding: '5px 10px', fontSize: 12 }}
                 />
               </div>
-              {(filters.series !== 'all' || filters.employees !== 'all' || filters.distance !== 'all' || filters.icp !== 'all' || filters.sig !== 'all' || search) && (
+              {(filters.series !== 'all' || filters.employees !== 'all' || filters.distance !== 'all' || filters.icp !== 'all' || filters.sig !== 'all' || filters.industry !== 'all' || search) && (
                 <div style={{ marginTop: 8, fontSize: 12, color: 'var(--text-muted)' }}>
                   Showing {filtered.length} of {companies.length} companies &nbsp;
-                  <button className="btn btn-ghost btn-xs" onClick={() => { setFilters({ series: 'all', employees: 'all', distance: 'all', icp: 'all', sig: 'all' }); setSearch(''); }}>
+                  <button className="btn btn-ghost btn-xs" onClick={() => { setFilters({ series: 'all', employees: 'all', distance: 'all', icp: 'all', sig: 'all', industry: 'all' }); setSearch(''); }}>
                     Clear filters
                   </button>
                 </div>

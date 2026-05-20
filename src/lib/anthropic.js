@@ -40,6 +40,27 @@ async function callClaude({ model = 'claude-haiku-4-5-20251001', system, message
 
 import { buildIcpProfile, DEFAULT_ICP } from './settings';
 
+const INDUSTRY_GUIDE = `industry: Classify using exactly one of these values:
+"Agriculture" (farming, forestry, fishing, hunting)
+"Mining & Energy" (mining, quarrying, oil and gas extraction)
+"Utilities" (electric, water, gas utilities)
+"Construction" (building, infrastructure, specialty trades)
+"Manufacturing" (food, textiles, chemicals, machinery, electronics, hardware)
+"Wholesale & Retail" (automotive, building materials, e-commerce, consumer goods)
+"Transportation" (airlines, trucking, postal, warehousing, logistics)
+"Information & Tech" (software, SaaS, broadcasting, publishing, telecommunications)
+"Finance & Insurance" (banking, investment, wealth management, insurance, fintech)
+"Real Estate" (property management, rental, leasing)
+"Professional Services" (legal, accounting, architecture, engineering, consulting, marketing agencies)
+"Management" (holding companies, corporate management)
+"Administrative Services" (staffing, facilities management, waste management)
+"Education" (schools, training, e-learning, edtech)
+"Healthcare" (hospitals, nursing, childcare, medical devices, healthtech, biotech)
+"Arts & Entertainment" (performing arts, museums, sports, media production)
+"Hospitality & Food" (hotels, restaurants, catering, food service)
+"Other Services" (repair, personal care, religious, civic organizations)
+"Government" (public administration, military, public safety)`;
+
 function buildBatchSystem(icp) {
   const profile = buildIcpProfile(icp);
   return `Sales intelligence analyst scoring companies for Part Human outreach.
@@ -47,10 +68,11 @@ ${profile}
 NEVER use em dashes (—) anywhere in your response. Use commas or periods instead.
 Return ONLY a JSON array, same order as input. Short strings only.
 Each object schema:
-{"companyName":"str","website":"https://domain.com or null — only include if you are confident this is correct, never guess","hq":"City, State or City, Country — the company headquarters location","overallScore":1-10,"icpScore":1-10,"icpReason":"max 15 words","icpTier":"Ambitious Scale-Up|Category Challenger|Innovation Team","fundingStage":"Seed|Series A|Series B|Series C|Series D+|Unknown","employeeCountNum":integer_or_null,"summary":"max 25 words","triggers":[{"category":"leadership|funding|expansion|product|pain|hiring","headline":"max 8 words","detail":"max 20 words","urgency":"high|medium|low","source":"str","date":"str"}],"recommendedAngle":"max 30 words","contactAngles":[{"name":"str","title":"str","angle":"max 30 words"}],"lat":number_or_null,"lng":number_or_null,"noNewsFound":false}
+{"companyName":"str","website":"https://domain.com or null — only include if you are confident this is correct, never guess","hq":"City, State or City, Country — the company headquarters location","industry":"str","overallScore":1-10,"icpScore":1-10,"icpReason":"max 15 words","icpTier":"Ambitious Scale-Up|Category Challenger|Innovation Team","fundingStage":"Seed|Series A|Series B|Series C|Series D+|Unknown","employeeCountNum":integer_or_null,"summary":"max 25 words","triggers":[{"category":"leadership|funding|expansion|product|pain|hiring","headline":"max 8 words","detail":"max 20 words","urgency":"high|medium|low","source":"str","date":"str"}],"recommendedAngle":"max 30 words","contactAngles":[{"name":"str","title":"str","angle":"max 30 words"}],"lat":number_or_null,"lng":number_or_null,"noNewsFound":false}
 For hq: if a headquarters location is provided in the input, use it exactly. If not provided, identify the company's headquarters city from your knowledge (e.g. "Austin, TX" or "London, UK"). Return your best guess — do not leave blank.
 For lat/lng: geocode the hq field you just determined. ALWAYS base lat/lng on the hq location, not the company's general reputation or country of origin. Return null only if truly unknown.
 For website: return the company's primary domain if you know it with confidence. Return null if unsure — do not guess.
+${INDUSTRY_GUIDE}
 If contacts listed, populate contactAngles per contact tailored to their role.
 If unknown company: noNewsFound:true, triggers:[], overallScore:3, icpScore:3, lat:null, lng:null.
 CRITICAL: JSON array only. No markdown.`;
@@ -81,7 +103,8 @@ For each contact listed, search for their LinkedIn profile URL (linkedin.com/in/
 CRITICAL RULE FOR LINKEDIN URLs: NEVER construct or guess a LinkedIn URL from a person's name (e.g. do NOT assume linkedin.com/in/firstname-lastname). Only include a linkedinUrl if that exact URL appeared in your actual web search results. If you did not find the URL in search results, set linkedinUrl to null. A missing URL is far better than a wrong one.
 NEVER use em dashes (—) anywhere in your response. Use commas or periods instead.
 Return ONLY valid JSON object, no markdown:
-{"companyName":"str","website":"https://domain.com or null","companyLinkedinUrl":"https://linkedin.com/company/... or null","scanDate":"today","hq":"City, State or City, Country — confirmed headquarters location","overallScore":1-10,"icpScore":1-10,"icpReason":"str","icpTier":"str","fundingStage":"Seed|Series A|Series B|Series C|Series D+|Unknown","employeeCountNum":integer_or_null,"summary":"2-3 sentences","triggers":[{"category":"str","headline":"str","detail":"str","urgency":"str","source":"str","date":"str"}],"recommendedAngle":"str","contactAngles":[{"name":"str","title":"str","angle":"str","linkedinUrl":"https://linkedin.com/in/... or null"}],"discoveredContacts":[{"name":"str","title":"str","linkedinUrl":"https://linkedin.com/in/... or null"}],"lat":number_or_null,"lng":number_or_null,"noNewsFound":false}
+{"companyName":"str","website":"https://domain.com or null","companyLinkedinUrl":"https://linkedin.com/company/... or null","scanDate":"today","hq":"City, State or City, Country — confirmed headquarters location","industry":"str","overallScore":1-10,"icpScore":1-10,"icpReason":"str","icpTier":"str","fundingStage":"Seed|Series A|Series B|Series C|Series D+|Unknown","employeeCountNum":integer_or_null,"summary":"2-3 sentences","triggers":[{"category":"str","headline":"str","detail":"str","urgency":"str","source":"str","date":"str"}],"recommendedAngle":"str","contactAngles":[{"name":"str","title":"str","angle":"str","linkedinUrl":"https://linkedin.com/in/... or null"}],"discoveredContacts":[{"name":"str","title":"str","linkedinUrl":"https://linkedin.com/in/... or null"}],"lat":number_or_null,"lng":number_or_null,"noNewsFound":false}
+${INDUSTRY_GUIDE}
 discoveredContacts: people you found working at this company who were NOT in the provided contact list. Max 5. Only include if found with confidence. For all linkedinUrl fields: only include URLs that appeared explicitly in your search results — never construct them from names.
 For hq: search for and confirm the company's actual headquarters city. Use the provided HQ if given, otherwise find it. Format as "City, State" (US) or "City, Country" (international).
 For lat/lng: geocode the hq field. ALWAYS base lat/lng on the confirmed hq location.
@@ -170,9 +193,10 @@ ${profile}
 Focus: what has CHANGED or is NEW in the last 30 days — leadership moves, funding rounds, product launches, layoffs, expansions, key hires. Adjust scores up if new positive triggers exist.
 Return ONLY a JSON array, same order as input. Short strings only.
 Each object schema:
-{"companyName":"str","overallScore":1-10,"icpScore":1-10,"scoreChanged":true|false,"triggers":[{"category":"leadership|funding|expansion|product|pain|hiring","headline":"max 8 words","detail":"max 20 words","urgency":"high|medium|low","source":"str","date":"str"}],"recommendedAngle":"max 30 words","noNewsFound":false}
+{"companyName":"str","industry":"str","overallScore":1-10,"icpScore":1-10,"scoreChanged":true|false,"triggers":[{"category":"leadership|funding|expansion|product|pain|hiring","headline":"max 8 words","detail":"max 20 words","urgency":"high|medium|low","source":"str","date":"str"}],"recommendedAngle":"max 30 words","noNewsFound":false}
 scoreChanged: true only if you are aware of meaningful new developments in the last 30 days that would change outreach priority.
 If nothing new: scoreChanged:false, triggers:[], keep scores similar to before.
+${INDUSTRY_GUIDE}
 CRITICAL: JSON array only. No markdown.`;
 }
 
@@ -267,6 +291,74 @@ export async function scanDeepDive(company, icp = DEFAULT_ICP) {
   }
   if (!jsonObj) throw new Error('No JSON found in deep scan response');
   return jsonObj;
+}
+
+// ── Contact enrichment via web search ────────────────────────────────────────
+
+export async function enrichContactsWithSearch(contacts, companyName) {
+  // Only process contacts that are missing email or LinkedIn
+  const toEnrich = contacts.filter(c => c.name && (!c.email || !c.linkedin));
+  if (!toEnrich.length) return contacts;
+
+  const maxUses = Math.min(toEnrich.length * 2, 8);
+
+  const contactList = toEnrich.map((c, i) =>
+    `${i + 1}. ${c.name}${c.title ? `, ${c.title}` : ''} at ${companyName}` +
+    `${c.email ? '' : ' [email: MISSING]'}` +
+    `${c.linkedin ? '' : ' [LinkedIn: MISSING]'}`
+  ).join('\n');
+
+  const data = await withTimeout(
+    callClaude({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 2000,
+      system: `You are a B2B contact researcher. Search the web to find professional email addresses and LinkedIn profile URLs for specific people at named companies.
+
+CRITICAL RULES:
+- Only return email addresses explicitly found in public sources (company website team pages, press releases, conference bios, professional profiles). NEVER guess, infer, or construct email patterns like firstname@company.com.
+- Only return LinkedIn URLs (linkedin.com/in/...) that appeared explicitly in search results. NEVER construct a URL from someone's name.
+- Before returning any data, verify the person actually works at the specified company — cross-reference name AND company.
+- If you cannot find verified info, return null for that field. A missing field is far better than a wrong one.
+- Do NOT return generic company email addresses (info@, hello@, etc.).
+
+Return ONLY a JSON array, same order as input:
+[{"name":"str","email":"str or null","linkedinUrl":"https://linkedin.com/in/... or null","source":"brief note on where you found it, or null"}]
+JSON only, no markdown.`,
+      tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: maxUses }],
+      messages: [{
+        role: 'user',
+        content: `Find missing contact info for these people. Only return data explicitly found in search results — never guess or construct anything.\n\n${contactList}\n\nFor each: search "[name] [company name]" to find their LinkedIn profile URL and any publicly listed email. Cross-reference name AND company to confirm it's the right person before returning results.\n\nReturn JSON array only.`,
+      }],
+    }),
+    TIMEOUT_MS
+  );
+
+  // Find the last text block containing a JSON array
+  const textBlocks = (data.content || []).filter(b => b.type === 'text');
+  let enriched = null;
+  for (let i = textBlocks.length - 1; i >= 0; i--) {
+    const raw = textBlocks[i]?.text || '';
+    const stripped = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
+    const s = stripped.indexOf('[');
+    const e = stripped.lastIndexOf(']');
+    if (s !== -1 && e !== -1) {
+      try { enriched = JSON.parse(stripped.slice(s, e + 1)); break; } catch { /* try next block */ }
+    }
+  }
+
+  if (!enriched?.length) return contacts;
+
+  // Merge enriched fields back — only fill gaps, never overwrite existing data
+  return contacts.map(contact => {
+    if (!contact.name) return contact;
+    const found = enriched.find(e => e.name?.toLowerCase().trim() === contact.name?.toLowerCase().trim());
+    if (!found) return contact;
+    return {
+      ...contact,
+      ...(found.email && !contact.email ? { email: found.email } : {}),
+      ...(found.linkedinUrl && !contact.linkedin ? { linkedin: found.linkedinUrl } : {}),
+    };
+  });
 }
 
 // ── Email draft generation ────────────────────────────────────────────────────
