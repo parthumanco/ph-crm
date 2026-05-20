@@ -155,6 +155,7 @@ export default function SignalWatchPage({ onNavigate, icp }) {
     sig: 'all',
     industry: 'all',
     engagement: 'all',
+    deepScan: 'all',
   });
   const [autoDeepQueue, setAutoDeepQueue]           = useState([]);
   const [autoDeepProgress, setAutoDeepProgress]     = useState({ done: 0, total: 0 });
@@ -1004,6 +1005,8 @@ export default function SignalWatchPage({ onNavigate, icp }) {
         const eng = c.engagement_type || 'Sprint';
         if (eng !== filters.engagement) return false;
       }
+      if (filters.deepScan === 'yes' && !c.deep_scanned) return false;
+      if (filters.deepScan === 'no'  &&  c.deep_scanned) return false;
 
       return true;
     });
@@ -1049,7 +1052,7 @@ export default function SignalWatchPage({ onNavigate, icp }) {
     const id = company.id || company._tempId;
     setExpandedCards(prev => ({ ...prev, [id]: true }));
     // Clear filters so the card is visible
-    setFilters({ series: 'all', employees: 'all', distance: 'all', icp: 'all', sig: 'all', industry: 'all', engagement: 'all' });
+    setFilters({ series: 'all', employees: 'all', distance: 'all', icp: 'all', sig: 'all', industry: 'all', engagement: 'all', deepScan: 'all' });
     setSearch('');
     setTimeout(() => {
       cardRefs.current[id]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -1483,6 +1486,14 @@ export default function SignalWatchPage({ onNavigate, icp }) {
                   </div>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', whiteSpace: 'nowrap' }}>Deep Scan</span>
+                  <div style={{ display: 'flex', gap: 4 }}>
+                    {[['all','All'],['yes','Complete'],['no','Pending']].map(([v,l]) => (
+                      <button key={v} className={`filter-btn${filters.deepScan === v ? ' active' : ''}`} style={{ padding: '4px 9px', fontSize: 11 }} onClick={() => setFilter('deepScan', v)}>{l}</button>
+                    ))}
+                  </div>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                   <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', whiteSpace: 'nowrap' }}>Industry</span>
                   <select
                     value={filters.industry}
@@ -1531,13 +1542,13 @@ export default function SignalWatchPage({ onNavigate, icp }) {
                   placeholder="Search…"
                   value={search}
                   onChange={e => setSearch(e.target.value)}
-                  style={{ marginLeft: 'auto', width: 160, padding: '5px 10px', fontSize: 12 }}
+                  style={{ width: 160, padding: '5px 10px', fontSize: 12 }}
                 />
               </div>
-              {(filters.series !== 'all' || filters.employees !== 'all' || filters.distance !== 'all' || filters.icp !== 'all' || filters.sig !== 'all' || filters.industry !== 'all' || filters.engagement !== 'all' || search) && (
+              {(filters.series !== 'all' || filters.employees !== 'all' || filters.distance !== 'all' || filters.icp !== 'all' || filters.sig !== 'all' || filters.industry !== 'all' || filters.engagement !== 'all' || filters.deepScan !== 'all' || search) && (
                 <div style={{ marginTop: 8, fontSize: 12, color: 'var(--text-muted)' }}>
                   Showing {filtered.length} of {companies.length} companies &nbsp;
-                  <button className="btn btn-ghost btn-xs" onClick={() => { setFilters({ series: 'all', employees: 'all', distance: 'all', icp: 'all', sig: 'all', industry: 'all', engagement: 'all' }); setSearch(''); }}>
+                  <button className="btn btn-ghost btn-xs" onClick={() => { setFilters({ series: 'all', employees: 'all', distance: 'all', icp: 'all', sig: 'all', industry: 'all', engagement: 'all', deepScan: 'all' }); setSearch(''); }}>
                     Clear filters
                   </button>
                 </div>
