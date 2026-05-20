@@ -1472,7 +1472,7 @@ function CompanyCard({ company, distMiles, status, isScanning, isAddingToPipelin
             value={engType}
             onClick={e => e.stopPropagation()}
             onChange={e => { e.stopPropagation(); onUpdateEngagement?.(company.id, e.target.value); }}
-            style={{ fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 10, border: `1px solid ${engMeta.color}40`, background: engMeta.color + '18', color: engMeta.color, cursor: 'pointer', outline: 'none' }}
+            style={{ fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 10, border: `1px solid ${engMeta.color}40`, background: engMeta.color + '18', color: engMeta.color, cursor: 'pointer', outline: 'none', width: 'fit-content', maxWidth: 110 }}
             title="Engagement type — drives email messaging"
           >
             {ENGAGEMENT_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}

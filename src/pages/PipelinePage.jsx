@@ -246,7 +246,7 @@ export default function PipelinePage({ icp = {} }) {
                                   <select
                                     value={et}
                                     onChange={e => updateEngagement(company.id, e.target.value)}
-                                    style={{ fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 10, border: `1px solid ${em.color}40`, background: em.color + '18', color: em.color, cursor: 'pointer', outline: 'none' }}
+                                    style={{ fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 10, border: `1px solid ${em.color}40`, background: em.color + '18', color: em.color, cursor: 'pointer', outline: 'none', width: 'fit-content', maxWidth: 110 }}
                                     title="Engagement type — drives email messaging"
                                   >
                                     {ENGAGEMENT_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
