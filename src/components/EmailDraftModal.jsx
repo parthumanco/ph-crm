@@ -1,17 +1,18 @@
 import { useState, useEffect } from 'react';
-import { generateEmailDraft, generateLinkedInDrafts } from '../lib/anthropic';
+import { generateEmailDraft, generateLinkedInDrafts, ENGAGEMENT_META } from '../lib/anthropic';
 import { supabase } from '../lib/supabase';
 
 const TOUCH_META = {
-  1: { label: 'Touch 1 — Initial Email',    type: 'email',    desc: 'Trigger → pain → human truth → Strategic Sprint CTA' },
-  2: { label: 'Touch 2 — Follow-Up Email',  type: 'email',    desc: 'Short reply on same thread, Day 7.' },
-  3: { label: 'Touch 3 — LinkedIn',         type: 'linkedin', desc: 'Connection request note + post-acceptance DM, Day 14.' },
-  4: { label: 'Touch 4 — Goodwill',         type: 'email',    desc: 'Market insight, no hard ask, Day 21.' },
-  5: { label: 'Touch 5 — Close the Loop',   type: 'email',    desc: 'Graceful final note, leave door open, Day 28.' },
+  1: { label: 'Touch 1 — Initial Email',    type: 'email',    desc: (engName) => `Trigger → pain → human truth → ${engName} CTA` },
+  2: { label: 'Touch 2 — Follow-Up Email',  type: 'email',    desc: () => 'Short reply on same thread, Day 7.' },
+  3: { label: 'Touch 3 — LinkedIn',         type: 'linkedin', desc: () => 'Connection request note + post-acceptance DM, Day 14.' },
+  4: { label: 'Touch 4 — Goodwill',         type: 'email',    desc: () => 'Market insight, no hard ask, Day 21.' },
+  5: { label: 'Touch 5 — Close the Loop',   type: 'email',    desc: () => 'Graceful final note, leave door open, Day 28.' },
 };
 
 export default function EmailDraftModal({ entry, company, touchNumber, contacts, existingTouch, onClose, onMarkSent, onSave, t1Subject, defaultContactIndex = 0, emailSignature = '', engagementType = 'Sprint' }) {
   const meta = TOUCH_META[touchNumber] || {};
+  const engName = ENGAGEMENT_META[engagementType]?.name || engagementType;
   const [selectedContact, setSelectedContact] = useState(defaultContactIndex);
   const [draft, setDraft]           = useState(null);
   const [generating, setGenerating] = useState(false);
@@ -140,11 +141,11 @@ export default function EmailDraftModal({ entry, company, touchNumber, contacts,
 
   return (
     <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="modal" style={{ maxWidth: 720 }}>
+      <div className="modal" style={{ maxWidth: 900, width: '92vw' }}>
         <div className="modal-header">
           <div>
             <h3>{meta.label} — {company.name}</h3>
-            <p>{meta.desc}{existingTouch?.status === 'ready' ? ' · Saved draft loaded' : ''}</p>
+            <p>{meta.desc?.(engName) ?? ''}{existingTouch?.status === 'ready' ? ' · Saved draft loaded' : ''}</p>
           </div>
           <button className="modal-close" onClick={onClose}>✕</button>
         </div>
@@ -163,12 +164,15 @@ export default function EmailDraftModal({ entry, company, touchNumber, contacts,
 
           {!isSent && (
             <div className="form-row">
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                 Outreach Angle
                 {(company.contact_angles || []).find(ca => ca.name?.toLowerCase() === contact.name?.toLowerCase()) ? (
                   <span style={{ fontSize: 10, background: '#dcfce7', color: '#15803d', padding: '1px 7px', borderRadius: 3, fontWeight: 700 }}>Contact-specific</span>
                 ) : (
                   <span style={{ fontSize: 10, background: 'var(--surface)', color: 'var(--text-muted)', padding: '1px 7px', borderRadius: 3, fontWeight: 600 }}>Company default</span>
+                )}
+                {angle && /sprint/i.test(angle) && engagementType !== 'Sprint' && (
+                  <span style={{ fontSize: 10, background: '#fef3c7', color: '#92400e', padding: '1px 7px', borderRadius: 3, fontWeight: 600 }}>⚠ Written for Sprint — update before generating</span>
                 )}
               </label>
               <textarea rows={3} value={angle} onChange={e => setAngle(e.target.value)} placeholder="e.g. You just raised your Series B. Your product is ahead of your brand." style={{ fontSize: 13, lineHeight: 1.6 }} />
@@ -240,7 +244,7 @@ export default function EmailDraftModal({ entry, company, touchNumber, contacts,
                       </button>
                     </div>
                     <textarea
-                      rows={14}
+                      rows={20}
                       value={editedBody}
                       onChange={e => !isSent && setEditedBody(e.target.value)}
                       readOnly={isSent}
