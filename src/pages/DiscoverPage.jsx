@@ -18,6 +18,29 @@ const EMPLOYEE_OPTIONS = [
   { value: '500+', label: '500+' },
 ];
 
+const INDUSTRY_OPTIONS = [
+  { value: '', label: 'Any Industry' },
+  { value: 'Agriculture', label: 'Agriculture' },
+  { value: 'Mining & Energy', label: 'Mining & Energy' },
+  { value: 'Utilities', label: 'Utilities' },
+  { value: 'Construction', label: 'Construction' },
+  { value: 'Manufacturing', label: 'Manufacturing' },
+  { value: 'Wholesale & Retail', label: 'Wholesale & Retail' },
+  { value: 'Transportation', label: 'Transportation' },
+  { value: 'Information & Tech', label: 'Information & Tech' },
+  { value: 'Finance & Insurance', label: 'Finance & Insurance' },
+  { value: 'Real Estate', label: 'Real Estate' },
+  { value: 'Professional Services', label: 'Professional Services' },
+  { value: 'Management', label: 'Management' },
+  { value: 'Administrative Services', label: 'Administrative Services' },
+  { value: 'Education', label: 'Education' },
+  { value: 'Healthcare', label: 'Healthcare' },
+  { value: 'Arts & Entertainment', label: 'Arts & Entertainment' },
+  { value: 'Hospitality & Food', label: 'Hospitality & Food' },
+  { value: 'Other Services', label: 'Other Services' },
+  { value: 'Government', label: 'Government' },
+];
+
 const FUNDING_STAGE_COLORS = {
   'Seed': '#10b981',
   'Series A': '#3b82f6',
@@ -40,6 +63,7 @@ export default function DiscoverPage({ icp }) {
   const [locationFilter, setLocationFilter] = useState('');
   const [fundingFilter, setFundingFilter] = useState('');
   const [employeeFilter, setEmployeeFilter] = useState('');
+  const [industryFilter, setIndustryFilter] = useState('');
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -63,6 +87,7 @@ export default function DiscoverPage({ icp }) {
 
   function buildFullCriteria() {
     let parts = [criteria.trim()];
+    if (industryFilter) parts.push(`Industry: ${industryFilter}`);
     if (locationFilter.trim()) parts.push(`Location: ${locationFilter.trim()}`);
     if (fundingFilter) parts.push(`Funding stage: ${fundingFilter}`);
     if (employeeFilter) parts.push(`Employee count range: ${employeeFilter}`);
@@ -266,6 +291,28 @@ export default function DiscoverPage({ icp }) {
                 }}
               >
                 {EMPLOYEE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+            </div>
+            <div style={{ flex: '1 1 180px', minWidth: 160 }}>
+              <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 4 }}>
+                Industry
+              </label>
+              <select
+                value={industryFilter}
+                onChange={e => setIndustryFilter(e.target.value)}
+                style={{
+                  width: '100%',
+                  padding: '7px 10px',
+                  borderRadius: 6,
+                  border: '1px solid var(--border)',
+                  background: 'var(--surface)',
+                  color: 'var(--text)',
+                  fontSize: 13,
+                  fontFamily: 'inherit',
+                  boxSizing: 'border-box',
+                }}
+              >
+                {INDUSTRY_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
               </select>
             </div>
           </div>
