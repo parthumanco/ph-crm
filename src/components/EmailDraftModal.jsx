@@ -142,7 +142,7 @@ export default function EmailDraftModal({ entry, company, touchNumber, contacts,
 
   return (
     <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="modal" style={{ maxWidth: 900, width: '92vw' }}>
+      <div className="modal" style={{ maxWidth: 1100, width: '95vw' }}>
         <div className="modal-header">
           <div>
             <h3>{meta.label} — {company.name}</h3>
@@ -176,7 +176,7 @@ export default function EmailDraftModal({ entry, company, touchNumber, contacts,
                   <span style={{ fontSize: 10, background: '#fef3c7', color: '#92400e', padding: '1px 7px', borderRadius: 3, fontWeight: 600 }}>⚠ Written for Sprint — update before generating</span>
                 )}
               </label>
-              <textarea rows={3} value={angle} onChange={e => setAngle(e.target.value)} placeholder="e.g. You just raised your Series B. Your product is ahead of your brand." style={{ fontSize: 13, lineHeight: 1.6 }} />
+              <textarea rows={5} value={angle} onChange={e => setAngle(e.target.value)} placeholder="e.g. You just raised your Series B. Your product is ahead of your brand." style={{ fontSize: 13, lineHeight: 1.6 }} />
             </div>
           )}
 
