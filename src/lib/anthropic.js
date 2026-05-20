@@ -418,10 +418,14 @@ const TOUCH_PROMPTS = {
   1: (company, contact, angle, t1Subject, engType = 'Sprint') => {
     const eng = ENGAGEMENT_META[engType] || ENGAGEMENT_META.Sprint;
     const roleCtx = getRoleContext(contact.title);
+    const angleText = angle || company.recommended_angle || '';
+    const angleNote = engType !== 'Sprint' && /sprint/i.test(angleText)
+      ? `\nNOTE: The angle above was written for a Sprint engagement. Use it for context and insight only — do NOT use Sprint-specific language (e.g. "two-week sprint") in the email. The CTA must reflect the ${eng.name} engagement instead.`
+      : '';
     return `Write a Touch 1 cold outreach email for Part Human (brand strategy agency) to ${contact.name}, ${contact.title} at ${company.name}.
 
 Context about ${company.name}: ${company.summary || ''}
-Trigger event / outreach angle: ${angle || company.recommended_angle || ''}
+Trigger event / outreach angle: ${angleText}${angleNote}
 Engagement type: ${eng.name} (${eng.price}, ${eng.duration}) — ${eng.hook}
 Role framing: ${roleCtx}
 ${EMAIL_RULES}
