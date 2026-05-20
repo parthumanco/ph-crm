@@ -629,7 +629,7 @@ export default function SignalWatchPage({ onNavigate, icp }) {
     // Queue changed high-scorers for deep scan
     if (!cancelRef.current.cancelled) {
       const toDeepScan = changes
-        .filter(ch => (ch.newSig >= 7 || ch.newIcp >= 7) && !ch.company.deep_scanned)
+        .filter(ch => (ch.newSig >= 8 || ch.newIcp >= 8) && !ch.company.deep_scanned)
         .map(ch => ch.company);
       if (toDeepScan.length > 0) {
         setAutoDeepQueue(toDeepScan);
