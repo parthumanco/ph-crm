@@ -36,6 +36,45 @@ async function callClaude({ model = 'claude-haiku-4-5-20251001', system, message
   return data;
 }
 
+// ── Engagement types ──────────────────────────────────────────────────────────
+
+export const ENGAGEMENT_META = {
+  Sprint:       { name: 'Strategic Sprint',    price: '$12K',       duration: '2 weeks',     color: '#10b981', cta: '20-minute call to scope a focused sprint',                   hook: 'fast, low-risk, one focused outcome in two weeks' },
+  Foundation:   { name: 'Foundation',          price: '$25–50K',    duration: '2–3 months',  color: '#3b82f6', cta: '30-minute conversation about getting brand foundations right', hook: 'strategic groundwork — clarity on positioning and messaging before anything else' },
+  Growth:       { name: 'Growth',              price: '$75–150K',   duration: '4–6 months',  color: '#8b5cf6', cta: 'conversation about a full brand build',                       hook: 'strategy and execution — building a brand that keeps up with the company' },
+  Acceleration: { name: 'Acceleration',        price: '$200–500K',  duration: '6–12 months', color: '#f59e0b', cta: 'strategy conversation about brand as a growth driver',        hook: 'full brand ecosystem and go-to-market activation for companies scaling fast' },
+  Enterprise:   { name: 'Enterprise Partnership', price: '$500K+', duration: '12+ months',  color: '#ef4444', cta: 'discovery conversation about long-term brand transformation',  hook: 'ongoing strategic partnership built around multi-workstream brand transformation' },
+};
+
+export const ENGAGEMENT_OPTIONS = ['Sprint', 'Foundation', 'Growth', 'Acceleration', 'Enterprise'];
+
+function getRoleContext(title) {
+  const t = (title || '').toLowerCase();
+  if (/\b(cfo|chief financial|vp finance|finance director)\b/.test(t))
+    return 'Frame brand as a growth asset — unclear positioning costs deals, inflates CAC, and slows fundraising.';
+  if (/\b(ceo|founder|co-founder|president|owner|managing director)\b/.test(t))
+    return 'Frame around market differentiation, investor narrative, and the compounding value of brand clarity at this stage of growth.';
+  if (/\b(cmo|chief marketing|vp market|head of market|brand|marketing director)\b/.test(t))
+    return 'Frame around brand strategy, positioning clarity, and building a complete brand presence the team can execute against.';
+  if (/\b(cpo|chief product|vp product|product|cto|chief tech)\b/.test(t))
+    return 'Frame around product-market fit storytelling, launch positioning, and translating technical value into language the market understands.';
+  if (/\b(cro|chief revenue|vp sales|sales|revenue|business dev)\b/.test(t))
+    return 'Frame around how brand clarity shortens sales cycles, improves win rates, and gives the team stronger tools to close.';
+  if (/\b(people|hr|talent|culture|chief people)\b/.test(t))
+    return 'Frame around employer brand and how clear brand identity drives talent attraction and culture cohesion during rapid growth.';
+  if (/\b(coo|chief operating|operations)\b/.test(t))
+    return 'Frame around how brand clarity reduces internal misalignment, speeds up decisions, and creates consistency at scale.';
+  return 'Frame around brand strategy, positioning, and the value of getting the message right at this stage of growth.';
+}
+
+const ENGAGEMENT_SCAN_GUIDE = `recommendedEngagement: Choose the best Part Human engagement type based on this company's profile:
+- "Sprint" ($12K, 2 weeks): Seed stage, <30 employees, urgent tactical need, limited budget, or uncertain fit
+- "Foundation" ($25-50K, 2-3 months): Seed-Series A, 10-50 employees, brand/positioning undefined or early commercial stage
+- "Growth" ($75-150K, 4-6 months): Series A/B, 30-150 employees, brand lagging behind company growth
+- "Acceleration" ($200-500K, 6-12 months): Series B/C, 100-500 employees, scaling into new markets or major funding round
+- "Enterprise" ($500K+, 12+ months): Series C+, 500+ employees, complex multi-workstream transformation
+Default to "Sprint" if uncertain.`;
+
 // ── ICP / Signal Watch scanning ──────────────────────────────────────────────
 
 import { buildIcpProfile, DEFAULT_ICP } from './settings';
@@ -68,7 +107,8 @@ ${profile}
 NEVER use em dashes (—) anywhere in your response. Use commas or periods instead.
 Return ONLY a JSON array, same order as input. Short strings only.
 Each object schema:
-{"companyName":"str","website":"https://domain.com or null — only include if you are confident this is correct, never guess","hq":"City, State or City, Country — the company headquarters location","industry":"str","overallScore":1-10,"icpScore":1-10,"icpReason":"max 15 words","icpTier":"Ambitious Scale-Up|Category Challenger|Innovation Team","fundingStage":"Seed|Series A|Series B|Series C|Series D+|Unknown","employeeCountNum":integer_or_null,"summary":"max 25 words","triggers":[{"category":"leadership|funding|expansion|product|pain|hiring","headline":"max 8 words","detail":"max 20 words","urgency":"high|medium|low","source":"str","date":"str"}],"recommendedAngle":"max 30 words","contactAngles":[{"name":"str","title":"str","angle":"max 30 words"}],"lat":number_or_null,"lng":number_or_null,"noNewsFound":false}
+{"companyName":"str","website":"https://domain.com or null — only include if you are confident this is correct, never guess","hq":"City, State or City, Country — the company headquarters location","industry":"str","recommendedEngagement":"Sprint|Foundation|Growth|Acceleration|Enterprise","overallScore":1-10,"icpScore":1-10,"icpReason":"max 15 words","icpTier":"Ambitious Scale-Up|Category Challenger|Innovation Team","fundingStage":"Seed|Series A|Series B|Series C|Series D+|Unknown","employeeCountNum":integer_or_null,"summary":"max 25 words","triggers":[{"category":"leadership|funding|expansion|product|pain|hiring","headline":"max 8 words","detail":"max 20 words","urgency":"high|medium|low","source":"str","date":"str"}],"recommendedAngle":"max 30 words","contactAngles":[{"name":"str","title":"str","angle":"max 30 words"}],"lat":number_or_null,"lng":number_or_null,"noNewsFound":false}
+${ENGAGEMENT_SCAN_GUIDE}
 For hq: if a headquarters location is provided in the input, use it exactly. If not provided, identify the company's headquarters city from your knowledge (e.g. "Austin, TX" or "London, UK"). Return your best guess — do not leave blank.
 For lat/lng: geocode the hq field you just determined. ALWAYS base lat/lng on the hq location, not the company's general reputation or country of origin. Return null only if truly unknown.
 For website: return the company's primary domain if you know it with confidence. Return null if unsure — do not guess.
@@ -103,8 +143,9 @@ For each contact listed, search for their LinkedIn profile URL (linkedin.com/in/
 CRITICAL RULE FOR LINKEDIN URLs: NEVER construct or guess a LinkedIn URL from a person's name (e.g. do NOT assume linkedin.com/in/firstname-lastname). Only include a linkedinUrl if that exact URL appeared in your actual web search results. If you did not find the URL in search results, set linkedinUrl to null. A missing URL is far better than a wrong one.
 NEVER use em dashes (—) anywhere in your response. Use commas or periods instead.
 Return ONLY valid JSON object, no markdown:
-{"companyName":"str","website":"https://domain.com or null","companyLinkedinUrl":"https://linkedin.com/company/... or null","scanDate":"today","hq":"City, State or City, Country — confirmed headquarters location","industry":"str","overallScore":1-10,"icpScore":1-10,"icpReason":"str","icpTier":"str","fundingStage":"Seed|Series A|Series B|Series C|Series D+|Unknown","employeeCountNum":integer_or_null,"summary":"2-3 sentences","triggers":[{"category":"str","headline":"str","detail":"str","urgency":"str","source":"str","date":"str"}],"recommendedAngle":"str","contactAngles":[{"name":"str","title":"str","angle":"str","linkedinUrl":"https://linkedin.com/in/... or null"}],"discoveredContacts":[{"name":"str","title":"str","linkedinUrl":"https://linkedin.com/in/... or null"}],"lat":number_or_null,"lng":number_or_null,"noNewsFound":false}
+{"companyName":"str","website":"https://domain.com or null","companyLinkedinUrl":"https://linkedin.com/company/... or null","scanDate":"today","hq":"City, State or City, Country — confirmed headquarters location","industry":"str","recommendedEngagement":"Sprint|Foundation|Growth|Acceleration|Enterprise","overallScore":1-10,"icpScore":1-10,"icpReason":"str","icpTier":"str","fundingStage":"Seed|Series A|Series B|Series C|Series D+|Unknown","employeeCountNum":integer_or_null,"summary":"2-3 sentences","triggers":[{"category":"str","headline":"str","detail":"str","urgency":"str","source":"str","date":"str"}],"recommendedAngle":"str","contactAngles":[{"name":"str","title":"str","angle":"str","linkedinUrl":"https://linkedin.com/in/... or null"}],"discoveredContacts":[{"name":"str","title":"str","linkedinUrl":"https://linkedin.com/in/... or null"}],"lat":number_or_null,"lng":number_or_null,"noNewsFound":false}
 ${INDUSTRY_GUIDE}
+${ENGAGEMENT_SCAN_GUIDE}
 discoveredContacts: people you found working at this company who were NOT in the provided contact list. Max 5. Only include if found with confidence. For all linkedinUrl fields: only include URLs that appeared explicitly in your search results — never construct them from names.
 For hq: search for and confirm the company's actual headquarters city. Use the provided HQ if given, otherwise find it. Format as "City, State" (US) or "City, Country" (international).
 For lat/lng: geocode the hq field. ALWAYS base lat/lng on the confirmed hq location.
@@ -193,10 +234,11 @@ ${profile}
 Focus: what has CHANGED or is NEW in the last 30 days — leadership moves, funding rounds, product launches, layoffs, expansions, key hires. Adjust scores up if new positive triggers exist.
 Return ONLY a JSON array, same order as input. Short strings only.
 Each object schema:
-{"companyName":"str","industry":"str","overallScore":1-10,"icpScore":1-10,"scoreChanged":true|false,"triggers":[{"category":"leadership|funding|expansion|product|pain|hiring","headline":"max 8 words","detail":"max 20 words","urgency":"high|medium|low","source":"str","date":"str"}],"recommendedAngle":"max 30 words","noNewsFound":false}
+{"companyName":"str","industry":"str","recommendedEngagement":"Sprint|Foundation|Growth|Acceleration|Enterprise","overallScore":1-10,"icpScore":1-10,"scoreChanged":true|false,"triggers":[{"category":"leadership|funding|expansion|product|pain|hiring","headline":"max 8 words","detail":"max 20 words","urgency":"high|medium|low","source":"str","date":"str"}],"recommendedAngle":"max 30 words","noNewsFound":false}
 scoreChanged: true only if you are aware of meaningful new developments in the last 30 days that would change outreach priority.
 If nothing new: scoreChanged:false, triggers:[], keep scores similar to before.
 ${INDUSTRY_GUIDE}
+${ENGAGEMENT_SCAN_GUIDE}
 CRITICAL: JSON array only. No markdown.`;
 }
 
@@ -373,35 +415,47 @@ VOICE RULES (non-negotiable):
 `;
 
 const TOUCH_PROMPTS = {
-  1: (company, contact, angle) => `Write a Touch 1 cold outreach email for Part Human (brand strategy agency) to ${contact.name}, ${contact.title} at ${company.name}.
+  1: (company, contact, angle, t1Subject, engType = 'Sprint') => {
+    const eng = ENGAGEMENT_META[engType] || ENGAGEMENT_META.Sprint;
+    const roleCtx = getRoleContext(contact.title);
+    return `Write a Touch 1 cold outreach email for Part Human (brand strategy agency) to ${contact.name}, ${contact.title} at ${company.name}.
 
 Context about ${company.name}: ${company.summary || ''}
 Trigger event / outreach angle: ${angle || company.recommended_angle || ''}
+Engagement type: ${eng.name} (${eng.price}, ${eng.duration}) — ${eng.hook}
+Role framing: ${roleCtx}
 ${EMAIL_RULES}
 FORMULA (4 short paragraphs, strict order):
 1. TRIGGER: Acknowledge the specific trigger event. Congratulate or reference it naturally. 1-2 sentences.
-2. PAIN: Name the brand gap this trigger creates. Be specific and direct. 2 sentences.
-3. HUMAN TRUTH: The real cost of that gap, told in human terms. Not business-speak. 2 sentences.
-4. CTA: Invite to a 20-minute call about a "Strategic Sprint" (Part Human's 2-week brand engagement). Low-pressure. 1-2 sentences.
+2. PAIN: Name the brand gap this trigger creates. Use the role framing above to make it specific to ${contact.title}. 2 sentences.
+3. HUMAN TRUTH: The real cost of that gap in human terms. Not business-speak. 2 sentences.
+4. CTA: Invite to a ${eng.cta}. Reference the ${eng.name} by name. Low-pressure. 1-2 sentences.
 
 Subject line: Short, specific, references the trigger. Not generic.
 
-Return JSON: {"subject":"str","body":"str"}. Body uses \\n for line breaks between paragraphs. No markdown in body.`,
+Return JSON: {"subject":"str","body":"str"}. Body uses \\n for line breaks between paragraphs. No markdown in body.`;
+  },
 
-  2: (company, contact, angle, t1Subject) => `Write a Touch 2 follow-up email for Part Human. 7-day follow-up to ${contact.name}, ${contact.title} at ${company.name}.
+  2: (company, contact, angle, t1Subject, engType = 'Sprint') => {
+    const eng = ENGAGEMENT_META[engType] || ENGAGEMENT_META.Sprint;
+    return `Write a Touch 2 follow-up email for Part Human. 7-day follow-up to ${contact.name}, ${contact.title} at ${company.name}.
 ${EMAIL_RULES}
 RULES:
 - Reply on the same thread. Subject line: "Re: ${t1Subject || '[original subject]'}"
 - 3-4 sentences max. That's it.
 - Reference the original message naturally.
-- One soft CTA, same ask as before (20-min call).
+- Soft CTA: ${eng.cta}.
 - No new pitch. Just a gentle nudge.
 
-Return JSON: {"subject":"Re: ${t1Subject || '[original subject]'}","body":"str"}. Body uses \\n for line breaks.`,
+Return JSON: {"subject":"Re: ${t1Subject || '[original subject]'}","body":"str"}. Body uses \\n for line breaks.`;
+  },
 
-  3: (company, contact, angle, t1Subject) => `Write two LinkedIn messages for Part Human reaching out to ${contact.name}, ${contact.title} at ${company.name}.
+  3: (company, contact, angle, t1Subject, engType = 'Sprint') => {
+    const eng = ENGAGEMENT_META[engType] || ENGAGEMENT_META.Sprint;
+    return `Write two LinkedIn messages for Part Human reaching out to ${contact.name}, ${contact.title} at ${company.name}.
 
 Context: ${company.summary || ''}${t1Subject ? `\nPrevious outreach subject: "${t1Subject}"` : ''}
+Engagement context: ${eng.name} — ${eng.hook}
 ${EMAIL_RULES}
 Message 1 — CONNECTION REQUEST NOTE (300 characters max):
 - No pitch. Just context: who you are and why you're connecting.
@@ -411,25 +465,31 @@ Message 1 — CONNECTION REQUEST NOTE (300 characters max):
 Message 2 — POST-ACCEPTANCE DM (after they accept):
 - Reference a recent post or content they shared. Use "[their recent post about X]" as placeholder.
 - Add genuine perspective on it.
-- Soft segue toward a conversation about brand.
+- Soft segue toward a conversation about ${eng.name.toLowerCase()}.
 - 3-4 sentences max.
 
-Return JSON: {"connection_note":"str","acceptance_dm":"str"}`,
+Return JSON: {"connection_note":"str","acceptance_dm":"str"}`;
+  },
 
-  4: (company, contact, angle, t1Subject) => `Write a Touch 4 goodwill email for Part Human to ${contact.name}, ${contact.title} at ${company.name}. Day 21. No hard ask.
+  4: (company, contact, angle, t1Subject, engType = 'Sprint') => {
+    const eng = ENGAGEMENT_META[engType] || ENGAGEMENT_META.Sprint;
+    return `Write a Touch 4 goodwill email for Part Human to ${contact.name}, ${contact.title} at ${company.name}. Day 21. No hard ask.
 
-Context: ${company.summary || ''}${t1Subject ? `\nThis is part of an outreach sequence. Original subject: "${t1Subject}". They have not replied.` : ''}
+Context: ${company.summary || ''}${t1Subject ? `\nOriginal subject: "${t1Subject}". They have not replied.` : ''}
 ${EMAIL_RULES}
 RULES:
-- Share a relevant market observation or competitor move that would genuinely interest them.
+- Share a relevant market observation or competitor move that would genuinely interest them as ${contact.title}.
 - Use a placeholder like "[market observation about X]" if specific detail is needed.
-- NO pitch. NO CTA. NO mention of the Strategic Sprint.
+- NO pitch. NO CTA. NO mention of ${eng.name}.
 - Close with one line that keeps the door open without asking for anything.
 - 3-4 sentences total.
 
-Return JSON: {"subject":"str","body":"str"}. Body uses \\n for line breaks.`,
+Return JSON: {"subject":"str","body":"str"}. Body uses \\n for line breaks.`;
+  },
 
-  5: (company, contact, angle, t1Subject) => `Write a Touch 5 close-the-loop email for Part Human to ${contact.name}, ${contact.title} at ${company.name}. Day 28. Final touch.
+  5: (company, contact, angle, t1Subject, engType = 'Sprint') => {
+    const eng = ENGAGEMENT_META[engType] || ENGAGEMENT_META.Sprint;
+    return `Write a Touch 5 close-the-loop email for Part Human to ${contact.name}, ${contact.title} at ${company.name}. Day 28. Final touch.
 ${t1Subject ? `Original outreach subject: "${t1Subject}". They have not replied to any of the previous touches.\n` : ''}${EMAIL_RULES}
 RULES:
 - Acknowledge the silence gracefully. No guilt, no passive aggression.
@@ -438,22 +498,24 @@ RULES:
 - 2-3 sentences max.
 - End on a genuinely warm note.
 
-Return JSON: {"subject":"str","body":"str"}. Body uses \\n for line breaks.`,
+Return JSON: {"subject":"str","body":"str"}. Body uses \\n for line breaks.`;
+  },
 };
 
-export async function generateEmailDraft(touchNumber, company, contact, angle, icp = DEFAULT_ICP, t1Subject = null) {
+export async function generateEmailDraft(touchNumber, company, contact, angle, icp = DEFAULT_ICP, t1Subject = null, engagementType = 'Sprint') {
   const promptFn = TOUCH_PROMPTS[touchNumber];
   if (!promptFn) throw new Error(`No prompt for touch ${touchNumber}`);
 
+  const eng = ENGAGEMENT_META[engagementType] || ENGAGEMENT_META.Sprint;
   const { outreachVoice, aboutCompany } = icp;
-  const systemContext = `You are a copywriter for Part Human. ${aboutCompany ? aboutCompany.split('.')[0] + '.' : 'Brand strategy agency.'} Write in their voice: direct, warm, human, no jargon. Never use em dashes (—). Return only valid JSON as specified.${outreachVoice ? '\n\nVOICE GUIDANCE: ' + outreachVoice : ''}`;
+  const systemContext = `You are a copywriter for Part Human. ${aboutCompany ? aboutCompany.split('.')[0] + '.' : 'Brand strategy agency.'} Write in their voice: direct, warm, human, no jargon. Never use em dashes (—). Return only valid JSON as specified.${outreachVoice ? '\n\nVOICE GUIDANCE: ' + outreachVoice : ''}\n\nENGAGEMENT CONTEXT: You are writing for a ${eng.name} engagement (${eng.price}, ${eng.duration}). ${eng.hook}.`;
 
   const data = await withTimeout(
     callClaude({
       model: 'claude-sonnet-4-6',
       max_tokens: 1000,
       system: systemContext,
-      messages: [{ role: 'user', content: promptFn(company, contact, angle, t1Subject) }],
+      messages: [{ role: 'user', content: promptFn(company, contact, angle, t1Subject, engagementType) }],
     }),
     TIMEOUT_MS
   );
@@ -470,13 +532,14 @@ export async function generateEmailDraft(touchNumber, company, contact, angle, i
   return result;
 }
 
-export async function generateLinkedInDrafts(company, contact, t1Subject = null) {
+export async function generateLinkedInDrafts(company, contact, t1Subject = null, engagementType = 'Sprint') {
+  const eng = ENGAGEMENT_META[engagementType] || ENGAGEMENT_META.Sprint;
   const data = await withTimeout(
     callClaude({
       model: 'claude-sonnet-4-6',
       max_tokens: 600,
-      system: `You are a copywriter for Part Human. Write in their voice: direct, warm, human, no jargon. Never use em dashes (—). Return only valid JSON.`,
-      messages: [{ role: 'user', content: TOUCH_PROMPTS[3](company, contact, null, t1Subject) }],
+      system: `You are a copywriter for Part Human. Write in their voice: direct, warm, human, no jargon. Never use em dashes (—). Return only valid JSON.\n\nENGAGEMENT CONTEXT: ${eng.name} (${eng.price}, ${eng.duration}). ${eng.hook}.`,
+      messages: [{ role: 'user', content: TOUCH_PROMPTS[3](company, contact, null, t1Subject, engagementType) }],
     }),
     TIMEOUT_MS
   );

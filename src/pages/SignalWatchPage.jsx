@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabase';
-import { scanBatch, scanDeepDive, weeklyRescanBatch, geocodeHqBatch, enrichContactsWithSearch } from '../lib/anthropic';
+import { scanBatch, scanDeepDive, weeklyRescanBatch, geocodeHqBatch, enrichContactsWithSearch, ENGAGEMENT_META, ENGAGEMENT_OPTIONS } from '../lib/anthropic';
 import { loadLastWeeklyScan, saveLastWeeklyScan, isWeeklyScanDue, markWeeklyScanViewed } from '../lib/settings';
 
 const TRIGGER_CATEGORIES = [
@@ -355,6 +355,10 @@ export default function SignalWatchPage({ onNavigate, icp }) {
       // Persist AI-identified HQ if the company didn't already have one
       ...(result.hq && !companiesRef.current.find(c => c.id === companyId)?.hq ? { hq: result.hq } : {}),
       ...(result.industry ? { industry: result.industry } : {}),
+      // Only set engagement_type from scan if the company doesn't already have a manually-set one
+      ...(result.recommendedEngagement && !companiesRef.current.find(c => c.id === companyId)?.engagement_type
+        ? { engagement_type: result.recommendedEngagement }
+        : {}),
       ...(overwriteWebsite ? { deep_scanned: true } : {}),
       ...(result.website && overwriteWebsite ? { website: result.website } : {}),
       ...(result.companyLinkedinUrl ? { company_linkedin: result.companyLinkedinUrl } : {}),
@@ -600,6 +604,7 @@ export default function SignalWatchPage({ onNavigate, icp }) {
             recommendedAngle: r.recommendedAngle || prev.recommended_angle,
             contactAngles: r.contactAngles || prev.contact_angles || [],
             industry: r.industry || prev.industry || null,
+            recommendedEngagement: r.recommendedEngagement || prev.engagement_type || 'Sprint',
             lat: r.lat || prev.lat,
             lng: r.lng || prev.lng,
           }, false);
@@ -1364,6 +1369,10 @@ export default function SignalWatchPage({ onNavigate, icp }) {
                     onExpandedChange={(val) => setExpandedCards(prev => ({ ...prev, [key]: val }))}
                     cardRef={el => { cardRefs.current[key] = el; }}
                     onUpdateContacts={(updatedContacts) => setCompanies(prev => prev.map(c => (c.id || c._tempId) === key ? { ...c, contacts: updatedContacts } : c))}
+                    onUpdateEngagement={async (companyId, engType) => {
+                      setCompanies(prev => prev.map(c => c.id === companyId ? { ...c, engagement_type: engType } : c));
+                      await supabase.from('companies').update({ engagement_type: engType }).eq('id', companyId);
+                    }}
                   />
                 );
               })}
@@ -1417,11 +1426,13 @@ function AddContactForm({ companyId, existingContacts, onSaved }) {
   );
 }
 
-function CompanyCard({ company, distMiles, status, isScanning, isAddingToPipeline, isAddedToPipeline, onScan, onAddToPipeline, onNavigatePipeline, onDelete, forceExpanded, onExpandedChange, cardRef, onUpdateContacts }) {
+function CompanyCard({ company, distMiles, status, isScanning, isAddingToPipeline, isAddedToPipeline, onScan, onAddToPipeline, onNavigatePipeline, onDelete, forceExpanded, onExpandedChange, cardRef, onUpdateContacts, onUpdateEngagement }) {
   const [expanded, setExpanded] = useState(false);
   const [editingIdx, setEditingIdx] = useState(null);
   const [editForm, setEditForm] = useState({});
   const hasResult = company.scan_date && !company._error;
+  const engType = company.engagement_type || 'Sprint';
+  const engMeta = ENGAGEMENT_META[engType] || ENGAGEMENT_META.Sprint;
 
   useEffect(() => {
     if (forceExpanded) setExpanded(true);
@@ -1457,6 +1468,15 @@ function CompanyCard({ company, distMiles, status, isScanning, isAddingToPipelin
           {company.icp_tier && (
             <span className="badge badge-gray" style={{ fontSize: 10 }}>{company.icp_tier}</span>
           )}
+          <select
+            value={engType}
+            onClick={e => e.stopPropagation()}
+            onChange={e => { e.stopPropagation(); onUpdateEngagement?.(company.id, e.target.value); }}
+            style={{ fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 10, border: `1px solid ${engMeta.color}40`, background: engMeta.color + '18', color: engMeta.color, cursor: 'pointer', outline: 'none' }}
+            title="Engagement type — drives email messaging"
+          >
+            {ENGAGEMENT_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+          </select>
           {distMiles !== null && (
             <span style={{ fontSize: 10, color: distMiles < 100 ? 'var(--green)' : 'var(--text-faint)', fontWeight: 600 }}>
               📍 {distMiles}mi

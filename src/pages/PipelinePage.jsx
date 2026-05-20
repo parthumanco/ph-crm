@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, Fragment } from 'react';
 import { supabase } from '../lib/supabase';
 import EmailDraftModal from '../components/EmailDraftModal';
+import { ENGAGEMENT_META, ENGAGEMENT_OPTIONS } from '../lib/anthropic';
 
 const STATUS_LABELS = {
   active:    { label: 'Active',     cls: 'badge-blue'  },
@@ -74,6 +75,11 @@ export default function PipelinePage({ icp = {} }) {
   const updateStatus = useCallback(async (entryId, status) => {
     await supabase.from('pipeline_entries').update({ status, updated_at: new Date().toISOString() }).eq('id', entryId);
     setEntries(es => es.map(e => e.id === entryId ? { ...e, status } : e));
+  }, []);
+
+  const updateEngagement = useCallback(async (companyId, engType) => {
+    setCompanies(prev => ({ ...prev, [companyId]: { ...prev[companyId], engagement_type: engType } }));
+    await supabase.from('companies').update({ engagement_type: engType }).eq('id', companyId);
   }, []);
 
   const markTouchSent = useCallback(async (touch) => {
@@ -231,7 +237,23 @@ export default function PipelinePage({ icp = {} }) {
                         </td>
                         <td>
                           <div>
-                            <div style={{ fontWeight: 700, fontSize: 13 }}>{company.name || '—'}</div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                              <span style={{ fontWeight: 700, fontSize: 13 }}>{company.name || '—'}</span>
+                              {(() => {
+                                const et = company.engagement_type || 'Sprint';
+                                const em = ENGAGEMENT_META[et] || ENGAGEMENT_META.Sprint;
+                                return (
+                                  <select
+                                    value={et}
+                                    onChange={e => updateEngagement(company.id, e.target.value)}
+                                    style={{ fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 10, border: `1px solid ${em.color}40`, background: em.color + '18', color: em.color, cursor: 'pointer', outline: 'none' }}
+                                    title="Engagement type — drives email messaging"
+                                  >
+                                    {ENGAGEMENT_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+                                  </select>
+                                );
+                              })()}
+                            </div>
                             {company.website && (
                               <a href={company.website} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: 'var(--text-faint)' }}>
                                 {company.website.replace(/https?:\/\//, '')}
@@ -274,6 +296,7 @@ export default function PipelinePage({ icp = {} }) {
                                     t1Subject: primaryTouchMap[1]?.subject_line || null,
                                     defaultContactIndex: primaryIdx,
                                     emailSignature: icp.emailSignature || '',
+                                    engagementType: company.engagement_type || 'Sprint',
                                   })}
                                   onContextMenu={(e) => handleTouchRightClick(e, primaryTouchMap[n])}
                                 >

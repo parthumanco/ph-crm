@@ -10,7 +10,7 @@ const TOUCH_META = {
   5: { label: 'Touch 5 — Close the Loop',   type: 'email',    desc: 'Graceful final note, leave door open, Day 28.' },
 };
 
-export default function EmailDraftModal({ entry, company, touchNumber, contacts, existingTouch, onClose, onMarkSent, onSave, t1Subject, defaultContactIndex = 0, emailSignature = '' }) {
+export default function EmailDraftModal({ entry, company, touchNumber, contacts, existingTouch, onClose, onMarkSent, onSave, t1Subject, defaultContactIndex = 0, emailSignature = '', engagementType = 'Sprint' }) {
   const meta = TOUCH_META[touchNumber] || {};
   const [selectedContact, setSelectedContact] = useState(defaultContactIndex);
   const [draft, setDraft]           = useState(null);
@@ -61,9 +61,9 @@ export default function EmailDraftModal({ entry, company, touchNumber, contacts,
     try {
       let result;
       if (touchNumber === 3) {
-        result = await generateLinkedInDrafts(company, contact, t1Subject);
+        result = await generateLinkedInDrafts(company, contact, t1Subject, engagementType);
       } else {
-        result = await generateEmailDraft(touchNumber, company, contact, angle, undefined, t1Subject);
+        result = await generateEmailDraft(touchNumber, company, contact, angle, undefined, t1Subject, engagementType);
       }
       setDraft(result);
       setEditedSubject(result.subject || '');
