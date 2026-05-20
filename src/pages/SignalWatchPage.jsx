@@ -1518,6 +1518,8 @@ export default function SignalWatchPage({ onNavigate, icp }) {
                     ))}
                   </div>
                 </div>
+                {/* Force Industry + Entry Point + Search onto their own line */}
+                <div style={{ width: '100%', height: 0 }} />
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                   <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', whiteSpace: 'nowrap' }}>Industry</span>
                   <select
