@@ -610,7 +610,10 @@ export default function SignalWatchPage({ onNavigate, icp }) {
 
   const runWeeklyRescan = useCallback(async (subset = null) => {
     const toScan = (subset || companiesRef.current).filter(c => c.scan_date && c.id);
-    if (!toScan.length) return;
+    if (!toScan.length) {
+      alert('No scanned companies to rescan. Run a batch scan first.');
+      return;
+    }
     setWeeklyScanRunning(true);
     setWeeklyScanDue(false);
     setWeeklyScanChanges([]);
@@ -626,56 +629,60 @@ export default function SignalWatchPage({ onNavigate, icp }) {
     // Mark all as queued upfront
     toScan.forEach(c => setScanStatus(s => ({ ...s, [c.id]: 'Queued' })));
 
-    for (const batch of batches) {
-      if (cancelRef.current.cancelled) break;
-      batch.forEach(c => setScanStatus(s => ({ ...s, [c.id]: 'Scanning…' })));
-      try {
-        const results = await weeklyRescanBatch(batch, icp);
-        for (let i = 0; i < batch.length; i++) {
-          const r = results[i]?.companyName
-            ? results.find(x => x.companyName?.toLowerCase() === batch[i].name.toLowerCase()) || results[i]
-            : results[i];
-          if (!r) continue;
-          const prev = batch[i];
-          const sigDelta = (r.overallScore || 0) - (prev.overall_score || 0);
-          const icpDelta = (r.icpScore || 0) - (prev.icp_score || 0);
-          if (sigDelta >= 2 || icpDelta >= 2) {
-            changes.push({ company: batch[i], sigDelta, icpDelta, newSig: r.overallScore, newIcp: r.icpScore });
+    try {
+      for (const batch of batches) {
+        if (cancelRef.current.cancelled) break;
+        batch.forEach(c => setScanStatus(s => ({ ...s, [c.id]: 'Scanning…' })));
+        try {
+          const results = await weeklyRescanBatch(batch, icp);
+          for (let i = 0; i < batch.length; i++) {
+            const r = results[i]?.companyName
+              ? results.find(x => x.companyName?.toLowerCase() === batch[i].name.toLowerCase()) || results[i]
+              : results[i];
+            if (!r) continue;
+            const prev = batch[i];
+            const sigDelta = (r.overallScore || 0) - (prev.overall_score || 0);
+            const icpDelta = (r.icpScore || 0) - (prev.icp_score || 0);
+            if (sigDelta >= 2 || icpDelta >= 2) {
+              changes.push({ company: batch[i], sigDelta, icpDelta, newSig: r.overallScore, newIcp: r.icpScore });
+            }
+            await saveScanResult(batch[i].id, {
+              ...r,
+              icpTier: r.icpTier || prev.icp_tier,
+              fundingStage: r.fundingStage || prev.funding_stage,
+              employeeCountNum: r.employeeCountNum || prev.employee_count_num,
+              recommendedAngle: r.recommendedAngle || prev.recommended_angle,
+              contactAngles: r.contactAngles || prev.contact_angles || [],
+              industry: r.industry || prev.industry || null,
+              recommendedEngagement: r.recommendedEngagement || prev.engagement_type || 'Sprint',
+              lat: r.lat || prev.lat,
+              lng: r.lng || prev.lng,
+            }, false);
+            setScanStatus(s => ({ ...s, [batch[i].id]: 'Done' }));
           }
-          // Save updated scores + new triggers, don't overwrite website or deep_scanned
-          await saveScanResult(batch[i].id, {
-            ...r,
-            icpTier: r.icpTier || prev.icp_tier,
-            fundingStage: r.fundingStage || prev.funding_stage,
-            employeeCountNum: r.employeeCountNum || prev.employee_count_num,
-            recommendedAngle: r.recommendedAngle || prev.recommended_angle,
-            contactAngles: r.contactAngles || prev.contact_angles || [],
-            industry: r.industry || prev.industry || null,
-            recommendedEngagement: r.recommendedEngagement || prev.engagement_type || 'Sprint',
-            lat: r.lat || prev.lat,
-            lng: r.lng || prev.lng,
-          }, false);
-          setScanStatus(s => ({ ...s, [batch[i].id]: 'Done' }));
+        } catch (e) {
+          console.error('Rescan batch error:', e);
+          batch.forEach(c => setScanStatus(s => ({ ...s, [c.id]: 'Error' })));
         }
-      } catch { batch.forEach(c => setScanStatus(s => ({ ...s, [c.id]: 'Error' }))); }
-      done += batch.length;
-      setWeeklyScanProgress({ done, total: toScan.length });
-      if (done < toScan.length && !cancelRef.current.cancelled) await new Promise(r => setTimeout(r, SCAN_DELAY));
-    }
+        done += batch.length;
+        setWeeklyScanProgress({ done, total: toScan.length });
+        if (done < toScan.length && !cancelRef.current.cancelled) await new Promise(r => setTimeout(r, SCAN_DELAY));
+      }
+    } finally {
+      setWeeklyScanChanges(changes);
+      setWeeklyScanRunning(false);
+      await saveLastWeeklyScan();
+      setLastWeeklyScan({ timestamp: new Date().toISOString() });
 
-    setWeeklyScanChanges(changes);
-    setWeeklyScanRunning(false);
-    await saveLastWeeklyScan();
-    setLastWeeklyScan({ timestamp: new Date().toISOString() });
-
-    // Queue changed high-scorers for deep scan
-    if (!cancelRef.current.cancelled) {
-      const toDeepScan = changes
-        .filter(ch => (ch.newSig >= 8 || ch.newIcp >= 8) && !ch.company.deep_scanned)
-        .map(ch => ch.company);
-      if (toDeepScan.length > 0) {
-        setAutoDeepQueue(toDeepScan);
-        setAutoDeepProgress({ done: 0, total: toDeepScan.length });
+      // Queue changed high-scorers (ICP 8+) for deep scan
+      if (!cancelRef.current.cancelled) {
+        const toDeepScan = changes
+          .filter(ch => (ch.newSig >= 8 || ch.newIcp >= 8) && !ch.company.deep_scanned)
+          .map(ch => ch.company);
+        if (toDeepScan.length > 0) {
+          setAutoDeepQueue(toDeepScan);
+          setAutoDeepProgress({ done: 0, total: toDeepScan.length });
+        }
       }
     }
   }, [icp, saveScanResult]);
