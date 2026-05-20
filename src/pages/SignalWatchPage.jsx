@@ -581,8 +581,12 @@ export default function SignalWatchPage({ onNavigate, icp }) {
     let done = 0;
     const changes = [];
 
+    // Mark all as queued upfront
+    toScan.forEach(c => setScanStatus(s => ({ ...s, [c.id]: 'Queued' })));
+
     for (const batch of batches) {
       if (cancelRef.current.cancelled) break;
+      batch.forEach(c => setScanStatus(s => ({ ...s, [c.id]: 'Scanning…' })));
       try {
         const results = await weeklyRescanBatch(batch, icp);
         for (let i = 0; i < batch.length; i++) {
@@ -609,8 +613,9 @@ export default function SignalWatchPage({ onNavigate, icp }) {
             lat: r.lat || prev.lat,
             lng: r.lng || prev.lng,
           }, false);
+          setScanStatus(s => ({ ...s, [batch[i].id]: 'Done' }));
         }
-      } catch { /* skip failed batch, continue */ }
+      } catch { batch.forEach(c => setScanStatus(s => ({ ...s, [c.id]: 'Error' }))); }
       done += batch.length;
       setWeeklyScanProgress({ done, total: toScan.length });
       if (done < toScan.length && !cancelRef.current.cancelled) await new Promise(r => setTimeout(r, SCAN_DELAY));
@@ -1428,6 +1433,7 @@ export default function SignalWatchPage({ onNavigate, icp }) {
                     status={scanStatus[key]}
                     isScanning={scanning[key]}
                     scanningAll={scanningAll}
+                    weeklyScanRunning={weeklyScanRunning}
                     isAddingToPipeline={addingToPipeline[key]}
                     isAddedToPipeline={addedToPipeline[company.id]}
                     onScan={() => scanOne(company)}
@@ -1495,7 +1501,7 @@ function AddContactForm({ companyId, existingContacts, onSaved }) {
   );
 }
 
-function CompanyCard({ company, distMiles, status, isScanning, scanningAll, isAddingToPipeline, isAddedToPipeline, onScan, onAddToPipeline, onNavigatePipeline, onDelete, forceExpanded, onExpandedChange, cardRef, onUpdateContacts, onUpdateEngagement }) {
+function CompanyCard({ company, distMiles, status, isScanning, scanningAll, weeklyScanRunning, isAddingToPipeline, isAddedToPipeline, onScan, onAddToPipeline, onNavigatePipeline, onDelete, forceExpanded, onExpandedChange, cardRef, onUpdateContacts, onUpdateEngagement }) {
   const [expanded, setExpanded] = useState(false);
   const [editingIdx, setEditingIdx] = useState(null);
   const [editForm, setEditForm] = useState({});
@@ -1504,8 +1510,9 @@ function CompanyCard({ company, distMiles, status, isScanning, scanningAll, isAd
   const engMeta = ENGAGEMENT_META[engType] || ENGAGEMENT_META.Sprint;
 
   // Scan batch state: queued = waiting in batch, done = completed this session
+  const anyBatchRunning = scanningAll || weeklyScanRunning;
   const isDone    = status === 'Done';
-  const isQueued  = scanningAll && !company.scan_date && !isScanning && !isDone && !company._error;
+  const isQueued  = anyBatchRunning && status === 'Queued' && !isScanning && !isDone && !company._error;
 
   useEffect(() => {
     if (forceExpanded) setExpanded(true);
@@ -1526,7 +1533,7 @@ function CompanyCard({ company, distMiles, status, isScanning, scanningAll, isAd
 
   const sc = company.overall_score ? scoreColor(company.overall_score) : null;
 
-  const cardBorderStyle = isScanning
+  const cardBorderStyle = (isScanning || status === 'Scanning…')
     ? { borderLeft: '3px solid var(--accent)', boxShadow: '0 0 0 1px var(--accent)22' }
     : isDone
     ? { borderLeft: '3px solid #10b981' }
@@ -1584,7 +1591,7 @@ function CompanyCard({ company, distMiles, status, isScanning, scanningAll, isAd
           {isDone && (
             <span style={{ fontSize: 10, fontWeight: 700, color: '#15803d', background: '#dcfce7', padding: '2px 7px', borderRadius: 4 }}>✓ Done</span>
           )}
-          {isScanning && (
+          {(isScanning || status === 'Scanning…') && (
             <span style={{ fontSize: 11, color: 'var(--accent)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 4 }}>
               <span className="spinner" />{status || 'Scanning…'}
             </span>
