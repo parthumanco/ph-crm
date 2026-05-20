@@ -36,17 +36,26 @@ export default function WeeklyReportPage({ icp = DEFAULT_ICP }) {
   const weekLabel = `Week of ${formatDate(weekStart)}`;
 
   const load = useCallback(async () => {
-    const [{ data: ents, error: e1 }, { data: comps, error: e2 }, { data: tchs, error: e3 }] = await Promise.all([
-      supabase.from('pipeline_entries').select('*').eq('status', 'active'),
-      supabase.from('companies').select('*').limit(2000),
-      supabase.from('touches').select('*'),
-    ]);
-    if (e1 || e2 || e3) console.error('WeeklyReport load error:', e1 || e2 || e3);
-    setEntries(ents || []);
-    const compMap = {};
-    (comps || []).forEach(c => { compMap[c.id] = c; });
-    setCompanies(compMap);
-    setTouches(tchs || []);
+    try {
+      const [{ data: ents, error: e1 }, { data: tchs, error: e3 }] = await Promise.all([
+        supabase.from('pipeline_entries').select('*').eq('status', 'active'),
+        supabase.from('touches').select('*'),
+      ]);
+      if (e1 || e3) console.error('WeeklyReport load error:', e1 || e3);
+      // Only fetch companies actually referenced by pipeline entries (mirrors PipelinePage)
+      const companyIds = (ents || []).map(e => e.company_id).filter(Boolean);
+      const { data: comps, error: e2 } = companyIds.length
+        ? await supabase.from('companies').select('*').in('id', companyIds)
+        : { data: [] };
+      if (e2) console.error('WeeklyReport companies load error:', e2);
+      setEntries(ents || []);
+      const compMap = {};
+      (comps || []).forEach(c => { compMap[c.id] = c; });
+      setCompanies(compMap);
+      setTouches(tchs || []);
+    } catch (e) {
+      console.error('WeeklyReport load error:', e);
+    }
   }, []);
 
   useEffect(() => { load(); }, [load]);
@@ -62,14 +71,16 @@ export default function WeeklyReportPage({ icp = DEFAULT_ICP }) {
       const entryTouches = touches.filter(t => t.pipeline_entry_id === entry.id);
       const sentTouches  = entryTouches.filter(t => t.status === 'sent').sort((a, b) => new Date(b.sent_date) - new Date(a.sent_date));
 
-      if (entry.current_touch === 0 || sentTouches.length === 0) {
+      if (sentTouches.length === 0) {
         newOutreach.push({ entry, company });
       } else {
         const lastSent = sentTouches[0];
         const days     = daysSince(lastSent.sent_date);
-        const nextTouch = entry.current_touch + 1;
+        // Derive nextTouch from actual sent touch records, not current_touch (which may lag)
+        const maxSentTouchNum = sentTouches.reduce((max, t) => Math.max(max, t.touch_number || 0), 0);
+        const nextTouch = maxSentTouchNum + 1;
         if (nextTouch <= 5 && days >= 7) {
-          followupsDue.push({ entry, company, touchNumber: nextTouch, daysSince: days, lastTouch: entry.current_touch });
+          followupsDue.push({ entry, company, touchNumber: nextTouch, daysSince: days, lastTouch: maxSentTouchNum });
         }
       }
     });
@@ -105,24 +116,27 @@ export default function WeeklyReportPage({ icp = DEFAULT_ICP }) {
       ...followupsDue.map(({ entry, company, touchNumber }) => ({ entry, company, touchNumber, key: `${entry.id}-${touchNumber}` })),
     ];
 
-    for (const item of allItems) {
-      const contact = (item.company.contacts || [])[0] || { name: 'the decision-maker', title: '' };
-      try {
-        if (item.touchNumber === 3) {
-          const { generateLinkedInDrafts } = await import('../lib/anthropic');
-          const result = await generateLinkedInDrafts(item.company, contact, null, item.company.engagement_type || 'Sprint');
-          setEmailDrafts(d => ({ ...d, [item.key]: { type: 'linkedin', ...result, contact } }));
-        } else {
-          const result = await generateEmailDraft(item.touchNumber, item.company, contact, item.company.recommended_angle, icp, null, item.company.engagement_type || 'Sprint');
-          setEmailDrafts(d => ({ ...d, [item.key]: { type: 'email', ...result, contact } }));
+    try {
+      for (const item of allItems) {
+        const contact = (item.company.contacts || [])[0] || { name: 'the decision-maker', title: '' };
+        try {
+          if (item.touchNumber === 3) {
+            const { generateLinkedInDrafts } = await import('../lib/anthropic');
+            const result = await generateLinkedInDrafts(item.company, contact, null, item.company.engagement_type || 'Sprint');
+            setEmailDrafts(d => ({ ...d, [item.key]: { type: 'linkedin', ...result, contact } }));
+          } else {
+            const result = await generateEmailDraft(item.touchNumber, item.company, contact, item.company.recommended_angle, icp, null, item.company.engagement_type || 'Sprint');
+            setEmailDrafts(d => ({ ...d, [item.key]: { type: 'email', ...result, contact } }));
+          }
+        } catch (e) {
+          setEmailDrafts(d => ({ ...d, [item.key]: { error: e.message } }));
         }
-      } catch (e) {
-        setEmailDrafts(d => ({ ...d, [item.key]: { error: e.message } }));
+        // Small delay between calls
+        await new Promise(r => setTimeout(r, 500));
       }
-      // Small delay between calls
-      await new Promise(r => setTimeout(r, 500));
+    } finally {
+      setGeneratingEmails(false);
     }
-    setGeneratingEmails(false);
   };
 
   const copyDraft = async (key) => {

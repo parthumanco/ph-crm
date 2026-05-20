@@ -39,7 +39,8 @@ export default function EmailDraftModal({ entry, company, touchNumber, contacts,
     const contactAngle = (company.contact_angles || []).find(ca => ca.name?.toLowerCase() === ct.name?.toLowerCase());
     setAngle(contactAngle?.angle || company.recommended_angle || '');
     setDraft(null); // clear draft so user regenerates for new contact
-  }, [selectedContact]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedContact, isSent]);
 
   // Load existing saved draft on open (including sent)
   useEffect(() => {
@@ -86,7 +87,7 @@ export default function EmailDraftModal({ entry, company, touchNumber, contacts,
     setSaving(true);
     try {
       const body = touchNumber === 3
-        ? `CONNECTION NOTE:\n${draft.connection_note}\n\n---\nPOST-ACCEPTANCE DM:\n${draft.acceptance_dm}`
+        ? `CONNECTION NOTE:\n${draft.connection_note || ''}\n\n---\nPOST-ACCEPTANCE DM:\n${draft.acceptance_dm || ''}`
         : editedBody;
       const subject = touchNumber === 3 ? '' : editedSubject;
 
@@ -123,7 +124,7 @@ export default function EmailDraftModal({ entry, company, touchNumber, contacts,
 
   const markSent = () => {
     const sentBody = touchNumber === 3
-      ? `CONNECTION NOTE:\n${draft.connection_note}\n\n---\nPOST-ACCEPTANCE DM:\n${draft.acceptance_dm}`
+      ? `CONNECTION NOTE:\n${draft.connection_note || ''}\n\n---\nPOST-ACCEPTANCE DM:\n${draft.acceptance_dm || ''}`
       : editedBody;
     onMarkSent({
       id: existingTouch?.id,

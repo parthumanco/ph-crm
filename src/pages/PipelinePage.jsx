@@ -49,27 +49,32 @@ export default function PipelinePage({ icp = {} }) {
 
   const load = useCallback(async () => {
     setLoading(true);
-    // Load entries and touches first
-    const [{ data: ents, error: e1 }, { data: tchs, error: e2 }] = await Promise.all([
-      supabase.from('pipeline_entries').select('*').order('created_at', { ascending: false }),
-      supabase.from('touches').select('*'),
-    ]);
-    if (e1 || e2) console.error('Pipeline load error:', e1 || e2);
-    // Fetch only the specific companies referenced by pipeline entries
-    const companyIds = (ents || []).map(e => e.company_id).filter(Boolean);
-    const { data: comps, error: e3 } = companyIds.length
-      ? await supabase.from('companies').select('*').in('id', companyIds)
-      : { data: [] };
-    if (e3) console.error('Pipeline companies load error:', e3);
-    setEntries(ents || []);
-    const compMap = {};
-    (comps || []).forEach(c => { compMap[c.id] = c; });
-    setCompanies(compMap);
-    setTouches(tchs || []);
-    const primMap = {};
-    (ents || []).forEach(e => { primMap[e.id] = e.primary_contact_index || 0; });
-    setPrimaryContacts(primMap);
-    setLoading(false);
+    try {
+      // Load entries and touches first
+      const [{ data: ents, error: e1 }, { data: tchs, error: e2 }] = await Promise.all([
+        supabase.from('pipeline_entries').select('*').order('created_at', { ascending: false }),
+        supabase.from('touches').select('*'),
+      ]);
+      if (e1 || e2) console.error('Pipeline load error:', e1 || e2);
+      // Fetch only the specific companies referenced by pipeline entries
+      const companyIds = (ents || []).map(e => e.company_id).filter(Boolean);
+      const { data: comps, error: e3 } = companyIds.length
+        ? await supabase.from('companies').select('*').in('id', companyIds)
+        : { data: [] };
+      if (e3) console.error('Pipeline companies load error:', e3);
+      setEntries(ents || []);
+      const compMap = {};
+      (comps || []).forEach(c => { compMap[c.id] = c; });
+      setCompanies(compMap);
+      setTouches(tchs || []);
+      const primMap = {};
+      (ents || []).forEach(e => { primMap[e.id] = e.primary_contact_index || 0; });
+      setPrimaryContacts(primMap);
+    } catch (e) {
+      console.error('Pipeline load error:', e);
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
   useEffect(() => { load(); }, [load]);
@@ -86,12 +91,24 @@ export default function PipelinePage({ icp = {} }) {
 
   const markTouchSent = useCallback(async (touch) => {
     const today = new Date().toISOString().slice(0, 10);
-    if (touch.id) {
-      await supabase.from('touches').update({ status: 'sent', sent_date: today, updated_at: new Date().toISOString() }).eq('id', touch.id);
-    } else {
-      await supabase.from('touches').insert({ ...touch, status: 'sent', sent_date: today });
+    try {
+      if (touch.id) {
+        await supabase.from('touches').update({ status: 'sent', sent_date: today, updated_at: new Date().toISOString() }).eq('id', touch.id);
+      } else {
+        await supabase.from('touches').insert({ ...touch, status: 'sent', sent_date: today });
+      }
+      // Update current_touch on the pipeline entry so WeeklyReport can compute nextTouch correctly
+      if (touch.pipeline_entry_id && touch.touch_number) {
+        await supabase.from('pipeline_entries').update({
+          current_touch: touch.touch_number,
+          updated_at: new Date().toISOString(),
+        }).eq('id', touch.pipeline_entry_id).lt('current_touch', touch.touch_number);
+      }
+      load();
+    } catch (e) {
+      console.error('markTouchSent error:', e);
+      alert('Error marking touch as sent: ' + e.message);
     }
-    load();
   }, [load]);
 
   const handleTouchRightClick = useCallback((e, touch) => {
@@ -102,16 +119,26 @@ export default function PipelinePage({ icp = {} }) {
 
   const undoTouchSent = async () => {
     if (!contextMenu?.touch?.id) return;
-    await supabase.from('touches').update({ status: 'ready', sent_date: null, updated_at: new Date().toISOString() }).eq('id', contextMenu.touch.id);
-    setContextMenu(null);
-    load();
+    try {
+      const { error } = await supabase.from('touches').update({ status: 'ready', sent_date: null, updated_at: new Date().toISOString() }).eq('id', contextMenu.touch.id);
+      if (error) throw new Error(error.message);
+      setContextMenu(null);
+      load();
+    } catch (e) {
+      alert('Error undoing sent: ' + e.message);
+    }
   };
 
   const deleteTouchRecord = async () => {
     if (!contextMenu?.touch?.id) return;
-    await supabase.from('touches').delete().eq('id', contextMenu.touch.id);
-    setContextMenu(null);
-    load();
+    try {
+      const { error } = await supabase.from('touches').delete().eq('id', contextMenu.touch.id);
+      if (error) throw new Error(error.message);
+      setContextMenu(null);
+      load();
+    } catch (e) {
+      alert('Error deleting touch: ' + e.message);
+    }
   };
 
   const filtered = entries
@@ -617,7 +644,7 @@ function ResponseModal({ entry, company, onClose, onSave }) {
       const { analyzeResponse } = await import('../lib/anthropic');
       const primary = (company.contacts || [])[0] || { name: 'the contact', title: '' };
       const result = await analyzeResponse(company, primary, 1, responseText);
-      setAnalysis(result);
+      handleAnalysis(result);
     } catch (e) {
       alert('Error analyzing response: ' + e.message);
     } finally {
@@ -626,8 +653,22 @@ function ResponseModal({ entry, company, onClose, onSave }) {
   };
 
   const save = async () => {
-    await supabase.from('pipeline_entries').update({ status: 'responded', updated_at: new Date().toISOString() }).eq('id', entry.id);
-    onSave();
+    try {
+      const { error } = await supabase.from('pipeline_entries').update({ status: 'responded', updated_at: new Date().toISOString() }).eq('id', entry.id);
+      if (error) throw new Error(error.message);
+      onSave();
+    } catch (e) {
+      alert('Error saving response: ' + e.message);
+    }
+  };
+
+  // Also handle analyzeResponse returning an error object instead of throwing
+  const handleAnalysis = (result) => {
+    if (result?.error) {
+      alert('Could not parse AI response — please try again.');
+    } else {
+      setAnalysis(result);
+    }
   };
 
   return (
@@ -690,9 +731,18 @@ function ResponseModal({ entry, company, onClose, onSave }) {
 
 function NotesModal({ entry, company, onClose, onSave }) {
   const [notes, setNotes] = useState(entry.notes || '');
+  const [saving, setSaving] = useState(false);
   const save = async () => {
-    await supabase.from('pipeline_entries').update({ notes, updated_at: new Date().toISOString() }).eq('id', entry.id);
-    onSave();
+    setSaving(true);
+    try {
+      const { error } = await supabase.from('pipeline_entries').update({ notes, updated_at: new Date().toISOString() }).eq('id', entry.id);
+      if (error) throw new Error(error.message);
+      onSave();
+    } catch (e) {
+      alert('Error saving notes: ' + e.message);
+    } finally {
+      setSaving(false);
+    }
   };
   return (
     <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
@@ -706,7 +756,7 @@ function NotesModal({ entry, company, onClose, onSave }) {
         </div>
         <div className="modal-footer">
           <button className="btn btn-secondary" onClick={onClose}>Cancel</button>
-          <button className="btn btn-primary" onClick={save}>Save Notes</button>
+          <button className="btn btn-primary" onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save Notes'}</button>
         </div>
       </div>
     </div>

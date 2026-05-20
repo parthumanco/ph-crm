@@ -71,20 +71,28 @@ export async function loadLastWeeklyScan() {
   } catch { return null; }
 }
 
-export async function saveLastWeeklyScan() {
-  await supabase.from('app_settings').upsert(
-    { key: 'last_weekly_scan', value: { timestamp: new Date().toISOString(), scanned: 0, changes: [], toDeepScan: [], viewed: false }, updated_at: new Date().toISOString() },
-    { onConflict: 'key' }
-  );
+export async function saveLastWeeklyScan({ scanned = 0, changes = [], toDeepScan = [] } = {}) {
+  try {
+    await supabase.from('app_settings').upsert(
+      { key: 'last_weekly_scan', value: { timestamp: new Date().toISOString(), scanned, changes, toDeepScan, viewed: false }, updated_at: new Date().toISOString() },
+      { onConflict: 'key' }
+    );
+  } catch (e) {
+    console.error('saveLastWeeklyScan error:', e);
+  }
 }
 
 export async function markWeeklyScanViewed() {
-  const { data } = await supabase.from('app_settings').select('value').eq('key', 'last_weekly_scan').single();
-  if (data?.value) {
-    await supabase.from('app_settings').upsert(
-      { key: 'last_weekly_scan', value: { ...data.value, viewed: true }, updated_at: new Date().toISOString() },
-      { onConflict: 'key' }
-    );
+  try {
+    const { data } = await supabase.from('app_settings').select('value').eq('key', 'last_weekly_scan').single();
+    if (data?.value) {
+      await supabase.from('app_settings').upsert(
+        { key: 'last_weekly_scan', value: { ...data.value, viewed: true }, updated_at: new Date().toISOString() },
+        { onConflict: 'key' }
+      );
+    }
+  } catch (e) {
+    console.error('markWeeklyScanViewed error:', e);
   }
 }
 

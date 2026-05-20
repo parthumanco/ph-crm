@@ -162,6 +162,7 @@ export default function SignalWatchPage({ onNavigate, icp }) {
   const [weeklyScanRunning, setWeeklyScanRunning]   = useState(false);
   const [weeklyScanProgress, setWeeklyScanProgress] = useState({ done: 0, total: 0 });
   const [weeklyScanChanges, setWeeklyScanChanges]   = useState([]);
+  const [weeklyScanError, setWeeklyScanError]       = useState(null);
   const [lastWeeklyScan, setLastWeeklyScan]         = useState(null);
   const [serverScanNotification, setServerScanNotification] = useState(null);
   const [hqFillRunning, setHqFillRunning]   = useState(false);
@@ -189,39 +190,44 @@ export default function SignalWatchPage({ onNavigate, icp }) {
   useEffect(() => {
     async function load() {
       setLoading(true);
-      // Paginate past Supabase's 1000-row default limit
-      let allData = [];
-      const PAGE = 1000;
-      let from = 0;
-      while (true) {
-        const { data, error } = await supabase
-          .from('companies')
-          .select('*')
-          .order('scan_date', { ascending: false, nullsFirst: false })
-          .range(from, from + PAGE - 1);
-        if (error || !data?.length) break;
-        allData = allData.concat(data);
-        if (data.length < PAGE) break;
-        from += PAGE;
+      try {
+        // Paginate past Supabase's 1000-row default limit
+        let allData = [];
+        const PAGE = 1000;
+        let from = 0;
+        while (true) {
+          const { data, error } = await supabase
+            .from('companies')
+            .select('*')
+            .order('scan_date', { ascending: false, nullsFirst: false })
+            .range(from, from + PAGE - 1);
+          if (error || !data?.length) break;
+          allData = allData.concat(data);
+          if (data.length < PAGE) break;
+          from += PAGE;
+        }
+        if (allData.length) {
+          const { data: pipelineEntries } = await supabase.from('pipeline_entries').select('company_id');
+          const inPipeline = new Set((pipelineEntries || []).map(e => e.company_id));
+          const loaded = allData.map(c => ({ ...c, _key: c.id }));
+          setCompanies(loaded);
+          const alreadyAdded = {};
+          loaded.forEach(c => { if (inPipeline.has(c.id)) alreadyAdded[c.id] = true; });
+          setAddedToPipeline(alreadyAdded);
+          if (localStorage.getItem('ph_scan_active')) setAutoResume(true);
+        }
+        const lastScan = await loadLastWeeklyScan();
+        setLastWeeklyScan(lastScan);
+        if (isWeeklyScanDue(lastScan)) setWeeklyScanDue(true);
+        // Show notification if edge function ran while app was closed
+        if (lastScan?.viewed === false && lastScan?.changes?.length > 0) {
+          setServerScanNotification(lastScan);
+        }
+      } catch (e) {
+        console.error('SignalWatch load error:', e);
+      } finally {
+        setLoading(false);
       }
-      if (allData.length) {
-        const { data: pipelineEntries } = await supabase.from('pipeline_entries').select('company_id');
-        const inPipeline = new Set((pipelineEntries || []).map(e => e.company_id));
-        const loaded = allData.map(c => ({ ...c, _key: c.id }));
-        setCompanies(loaded);
-        const alreadyAdded = {};
-        loaded.forEach(c => { if (inPipeline.has(c.id)) alreadyAdded[c.id] = true; });
-        setAddedToPipeline(alreadyAdded);
-        if (localStorage.getItem('ph_scan_active')) setAutoResume(true);
-      }
-      const lastScan = await loadLastWeeklyScan();
-      setLastWeeklyScan(lastScan);
-      if (isWeeklyScanDue(lastScan)) setWeeklyScanDue(true);
-      // Show notification if edge function ran while app was closed
-      if (lastScan?.viewed === false && lastScan?.changes?.length > 0) {
-        setServerScanNotification(lastScan);
-      }
-      setLoading(false);
     }
     load();
   }, []);
@@ -243,6 +249,7 @@ export default function SignalWatchPage({ onNavigate, icp }) {
 
       if (!allParsed.length) {
         alert('No companies found. Make sure your CSV has a "name" or "company" column.');
+        setImporting(false);
         return;
       }
 
@@ -509,36 +516,39 @@ export default function SignalWatchPage({ onNavigate, icp }) {
     for (let i = 0; i < unscanned.length; i += BATCH_SIZE) batches.push(unscanned.slice(i, i + BATCH_SIZE));
 
     let done = 0;
-    for (const batch of batches) {
-      if (cancelRef.current.cancelled) break;
-      batch.forEach(c => setScanStatus(s => ({ ...s, [c.id]: 'Scanning…' })));
-      try {
-        const batchResults = await scanBatch(batch, icp);
-        for (let i = 0; i < batch.length; i++) {
-          // Match by index first, fall back to name match (handles partial recovery)
-          const r = batchResults[i]?.companyName
-            ? batchResults.find(x => x.companyName?.toLowerCase() === batch[i].name.toLowerCase()) || batchResults[i]
-            : batchResults[i];
-          if (!r) {
-            // No result for this company — leave unscanned so it can be retried
-            setScanStatus(s => ({ ...s, [batch[i].id]: 'Retry next scan' }));
-            continue;
+    try {
+      for (const batch of batches) {
+        if (cancelRef.current.cancelled) break;
+        setScanStatus(s => { const next = { ...s }; batch.forEach(c => { next[c.id] = 'Scanning…'; }); return next; });
+        try {
+          const batchResults = await scanBatch(batch, icp);
+          for (let i = 0; i < batch.length; i++) {
+            // Match by index first, fall back to name match (handles partial recovery)
+            const r = batchResults[i]?.companyName
+              ? batchResults.find(x => x.companyName?.toLowerCase() === batch[i].name.toLowerCase()) || batchResults[i]
+              : batchResults[i];
+            if (!r) {
+              // No result for this company — leave unscanned so it can be retried
+              setScanStatus(s => ({ ...s, [batch[i].id]: 'Retry next scan' }));
+              continue;
+            }
+            await saveScanResult(batch[i].id, r);
+            setScanStatus(s => ({ ...s, [batch[i].id]: 'Done' }));
           }
-          await saveScanResult(batch[i].id, r);
-          setScanStatus(s => ({ ...s, [batch[i].id]: 'Done' }));
+        } catch (e) {
+          batch.forEach(c => {
+            setCompanies(prev => prev.map(x => x.id === c.id ? { ...x, _error: e.message } : x));
+            setScanStatus(s => ({ ...s, [c.id]: 'Error' }));
+          });
         }
-      } catch (e) {
-        batch.forEach(c => {
-          setCompanies(prev => prev.map(x => x.id === c.id ? { ...x, _error: e.message } : x));
-          setScanStatus(s => ({ ...s, [c.id]: 'Error' }));
-        });
+        done += batch.length;
+        setScanProgress({ done, total: unscanned.length });
+        if (done < unscanned.length && !cancelRef.current.cancelled) await new Promise(r => setTimeout(r, SCAN_DELAY));
       }
-      done += batch.length;
-      setScanProgress({ done, total: unscanned.length });
-      if (done < unscanned.length && !cancelRef.current.cancelled) await new Promise(r => setTimeout(r, SCAN_DELAY));
+    } finally {
+      localStorage.removeItem('ph_scan_active');
+      setScanningAll(false);
     }
-    localStorage.removeItem('ph_scan_active');
-    setScanningAll(false);
   }, [companies, saveScanResult, icp]);
 
   // ── Auto-resume scan after page refresh ─────────────────────────────────────
@@ -559,16 +569,21 @@ export default function SignalWatchPage({ onNavigate, icp }) {
     autoDeepRunning.current = true;
     let idx = 0;
     async function processNext() {
-      while (idx < autoDeepQueue.length && !cancelRef.current.cancelled) {
-        await scanOneRef.current(autoDeepQueue[idx]);
-        idx++;
-        setAutoDeepProgress(p => ({ ...p, done: idx }));
-        if (idx < autoDeepQueue.length && !cancelRef.current.cancelled) {
-          await new Promise(r => setTimeout(r, DEEP_SCAN_DELAY));
+      try {
+        while (idx < autoDeepQueue.length && !cancelRef.current.cancelled) {
+          await scanOneRef.current(autoDeepQueue[idx]);
+          idx++;
+          setAutoDeepProgress(p => ({ ...p, done: idx }));
+          if (idx < autoDeepQueue.length && !cancelRef.current.cancelled) {
+            await new Promise(r => setTimeout(r, DEEP_SCAN_DELAY));
+          }
         }
+      } catch (e) {
+        console.error('[AutoDeepScan] processNext error:', e);
+      } finally {
+        autoDeepRunning.current = false;
+        setAutoDeepQueue([]);
       }
-      autoDeepRunning.current = false;
-      setAutoDeepQueue([]);
     }
     processNext();
   }, [autoDeepQueue]);
@@ -582,41 +597,46 @@ export default function SignalWatchPage({ onNavigate, icp }) {
     setHqFillProgress({ done: 0, total: missing.length });
     const BATCH = 50;
     let done = 0;
-    for (let i = 0; i < missing.length; i += BATCH) {
-      if (cancelRef.current.cancelled) break;
-      const batch = missing.slice(i, i + BATCH);
-      try {
-        const results = await geocodeHqBatch(batch);
-        for (let j = 0; j < batch.length; j++) {
-          const r = results[j];
-          if (!r || (!r.hq && !r.lat)) continue;
-          const update = {};
-          if (r.hq)  update.hq  = r.hq;
-          if (r.lat) update.lat = r.lat;
-          if (r.lng) update.lng = r.lng;
-          await supabase.from('companies').update(update).eq('id', batch[j].id);
-          setCompanies(prev => prev.map(c => c.id === batch[j].id ? { ...c, ...update } : c));
-        }
-      } catch (e) { console.warn('HQ batch error', e); }
-      done = Math.min(i + BATCH, missing.length);
-      setHqFillProgress({ done, total: missing.length });
+    try {
+      for (let i = 0; i < missing.length; i += BATCH) {
+        if (cancelRef.current.cancelled) break;
+        const batch = missing.slice(i, i + BATCH);
+        try {
+          const results = await geocodeHqBatch(batch);
+          for (let j = 0; j < batch.length; j++) {
+            const r = results[j];
+            if (!r || (!r.hq && !r.lat)) continue;
+            const update = {};
+            if (r.hq)  update.hq  = r.hq;
+            if (r.lat) update.lat = r.lat;
+            if (r.lng) update.lng = r.lng;
+            await supabase.from('companies').update(update).eq('id', batch[j].id);
+            setCompanies(prev => prev.map(c => c.id === batch[j].id ? { ...c, ...update } : c));
+          }
+        } catch (e) { console.warn('HQ batch error', e); }
+        done = Math.min(i + BATCH, missing.length);
+        setHqFillProgress({ done, total: missing.length });
+      }
+      setHqFillDone(true);
+    } finally {
+      setHqFillRunning(false);
+      cancelRef.current = { cancelled: false };
     }
-    setHqFillRunning(false);
-    setHqFillDone(true);
-    cancelRef.current = { cancelled: false };
   }, []);
 
   // ── Weekly rescan ────────────────────────────────────────────────────────────
 
   const runWeeklyRescan = useCallback(async (subset = null) => {
-    const toScan = (subset || companiesRef.current).filter(c => c.scan_date && c.id);
+    const pool = subset || companiesRef.current;
+    const toScan = pool.filter(c => c.scan_date && c.id);
     if (!toScan.length) {
-      alert('No scanned companies to rescan. Run a batch scan first.');
+      setWeeklyScanError('No scanned companies found. Run the batch scan first.');
       return;
     }
     setWeeklyScanRunning(true);
     setWeeklyScanDue(false);
     setWeeklyScanChanges([]);
+    setWeeklyScanError(null);
     setWeeklyScanProgress({ done: 0, total: toScan.length });
     cancelRef.current = { cancelled: false };
 
@@ -626,13 +646,22 @@ export default function SignalWatchPage({ onNavigate, icp }) {
     let done = 0;
     const changes = [];
 
-    // Mark all as queued upfront
-    toScan.forEach(c => setScanStatus(s => ({ ...s, [c.id]: 'Queued' })));
+    // Mark all as queued in ONE batched state update (not n individual spreads)
+    setScanStatus(s => {
+      const next = { ...s };
+      toScan.forEach(c => { next[c.id] = 'Queued'; });
+      return next;
+    });
 
     try {
       for (const batch of batches) {
         if (cancelRef.current.cancelled) break;
-        batch.forEach(c => setScanStatus(s => ({ ...s, [c.id]: 'Scanning…' })));
+        // Mark batch as scanning in ONE update
+        setScanStatus(s => {
+          const next = { ...s };
+          batch.forEach(c => { next[c.id] = 'Scanning…'; });
+          return next;
+        });
         try {
           const results = await weeklyRescanBatch(batch, icp);
           for (let i = 0; i < batch.length; i++) {
@@ -661,8 +690,13 @@ export default function SignalWatchPage({ onNavigate, icp }) {
             setScanStatus(s => ({ ...s, [batch[i].id]: 'Done' }));
           }
         } catch (e) {
-          console.error('Rescan batch error:', e);
-          batch.forEach(c => setScanStatus(s => ({ ...s, [c.id]: 'Error' })));
+          console.error('[Rescan] batch error:', e);
+          setWeeklyScanError(e.message || 'Unknown error — check F12 console');
+          setScanStatus(s => {
+            const next = { ...s };
+            batch.forEach(c => { next[c.id] = 'Error'; });
+            return next;
+          });
         }
         done += batch.length;
         setWeeklyScanProgress({ done, total: toScan.length });
@@ -671,8 +705,11 @@ export default function SignalWatchPage({ onNavigate, icp }) {
     } finally {
       setWeeklyScanChanges(changes);
       setWeeklyScanRunning(false);
-      await saveLastWeeklyScan();
-      setLastWeeklyScan({ timestamp: new Date().toISOString() });
+      // Only record a completed scan timestamp when not cancelled mid-run
+      if (!cancelRef.current.cancelled) {
+        await saveLastWeeklyScan({ scanned: toScan.length, changes });
+        setLastWeeklyScan({ timestamp: new Date().toISOString() });
+      }
 
       // Queue changed high-scorers (ICP 8+) for deep scan
       if (!cancelRef.current.cancelled) {
@@ -717,8 +754,15 @@ export default function SignalWatchPage({ onNavigate, icp }) {
 
   const deleteCompany = useCallback(async (company) => {
     if (!confirm(`Remove ${company.name} from Signal Watch?`)) return;
-    if (company.id) await supabase.from('companies').delete().eq('id', company.id);
-    setCompanies(prev => prev.filter(c => c.id !== company.id));
+    try {
+      if (company.id) {
+        const { error } = await supabase.from('companies').delete().eq('id', company.id);
+        if (error) throw new Error(error.message);
+      }
+      setCompanies(prev => prev.filter(c => c.id !== company.id));
+    } catch (e) {
+      alert('Error removing company: ' + e.message);
+    }
   }, []);
 
   // ── Manual add ───────────────────────────────────────────────────────────────
@@ -1007,8 +1051,8 @@ export default function SignalWatchPage({ onNavigate, icp }) {
         {/* Row 1: Scan */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           {toolbarLabel('Scan')}
-          {companies.length > 0 && (scanningAll || autoDeepQueue.length > 0) && (
-            <button className="btn btn-secondary" onClick={() => { cancelRef.current.cancelled = true; setScanningAll(false); setAutoDeepQueue([]); autoDeepRunning.current = false; localStorage.removeItem('ph_scan_active'); }}>
+          {companies.length > 0 && (scanningAll || weeklyScanRunning || autoDeepQueue.length > 0) && (
+            <button className="btn btn-secondary" onClick={() => { cancelRef.current.cancelled = true; setScanningAll(false); setWeeklyScanRunning(false); setAutoDeepQueue([]); autoDeepRunning.current = false; localStorage.removeItem('ph_scan_active'); }}>
               ⏹ Stop
             </button>
           )}
@@ -1018,19 +1062,14 @@ export default function SignalWatchPage({ onNavigate, icp }) {
             </button>
           )}
           {companies.length > 0 && (
-            <button className="btn btn-secondary" disabled={weeklyScanRunning || scanningAll || autoDeepQueue.length > 0} onClick={runWeeklyRescan} title="Re-score all companies against current ICP settings">
-              🔄 Rescan All
-            </button>
-          )}
-          {companies.length > 0 && (
             <div style={{ position: 'relative' }}>
               <button
                 className="btn btn-secondary"
-                disabled={weeklyScanRunning || scanningAll || autoDeepQueue.length > 0}
+                disabled={weeklyScanRunning || scanningAll}
                 onClick={() => setRescanFilteredDropdownOpen(o => !o)}
                 title="Rescan companies matching current filters"
               >
-                🎯 Rescan Filtered ▾
+                {weeklyScanRunning ? <><span className="spinner" /> Scanning…</> : '🔄 Scan ▾'}
               </button>
               {rescanFilteredDropdownOpen && (
                 <>
@@ -1312,9 +1351,20 @@ export default function SignalWatchPage({ onNavigate, icp }) {
                   : 'Never run.'} Re-checks all companies for new hires, funding, and news that could change their score.
               </div>
             </div>
-            <button className="btn btn-primary btn-sm" style={{ background: '#ea580c', borderColor: '#ea580c', whiteSpace: 'nowrap' }} onClick={runWeeklyRescan}>
-              🔄 Run Weekly Rescan
+            <button className="btn btn-primary btn-sm" style={{ background: '#ea580c', borderColor: '#ea580c', whiteSpace: 'nowrap' }} onClick={() => setRescanFilteredDropdownOpen(true)}>
+              🎯 Rescan Filtered
             </button>
+          </div>
+        )}
+
+        {weeklyScanError && !weeklyScanRunning && (
+          <div style={{ position: 'fixed', top: 16, right: 16, zIndex: 9999, background: '#fef2f2', border: '2px solid #ef4444', borderRadius: 8, padding: '12px 16px', maxWidth: 420, boxShadow: '0 4px 20px rgba(0,0,0,0.15)', display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+            <span style={{ fontSize: 18, flexShrink: 0 }}>⚠️</span>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 700, color: '#991b1b', fontSize: 13, marginBottom: 2 }}>Rescan Error</div>
+              <div style={{ fontSize: 12, color: '#7f1d1d' }}>{weeklyScanError}</div>
+            </div>
+            <button onClick={() => setWeeklyScanError(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#991b1b', fontSize: 16, flexShrink: 0, padding: 0 }}>✕</button>
           </div>
         )}
 
