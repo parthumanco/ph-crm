@@ -112,6 +112,7 @@ export default function SignalWatchPage({ onNavigate, icp }) {
     icp: 'all',
     sig: 'all',
     industry: 'all',
+    engagement: 'all',
   });
   const [autoDeepQueue, setAutoDeepQueue]           = useState([]);
   const [autoDeepProgress, setAutoDeepProgress]     = useState({ done: 0, total: 0 });
@@ -874,6 +875,10 @@ export default function SignalWatchPage({ onNavigate, icp }) {
       if (filters.industry !== 'all') {
         if (!c.industry || c.industry !== filters.industry) return false;
       }
+      if (filters.engagement !== 'all') {
+        const eng = c.engagement_type || 'Sprint';
+        if (eng !== filters.engagement) return false;
+      }
 
       return true;
     });
@@ -919,7 +924,7 @@ export default function SignalWatchPage({ onNavigate, icp }) {
     const id = company.id || company._tempId;
     setExpandedCards(prev => ({ ...prev, [id]: true }));
     // Clear filters so the card is visible
-    setFilters({ series: 'all', employees: 'all', distance: 'all', icp: 'all', sig: 'all', industry: 'all' });
+    setFilters({ series: 'all', employees: 'all', distance: 'all', icp: 'all', sig: 'all', industry: 'all', engagement: 'all' });
     setSearch('');
     setTimeout(() => {
       cardRefs.current[id]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -1327,6 +1332,21 @@ export default function SignalWatchPage({ onNavigate, icp }) {
                     <option value="Government">Government</option>
                   </select>
                 </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', whiteSpace: 'nowrap' }}>Entry Point</span>
+                  <select
+                    value={filters.engagement}
+                    onChange={e => setFilter('engagement', e.target.value)}
+                    style={{ fontSize: 12, padding: '4px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface)', color: filters.engagement !== 'all' ? 'var(--accent)' : 'var(--text)', fontWeight: filters.engagement !== 'all' ? 700 : 400, cursor: 'pointer' }}
+                  >
+                    <option value="all">All Entry Points</option>
+                    <option value="Sprint">Sprint</option>
+                    <option value="Foundation">Foundation</option>
+                    <option value="Growth">Growth</option>
+                    <option value="Acceleration">Acceleration</option>
+                    <option value="Enterprise">Enterprise</option>
+                  </select>
+                </div>
                 <input
                   type="text"
                   placeholder="Search…"
@@ -1335,10 +1355,10 @@ export default function SignalWatchPage({ onNavigate, icp }) {
                   style={{ marginLeft: 'auto', width: 160, padding: '5px 10px', fontSize: 12 }}
                 />
               </div>
-              {(filters.series !== 'all' || filters.employees !== 'all' || filters.distance !== 'all' || filters.icp !== 'all' || filters.sig !== 'all' || filters.industry !== 'all' || search) && (
+              {(filters.series !== 'all' || filters.employees !== 'all' || filters.distance !== 'all' || filters.icp !== 'all' || filters.sig !== 'all' || filters.industry !== 'all' || filters.engagement !== 'all' || search) && (
                 <div style={{ marginTop: 8, fontSize: 12, color: 'var(--text-muted)' }}>
                   Showing {filtered.length} of {companies.length} companies &nbsp;
-                  <button className="btn btn-ghost btn-xs" onClick={() => { setFilters({ series: 'all', employees: 'all', distance: 'all', icp: 'all', sig: 'all', industry: 'all' }); setSearch(''); }}>
+                  <button className="btn btn-ghost btn-xs" onClick={() => { setFilters({ series: 'all', employees: 'all', distance: 'all', icp: 'all', sig: 'all', industry: 'all', engagement: 'all' }); setSearch(''); }}>
                     Clear filters
                   </button>
                 </div>
