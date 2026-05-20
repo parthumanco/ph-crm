@@ -398,8 +398,8 @@ export default function SignalWatchPage({ onNavigate, icp }) {
       // Persist AI-identified HQ if the company didn't already have one
       ...(result.hq && !companiesRef.current.find(c => c.id === companyId)?.hq ? { hq: result.hq } : {}),
       ...(result.industry ? { industry: result.industry } : {}),
-      // Only set engagement_type from scan if the company doesn't already have a manually-set one
-      ...(result.recommendedEngagement && !companiesRef.current.find(c => c.id === companyId)?.engagement_type
+      // Only set engagement_type from deep scan (overwriteWebsite = true) — batch/rescan lack sufficient signal
+      ...(overwriteWebsite && result.recommendedEngagement && !companiesRef.current.find(c => c.id === companyId)?.engagement_type
         ? { engagement_type: inferEngagementType(result.recommendedEngagement, result.employeeCountNum, result.fundingStage, result.triggers || []) }
         : {}),
       ...(overwriteWebsite ? { deep_scanned: true } : {}),
@@ -1548,6 +1548,7 @@ function CompanyCard({ company, distMiles, status, isScanning, scanningAll, week
   const [editingIdx, setEditingIdx] = useState(null);
   const [editForm, setEditForm] = useState({});
   const hasResult = company.scan_date && !company._error;
+  const hasEngagement = !!company.engagement_type;
   const engType = company.engagement_type || 'Sprint';
   const engMeta = ENGAGEMENT_META[engType] || ENGAGEMENT_META.Sprint;
 
@@ -1598,15 +1599,25 @@ function CompanyCard({ company, distMiles, status, isScanning, scanningAll, week
           {company.icp_tier && (
             <span className="badge badge-gray" style={{ fontSize: 10 }}>{company.icp_tier}</span>
           )}
-          <select
-            value={engType}
-            onClick={e => e.stopPropagation()}
-            onChange={e => { e.stopPropagation(); onUpdateEngagement?.(company.id, e.target.value); }}
-            style={{ fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 10, border: `1px solid ${engMeta.color}40`, background: engMeta.color + '18', color: engMeta.color, cursor: 'pointer', outline: 'none', width: 'fit-content', maxWidth: 110 }}
-            title="Engagement type — drives email messaging"
-          >
-            {ENGAGEMENT_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
-          </select>
+          {hasEngagement ? (
+            <select
+              value={engType}
+              onClick={e => e.stopPropagation()}
+              onChange={e => { e.stopPropagation(); onUpdateEngagement?.(company.id, e.target.value); }}
+              style={{ fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 10, border: `1px solid ${engMeta.color}40`, background: engMeta.color + '18', color: engMeta.color, cursor: 'pointer', outline: 'none', width: 'fit-content', maxWidth: 110 }}
+              title="Engagement type — drives email messaging"
+            >
+              {ENGAGEMENT_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+            </select>
+          ) : company.scan_date ? (
+            <span
+              onClick={e => e.stopPropagation()}
+              title="Deep scan this company to get an engagement type recommendation"
+              style={{ fontSize: 10, color: 'var(--text-muted)', background: 'var(--surface)', border: '1px dashed var(--border)', padding: '2px 7px', borderRadius: 10, cursor: 'default', whiteSpace: 'nowrap' }}
+            >
+              Deep scan to set
+            </span>
+          ) : null}
           {distMiles !== null && (
             <span style={{ fontSize: 10, color: distMiles < 100 ? 'var(--green)' : 'var(--text-faint)', fontWeight: 600 }}>
               📍 {distMiles}mi
