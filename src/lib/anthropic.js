@@ -67,14 +67,15 @@ function getRoleContext(title) {
   return 'Frame around brand strategy, positioning, and the value of getting the message right at this stage of growth.';
 }
 
-const ENGAGEMENT_SCAN_GUIDE = `recommendedEngagement: Use employee count and funding stage as your PRIMARY signals. Estimate confidently from company maturity, sector, website sophistication, and any available context — do NOT default to Sprint just because you are uncertain.
-- "Sprint" ($12K, 2 weeks): Genuinely tiny or very early stage. Fewer than 15 employees, pre-seed or bootstrapped, no clear commercial traction. Reserve this for companies that are clearly micro or scrappy startups.
-- "Foundation" ($25-50K, 2-3 months): Early commercial stage. Seed to Series A, roughly 15-50 employees, product exists but brand/positioning is undefined or weak.
-- "Growth" ($75-150K, 4-6 months): Established and scaling. Series A/B, 50-200 employees, brand is lagging behind company momentum. This is the most common tier for funded B2B companies.
-- "Acceleration" ($200-500K, 6-12 months): High-growth, well-funded. Series B/C, 150-500 employees, entering new markets or post-major-round. Strong revenue signals, commercial team exists.
-- "Enterprise" ($500K+, 12+ months): Large, complex organisation. Series C+ or equivalent revenue, 500+ employees, multi-brand or multi-market transformation needed.
-Most funded B2B companies with 30+ employees should be Foundation, Growth, or Acceleration — not Sprint. Use Sprint sparingly.
-IMPORTANT: Write recommendedAngle and all contactAngles specifically for the recommendedEngagement you chose. Do NOT use Sprint-specific language (e.g. "two-week sprint", "focused sprint") unless Sprint is the recommendedEngagement. The angle should reference the scale, scope, and outcomes appropriate for that engagement tier.`;
+const ENGAGEMENT_SCAN_GUIDE = `recommendedEngagement: You are REQUIRED to set this based on the employeeCountNum you are already filling in for this company. Apply these rules strictly:
+- employeeCountNum >= 500 → "Enterprise"
+- employeeCountNum 150-499 → "Acceleration"
+- employeeCountNum 50-149 → "Growth"
+- employeeCountNum 15-49 → "Foundation"
+- employeeCountNum < 15 OR truly unknown → "Sprint"
+If you do not know the employee count, ESTIMATE it from the company's sector, website sophistication, product maturity, and any other signals — then apply the rule above. Do not output Sprint simply because you are uncertain; make your best estimate and follow the rules.
+Funding stage can shift the recommendation up by one tier if it signals strong recent investment (e.g. a 40-person company that just closed Series B → Growth not Foundation).
+IMPORTANT: Write recommendedAngle and all contactAngles specifically for the recommendedEngagement you chose. Do NOT use Sprint-specific language (e.g. "two-week sprint", "focused sprint") unless Sprint is the recommendedEngagement.`;
 
 // ── ICP / Signal Watch scanning ──────────────────────────────────────────────
 

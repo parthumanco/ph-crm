@@ -31,6 +31,21 @@ function haversineDistance(lat1, lng1, lat2, lng2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
+// Client-side engagement type correction — overrides AI if employee count contradicts Sprint recommendation
+function inferEngagementType(aiRecommended, employeeCount, fundingStage) {
+  const n = employeeCount ? Math.round(employeeCount) : null;
+  const fs = (fundingStage || '').toLowerCase();
+  // If AI already recommended something other than Sprint, trust it
+  if (aiRecommended && aiRecommended !== 'Sprint') return aiRecommended;
+  // AI said Sprint — check if employee count contradicts that
+  if (!n) return aiRecommended || 'Sprint'; // genuinely unknown, keep Sprint
+  if (n >= 500) return 'Enterprise';
+  if (n >= 150) return 'Acceleration';
+  if (n >= 50)  return fs.includes('series b') || fs.includes('series c') ? 'Acceleration' : 'Growth';
+  if (n >= 15)  return 'Foundation';
+  return 'Sprint';
+}
+
 const BATCH_SIZE = 5;
 const SCAN_DELAY = 3000;
 const DEEP_SCAN_DELAY = 6000;
@@ -358,7 +373,7 @@ export default function SignalWatchPage({ onNavigate, icp }) {
       ...(result.industry ? { industry: result.industry } : {}),
       // Only set engagement_type from scan if the company doesn't already have a manually-set one
       ...(result.recommendedEngagement && !companiesRef.current.find(c => c.id === companyId)?.engagement_type
-        ? { engagement_type: result.recommendedEngagement }
+        ? { engagement_type: inferEngagementType(result.recommendedEngagement, result.employeeCountNum, result.fundingStage) }
         : {}),
       ...(overwriteWebsite ? { deep_scanned: true } : {}),
       ...(result.website && overwriteWebsite ? { website: result.website } : {}),
