@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import SignalWatchPage from './pages/SignalWatchPage';
 import PipelinePage from './pages/PipelinePage';
 import DealsPage from './pages/DealsPage';
+import SupportPage from './pages/SupportPage';
 import DiscoverPage from './pages/DiscoverPage';
 import WeeklyReportPage from './pages/WeeklyReportPage';
 import ChatPage from './pages/ChatPage';
@@ -12,6 +13,7 @@ const NAV = [
   { id: 'signals',  label: 'Signal Watch',  icon: '🔭' },
   { id: 'pipeline', label: 'Pipeline',       icon: '🔥' },
   { id: 'deals',    label: 'Deals',          icon: '💼' },
+  { id: 'support',  label: 'Support',        icon: '🎧' },
   { id: 'discover', label: 'Discover',       icon: '🧭' },
   { id: 'report',   label: 'Weekly Report',  icon: '📋' },
   { id: 'chat',     label: 'Little Stevie',  icon: '💬' },
@@ -22,6 +24,7 @@ const PAGE_TITLES = {
   signals:  { title: 'Signal Watch',  sub: 'Company intelligence & outreach triggers' },
   pipeline: { title: 'Pipeline',      sub: 'Active prospects & touch cadence' },
   deals:    { title: 'Deals',         sub: 'CRM pipeline, activities & revenue tracking' },
+  support:  { title: 'Support',       sub: 'Case management & client communication' },
   discover: { title: 'Discover',      sub: 'Find new companies to add to your watch list' },
   report:   { title: 'Weekly Report', sub: 'AI briefing & draft outreach' },
   chat:     { title: 'Little Stevie', sub: 'Ask anything about your pipeline' },
@@ -88,6 +91,9 @@ export default function App() {
         </PageSlot>
         <PageSlot active={page === 'deals'}>
           <DealsPage />
+        </PageSlot>
+        <PageSlot active={page === 'support'}>
+          <SupportPage />
         </PageSlot>
         <PageSlot active={page === 'discover'}>
           <DiscoverPage icp={icp} />
