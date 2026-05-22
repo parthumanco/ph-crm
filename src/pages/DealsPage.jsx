@@ -121,7 +121,6 @@ function KanbanColumn({ stage, deals, onCardClick, onDrop, isDragOver, onDragOve
 export default function DealsPage() {
   const [deals, setDeals]           = useState([]);
   const [loading, setLoading]       = useState(true);
-  const [ownerFilter, setOwnerFilter] = useState('all');
   const [selectedDeal, setSelectedDeal] = useState(null);
   const [showNewDeal, setShowNewDeal]   = useState(false);
   const [dragOver, setDragOver]     = useState(null); // stage id being dragged over
@@ -139,21 +138,17 @@ export default function DealsPage() {
 
   useEffect(() => { load(); }, [load]);
 
-  const filtered = ownerFilter === 'all' ? deals : deals.filter(d => d.assigned_to === ownerFilter);
-
-  const byStage = id => filtered.filter(d => d.stage === id);
+  const byStage = id => deals.filter(d => d.stage === id);
 
   // ── Stats ──────────────────────────────────────────────────────────────────
-  const activeDeals  = deals.filter(d => !['won','lost'].includes(d.stage));
-  const wonDeals     = deals.filter(d => d.stage === 'won');
-  const lostDeals    = deals.filter(d => d.stage === 'lost');
+  const activeDeals   = deals.filter(d => !['won','lost'].includes(d.stage));
+  const wonDeals      = deals.filter(d => d.stage === 'won');
+  const lostDeals     = deals.filter(d => d.stage === 'lost');
   const totalPipeline = activeDeals.reduce((s, d) => s + dealValue(d), 0);
   const totalWon      = wonDeals.reduce((s, d) => s + dealValue(d), 0);
   const winRate       = (wonDeals.length + lostDeals.length) > 0
     ? Math.round(wonDeals.length / (wonDeals.length + lostDeals.length) * 100)
     : null;
-  const mikeCount = filtered.filter(d => d.assigned_to === 'Mike' && !['won','lost'].includes(d.stage)).length;
-  const peteCount = filtered.filter(d => d.assigned_to === 'Pete' && !['won','lost'].includes(d.stage)).length;
 
   // ── Drag and drop ──────────────────────────────────────────────────────────
   const handleDrop = async (e, stageId) => {
@@ -196,18 +191,6 @@ export default function DealsPage() {
           <p>{activeDeals.length} active deal{activeDeals.length !== 1 ? 's' : ''} · {fmt$(totalPipeline)} pipeline</p>
         </div>
         <div className="page-header-actions">
-          {/* Owner filter */}
-          <div style={{ display: 'flex', gap: 4 }}>
-            {['all','Mike','Pete'].map(o => (
-              <button
-                key={o}
-                onClick={() => setOwnerFilter(o)}
-                style={{ padding: '5px 12px', fontSize: 12, fontWeight: 700, borderRadius: 20, border: '1px solid var(--border)', cursor: 'pointer', background: ownerFilter === o ? (o === 'Mike' ? '#7c3aed' : o === 'Pete' ? '#1d4ed8' : 'var(--accent)') : 'var(--surface)', color: ownerFilter === o ? '#fff' : 'var(--text-muted)', transition: 'all .15s' }}
-              >
-                {o === 'all' ? 'All' : o}
-              </button>
-            ))}
-          </div>
           <button className="btn btn-primary" onClick={() => { setSelectedDeal(null); setShowNewDeal(true); }}>
             + New Deal
           </button>
@@ -216,7 +199,7 @@ export default function DealsPage() {
 
       <div className="page-body">
         {/* Stats */}
-        <div className="stats-row cols-4" style={{ marginBottom: 24 }}>
+        <div className="stats-row cols-3" style={{ marginBottom: 24 }}>
           <div className="stat-card">
             <div className="stat-val">{fmt$(totalPipeline)}</div>
             <div className="stat-label">Pipeline Value</div>
@@ -233,19 +216,6 @@ export default function DealsPage() {
             </div>
             <div className="stat-label">Win Rate</div>
             <div className="stat-sub">{wonDeals.length}W · {lostDeals.length}L</div>
-          </div>
-          <div className="stat-card">
-            <div style={{ display: 'flex', gap: 16, justifyContent: 'center' }}>
-              <div style={{ textAlign: 'center' }}>
-                <div className="stat-val" style={{ color: '#7c3aed' }}>{mikeCount}</div>
-                <div className="stat-sub">Mike</div>
-              </div>
-              <div style={{ textAlign: 'center' }}>
-                <div className="stat-val" style={{ color: '#1d4ed8' }}>{peteCount}</div>
-                <div className="stat-sub">Pete</div>
-              </div>
-            </div>
-            <div className="stat-label">Active by Owner</div>
           </div>
         </div>
 
