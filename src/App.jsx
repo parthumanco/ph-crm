@@ -3,6 +3,7 @@ import SignalWatchPage from './pages/SignalWatchPage';
 import PipelinePage from './pages/PipelinePage';
 import DealsPage from './pages/DealsPage';
 import SupportPage from './pages/SupportPage';
+import ProjectsPage from './pages/ProjectsPage';
 import DiscoverPage from './pages/DiscoverPage';
 import WeeklyReportPage from './pages/WeeklyReportPage';
 import ChatPage from './pages/ChatPage';
@@ -14,6 +15,7 @@ const NAV = [
   { id: 'pipeline', label: 'Pipeline',       icon: '🔥' },
   { id: 'deals',    label: 'Deals',          icon: '💼' },
   { id: 'support',  label: 'Support',        icon: '🎧' },
+  { id: 'projects', label: 'Projects',       icon: '🗂️'  },
   { id: 'discover', label: 'Discover',       icon: '🧭' },
   { id: 'report',   label: 'Weekly Report',  icon: '📋' },
   { id: 'chat',     label: 'Little Stevie',  icon: '💬' },
@@ -25,6 +27,7 @@ const PAGE_TITLES = {
   pipeline: { title: 'Pipeline',      sub: 'Active prospects & touch cadence' },
   deals:    { title: 'Deals',         sub: 'CRM pipeline, activities & revenue tracking' },
   support:  { title: 'Support',       sub: 'Case management & client communication' },
+  projects: { title: 'Projects',      sub: 'Timelines, milestones & deliverables' },
   discover: { title: 'Discover',      sub: 'Find new companies to add to your watch list' },
   report:   { title: 'Weekly Report', sub: 'AI briefing & draft outreach' },
   chat:     { title: 'Little Stevie', sub: 'Ask anything about your pipeline' },
@@ -94,6 +97,9 @@ export default function App() {
         </PageSlot>
         <PageSlot active={page === 'support'}>
           <SupportPage />
+        </PageSlot>
+        <PageSlot active={page === 'projects'}>
+          <ProjectsPage />
         </PageSlot>
         <PageSlot active={page === 'discover'}>
           <DiscoverPage icp={icp} />
