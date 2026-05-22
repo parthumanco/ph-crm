@@ -309,86 +309,38 @@ export default function DealsPage() {
       </div>
 
       <div className="page-body">
-        {/* Stats — Won column is a drag target; won deals expand below it */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 24, alignItems: 'start' }}>
-
-          {/* Pipeline Value */}
+        {/* Stats */}
+        <div className="stats-row cols-3" style={{ marginBottom: 24 }}>
           <div className="stat-card">
             <div className="stat-val">{fmt$(totalPipeline)}</div>
             <div className="stat-label">Pipeline Value</div>
             <div className="stat-sub">Active deals (annualized)</div>
           </div>
-
-          {/* Won This Year — drop target + won deal list */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <div
-              className="stat-card"
-              onDragOver={e => { if (isDragging) { e.preventDefault(); setWonCardHover(true); } }}
-              onDragLeave={() => setWonCardHover(false)}
-              onDrop={e => { setWonCardHover(false); handleDrop(e, 'won'); }}
-              style={{
-                border: `2px solid ${wonCardHover ? '#10b981' : 'var(--border)'}`,
-                boxShadow: wonCardHover ? '0 0 18px rgba(16,185,129,0.25)' : 'var(--shadow)',
-                background: wonCardHover ? '#f0fdf4' : 'var(--surface)',
-                transition: 'all .18s',
-                cursor: isDragging ? 'copy' : 'default',
-                position: 'relative',
-              }}
-            >
-              <div className="stat-val" style={{ color: 'var(--green)' }}>{fmt$(totalWon)}</div>
-              <div className="stat-label" style={{ color: wonCardHover ? '#059669' : undefined }}>
-                {wonCardHover ? '🏆 Drop to close!' : 'Won This Year'}
-              </div>
-              <div className="stat-sub">{wonDeals.length} deal{wonDeals.length !== 1 ? 's' : ''} closed</div>
-              {isDragging && !wonCardHover && (
-                <div style={{
-                  position: 'absolute', bottom: 8, right: 10,
-                  fontSize: 10, fontWeight: 700, color: '#10b981',
-                  opacity: 0.7,
-                }}>← drag here to win</div>
-              )}
+          <div
+            className="stat-card"
+            onDragOver={e => { if (isDragging) { e.preventDefault(); setWonCardHover(true); } }}
+            onDragLeave={() => setWonCardHover(false)}
+            onDrop={e => { setWonCardHover(false); handleDrop(e, 'won'); }}
+            style={{
+              border: `2px solid ${wonCardHover ? '#10b981' : 'var(--border)'}`,
+              boxShadow: wonCardHover ? '0 0 18px rgba(16,185,129,0.25)' : 'var(--shadow)',
+              background: wonCardHover ? '#f0fdf4' : 'var(--surface)',
+              transition: 'all .18s',
+              cursor: isDragging ? 'copy' : 'default',
+              position: 'relative',
+            }}
+          >
+            <div className="stat-val" style={{ color: 'var(--green)' }}>{fmt$(totalWon)}</div>
+            <div className="stat-label" style={{ color: wonCardHover ? '#059669' : undefined }}>
+              {wonCardHover ? '🏆 Drop to close!' : 'Won This Year'}
             </div>
-
-            {/* Won deals list */}
-            {wonDeals.map(d => (
-              <div
-                key={d.id}
-                onClick={() => { setShowNewDeal(false); setSelectedDeal(d); }}
-                style={{
-                  background: '#f0fdf4',
-                  border: '1px solid #bbf7d0',
-                  borderRadius: 8,
-                  padding: '9px 14px',
-                  cursor: 'pointer',
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  gap: 8,
-                  transition: 'border-color .15s, box-shadow .15s',
-                }}
-                onMouseEnter={e => { e.currentTarget.style.borderColor = '#10b981'; e.currentTarget.style.boxShadow = '0 2px 8px rgba(16,185,129,0.15)'; }}
-                onMouseLeave={e => { e.currentTarget.style.borderColor = '#bbf7d0'; e.currentTarget.style.boxShadow = 'none'; }}
-              >
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ fontWeight: 700, fontSize: 13, display: 'flex', alignItems: 'center', gap: 5 }}>
-                    <span style={{ fontSize: 11 }}>🏆</span>
-                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.company_name}</span>
-                  </div>
-                  {d.contact_name && (
-                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 1 }}>{d.contact_name}</div>
-                  )}
-                  {d.won_date && (
-                    <div style={{ fontSize: 10, color: 'var(--text-faint)', marginTop: 1 }}>{d.won_date}</div>
-                  )}
-                </div>
-                {dealValue(d) > 0 && (
-                  <div style={{ fontSize: 12, fontWeight: 800, color: '#059669', flexShrink: 0 }}>{fmt$(dealValue(d))}</div>
-                )}
+            <div className="stat-sub">{wonDeals.length} deal{wonDeals.length !== 1 ? 's' : ''} closed</div>
+            {isDragging && !wonCardHover && (
+              <div style={{ position: 'absolute', bottom: 8, right: 10, fontSize: 10, fontWeight: 700, color: '#10b981', opacity: 0.6 }}>
+                ← drag here to win
               </div>
-            ))}
+            )}
           </div>
-
-          {/* Win Rate */}
           <div className="stat-card">
             <div className="stat-val" style={{ color: winRate === null ? 'var(--text-faint)' : winRate >= 50 ? 'var(--green)' : 'var(--amber)' }}>
               {winRate === null ? '—' : `${winRate}%`}
@@ -422,7 +374,49 @@ export default function DealsPage() {
               </div>
             </div>
 
-            {/* Closed section — Won is shown in the stat card above; only Lost + Nurture here */}
+            {/* Won deals — below the kanban board */}
+            {wonDeals.length > 0 && (
+              <div style={{ marginTop: 32, borderTop: '2px solid #bbf7d0', paddingTop: 20 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+                  <span style={{ fontSize: 14 }}>🏆</span>
+                  <span style={{ fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.06em', color: '#059669' }}>Won</span>
+                  <span style={{ fontSize: 10, fontWeight: 700, color: '#6b7280', marginLeft: 2 }}>· {wonDeals.length} deal{wonDeals.length !== 1 ? 's' : ''}</span>
+                  <span style={{ fontSize: 11, fontWeight: 800, color: '#059669', marginLeft: 'auto' }}>{fmt$(totalWon)}</span>
+                </div>
+                <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                  {wonDeals.map(d => (
+                    <div
+                      key={d.id}
+                      onClick={() => { setShowNewDeal(false); setSelectedDeal(d); }}
+                      style={{
+                        background: '#f0fdf4',
+                        border: '1px solid #bbf7d0',
+                        borderRadius: 8,
+                        padding: '10px 14px',
+                        cursor: 'pointer',
+                        minWidth: 180,
+                        flex: '1 1 160px',
+                        maxWidth: 260,
+                        transition: 'border-color .15s, box-shadow .15s',
+                      }}
+                      onMouseEnter={e => { e.currentTarget.style.borderColor = '#10b981'; e.currentTarget.style.boxShadow = '0 2px 8px rgba(16,185,129,0.18)'; }}
+                      onMouseLeave={e => { e.currentTarget.style.borderColor = '#bbf7d0'; e.currentTarget.style.boxShadow = 'none'; }}
+                    >
+                      <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 2 }}>{d.company_name}</div>
+                      {d.contact_name && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 6 }}>{d.contact_name}</div>}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 6 }}>
+                        {dealValue(d) > 0
+                          ? <span style={{ fontSize: 11, fontWeight: 800, color: '#059669' }}>{fmt$(dealValue(d))}</span>
+                          : <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>No value</span>}
+                        {d.won_date && <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>{d.won_date}</span>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Closed section — Won is shown above; only Nurture here */}
             {CLOSED_STAGES.filter(s => s.id !== 'won').some(s => byStage(s.id).length > 0) && (
               <div style={{ marginTop: 32, borderTop: '1px solid var(--border)', paddingTop: 20 }}>
                 <div style={{ fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.06em', color: 'var(--text-faint)', marginBottom: 16 }}>Nurture</div>
