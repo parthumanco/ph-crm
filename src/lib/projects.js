@@ -58,6 +58,9 @@ export async function upsertProject(p) {
     payload.id = crypto.randomUUID();
     payload.created_at = now;
   }
+  // Convert empty strings to null for date columns
+  if (!payload.start_date) payload.start_date = null;
+  if (!payload.end_date)   payload.end_date   = null;
   const { data, error } = await supabase
     .from('projects').upsert(payload, { onConflict: 'id' }).select().single();
   if (error) throw new Error(error.message);
