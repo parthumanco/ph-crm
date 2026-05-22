@@ -386,7 +386,7 @@ export default function PipelinePage({ icp = {} }) {
                               disabled={!!creatingDeal[entry.id]}
                               title="Create a deal in the Deals pipeline for this company"
                             >
-                              {creatingDeal[entry.id] ? '…' : '💼 Deal'}
+                              {creatingDeal[entry.id] ? '…' : '$ Deal'}
                             </button>
                           </div>
                         </td>
