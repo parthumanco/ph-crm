@@ -130,6 +130,7 @@ export default function DealsPage() {
   const [trashHover, setTrashHover] = useState(false);
   const [crumpling, setCrumpling]   = useState(false);
   const [trashShaking, setTrashShaking] = useState(false);
+  const [showLostPanel, setShowLostPanel] = useState(false);
   const dragDealId = useRef(null);
 
   const load = useCallback(async () => {
@@ -312,53 +313,95 @@ export default function DealsPage() {
         )}
       </div>
 
-      {/* Trash bin — drag cards here to mark Lost */}
-      {(isDragging || crumpling) && (
-        <div
-          onDragOver={e => { e.preventDefault(); setTrashHover(true); }}
-          onDragLeave={() => setTrashHover(false)}
-          onDrop={handleTrashDrop}
-          style={{
-            position: 'fixed',
-            bottom: 32,
-            right: 36,
-            zIndex: 500,
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            gap: 6,
-            pointerEvents: isDragging ? 'all' : 'none',
-          }}
-        >
-          {/* Crumpling paper */}
-          {crumpling && (
-            <div className="crumple-paper" style={{ fontSize: 28, lineHeight: 1, marginBottom: -8 }}>📄</div>
-          )}
-          {/* Bin */}
+      {/* Trash bin — always visible, drag to lose or click to view lost deals */}
+      <div
+        onDragOver={e => { if (isDragging) { e.preventDefault(); setTrashHover(true); } }}
+        onDragLeave={() => setTrashHover(false)}
+        onDrop={handleTrashDrop}
+        onClick={() => { if (!isDragging) setShowLostPanel(true); }}
+        style={{
+          position: 'fixed',
+          bottom: 32,
+          right: 36,
+          zIndex: 500,
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          gap: 4,
+          cursor: isDragging ? 'default' : 'pointer',
+        }}
+      >
+        {/* Crumpling paper */}
+        {crumpling && (
+          <div className="crumple-paper" style={{ fontSize: 28, lineHeight: 1, marginBottom: -8 }}>📄</div>
+        )}
+        {/* Bin + badge */}
+        <div style={{ position: 'relative' }}>
           <div
             className={trashHover ? 'trash-bin-hover' : trashShaking ? 'trash-bin-shake' : ''}
             style={{
-              fontSize: 48,
+              fontSize: isDragging ? 48 : 36,
               lineHeight: 1,
-              filter: trashHover ? 'drop-shadow(0 0 12px rgba(239,68,68,0.6))' : 'drop-shadow(0 2px 6px rgba(0,0,0,0.2))',
-              transition: 'filter .2s',
-              cursor: 'default',
+              filter: trashHover ? 'drop-shadow(0 0 12px rgba(239,68,68,0.6))' : 'drop-shadow(0 2px 6px rgba(0,0,0,0.15))',
+              transition: 'font-size .2s, filter .2s',
+              opacity: isDragging ? 1 : 0.7,
             }}
           >
             🗑️
           </div>
-          <span style={{
-            fontSize: 11,
-            fontWeight: 700,
-            color: trashHover ? '#ef4444' : 'var(--text-muted)',
-            background: trashHover ? '#fef2f2' : 'var(--surface)',
-            border: `1px solid ${trashHover ? '#fca5a5' : 'var(--border)'}`,
-            borderRadius: 6,
-            padding: '2px 8px',
-            transition: 'all .2s',
-          }}>
-            {trashHover ? 'Drop to lose' : 'Drag here to lose'}
-          </span>
+          {lostDeals.length > 0 && !isDragging && (
+            <span style={{ position: 'absolute', top: -4, right: -6, fontSize: 10, fontWeight: 800, background: '#ef4444', color: '#fff', borderRadius: 10, padding: '1px 5px', minWidth: 16, textAlign: 'center' }}>
+              {lostDeals.length}
+            </span>
+          )}
+        </div>
+        <span style={{
+          fontSize: 10,
+          fontWeight: 700,
+          color: trashHover ? '#ef4444' : 'var(--text-muted)',
+          background: trashHover ? '#fef2f2' : 'var(--surface)',
+          border: `1px solid ${trashHover ? '#fca5a5' : 'var(--border)'}`,
+          borderRadius: 6,
+          padding: '2px 7px',
+          transition: 'all .2s',
+          whiteSpace: 'nowrap',
+        }}>
+          {isDragging ? (trashHover ? 'Drop to lose' : 'Drag here') : `${lostDeals.length} lost`}
+        </span>
+      </div>
+
+      {/* Lost deals panel */}
+      {showLostPanel && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 400, display: 'flex', justifyContent: 'flex-end' }} onClick={e => e.target === e.currentTarget && setShowLostPanel(false)}>
+          <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.3)' }} onClick={() => setShowLostPanel(false)} />
+          <div style={{ position: 'relative', zIndex: 1, width: 380, background: 'var(--bg)', boxShadow: '-6px 0 24px rgba(0,0,0,0.12)', display: 'flex', flexDirection: 'column', height: '100%' }}>
+            <div style={{ padding: '20px 20px 16px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <h3 style={{ fontSize: 16, fontWeight: 800, margin: 0 }}>🗑️ Lost Deals</h3>
+                <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>{lostDeals.length} deal{lostDeals.length !== 1 ? 's' : ''}</p>
+              </div>
+              <button style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: 'var(--text-muted)' }} onClick={() => setShowLostPanel(false)}>✕</button>
+            </div>
+            <div style={{ flex: 1, overflowY: 'auto', padding: 16, display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {lostDeals.length === 0 && (
+                <p style={{ fontSize: 13, color: 'var(--text-faint)', textAlign: 'center', paddingTop: 24 }}>No lost deals yet.</p>
+              )}
+              {lostDeals.map(d => (
+                <div
+                  key={d.id}
+                  onClick={() => { setShowLostPanel(false); setSelectedDeal(d); }}
+                  style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: '10px 14px', cursor: 'pointer' }}
+                  onMouseEnter={e => e.currentTarget.style.borderColor = '#fca5a5'}
+                  onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--border)'}
+                >
+                  <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 2 }}>{d.company_name}</div>
+                  {d.contact_name && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 4 }}>{d.contact_name}</div>}
+                  {d.lost_reason && <div style={{ fontSize: 11, color: '#ef4444', marginBottom: 4 }}>Reason: {d.lost_reason}</div>}
+                  <div style={{ fontSize: 11, color: 'var(--text-faint)' }}>Lost {d.lost_date || d.updated_at?.slice(0,10) || ''}</div>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       )}
 
