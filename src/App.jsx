@@ -14,12 +14,12 @@ const NAV = [
   { id: 'signals',  label: 'Signal Watch',  icon: '🔭' },
   { id: 'pipeline', label: 'Pipeline',       icon: '🔥' },
   { id: 'deals',    label: 'Deals',          icon: '💼' },
-  { id: 'support',  label: 'Support',        icon: '🎧' },
   { id: 'projects', label: 'Projects',       icon: '🗂️'  },
   { id: 'discover', label: 'Discover',       icon: '🧭' },
   { id: 'report',   label: 'Weekly Report',  icon: '📋' },
   { id: 'chat',     label: 'Little Stevie',  icon: '💬' },
   { id: 'settings', label: 'ICP Settings',   icon: '⚙️'  },
+  { id: 'support',  label: 'Support',        icon: '🎧' },
 ];
 
 const PAGE_TITLES = {
