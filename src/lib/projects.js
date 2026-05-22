@@ -142,29 +142,13 @@ export async function bulkInsertTasks(rows) {
 
 // ── AI Proposal Parsing ───────────────────────────────────────────────────────
 
-export async function parseProposalWithAI(proposalText, startDate) {
+export async function parseProposalWithAI(proposalText, startDate, pdfBase64 = null) {
   const key = import.meta.env.VITE_ANTHROPIC_API_KEY;
   if (!key) throw new Error('No API key configured');
 
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': key,
-      'anthropic-version': '2023-06-01',
-      'anthropic-dangerous-direct-browser-access': 'true',
-    },
-    body: JSON.stringify({
-      model: 'claude-opus-4-5',
-      max_tokens: 4000,
-      messages: [{
-        role: 'user',
-        content: `You are an expert project manager. Read this proposal and extract a structured project plan.
+  const prompt = `You are an expert project manager. Read this proposal and extract a structured project plan.
 
 Project start date: ${startDate}
-
-PROPOSAL:
-${proposalText}
 
 Return ONLY a valid JSON object with no markdown, no explanation, no code fences. Use this exact structure:
 {
@@ -188,8 +172,28 @@ Rules:
 - Tasks within a milestone are concrete, actionable deliverables
 - Estimate realistic durations based on the described work
 - assigned_to fields should be blank strings
-- Return ONLY the raw JSON object, nothing else`,
-      }],
+- Return ONLY the raw JSON object, nothing else`;
+
+  // Build content array — PDF document block or plain text
+  const content = pdfBase64
+    ? [
+        { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: pdfBase64 } },
+        { type: 'text', text: prompt },
+      ]
+    : `${prompt}\n\nPROPOSAL:\n${proposalText}`;
+
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': key,
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true',
+    },
+    body: JSON.stringify({
+      model: 'claude-opus-4-5',
+      max_tokens: 4000,
+      messages: [{ role: 'user', content }],
     }),
   });
 

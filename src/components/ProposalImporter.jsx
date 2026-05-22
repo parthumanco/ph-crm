@@ -1,23 +1,47 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { parseProposalWithAI, addDays, OWNERS } from '../lib/projects';
 
 const today = new Date().toISOString().slice(0, 10);
 
 export default function ProposalImporter({ projectId, projectStart, onImported, onClose }) {
   const [step, setStep]           = useState('paste');   // paste | parsing | preview | saving
+  const [inputMode, setInputMode] = useState('text');    // text | pdf
   const [text, setText]           = useState('');
+  const [pdfFile, setPdfFile]     = useState(null);      // File object
+  const [pdfBase64, setPdfBase64] = useState(null);      // base64 string
   const [startDate, setStartDate] = useState(projectStart || today);
   const [error, setError]         = useState('');
   const [parsed, setParsed]       = useState(null);      // raw AI output
   const [preview, setPreview]     = useState([]);         // editable milestones
+  const fileInputRef              = useRef(null);
+
+  const handleFileChange = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    if (file.type !== 'application/pdf') { setError('Please select a PDF file.'); return; }
+    setPdfFile(file);
+    setError('');
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      // Strip the data URL prefix to get raw base64
+      const b64 = ev.target.result.split(',')[1];
+      setPdfBase64(b64);
+    };
+    reader.readAsDataURL(file);
+  };
 
   // ── Step 1: parse ─────────────────────────────────────────────────────────
   const handleParse = async () => {
-    if (!text.trim()) { setError('Please paste your proposal text.'); return; }
+    if (inputMode === 'text' && !text.trim()) { setError('Please paste your proposal text.'); return; }
+    if (inputMode === 'pdf'  && !pdfBase64)   { setError('Please select a PDF file.'); return; }
     setError('');
     setStep('parsing');
     try {
-      const result = await parseProposalWithAI(text, startDate);
+      const result = await parseProposalWithAI(
+        inputMode === 'text' ? text : '',
+        startDate,
+        inputMode === 'pdf' ? pdfBase64 : null,
+      );
       setParsed(result);
 
       // Build editable preview — calculate dates
@@ -147,22 +171,83 @@ export default function ProposalImporter({ projectId, projectStart, onImported, 
                   style={{ width: 200 }}
                 />
               </div>
-              <div>
-                <label style={{ fontSize: 11, fontWeight: 800, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.05em', display: 'block', marginBottom: 6 }}>
-                  Proposal text
-                </label>
-                <textarea
-                  value={text}
-                  onChange={e => setText(e.target.value)}
-                  placeholder="Paste your full proposal, scope of work, or project brief here…"
-                  style={{ width: '100%', minHeight: 260, fontSize: 13, resize: 'vertical' }}
-                />
+
+              {/* Input mode toggle */}
+              <div style={{ display: 'flex', gap: 3, background: 'var(--surface-2)', borderRadius: 8, padding: 3, alignSelf: 'flex-start' }}>
+                {[{ id: 'text', label: '✏️ Paste text' }, { id: 'pdf', label: '📄 Upload PDF' }].map(m => (
+                  <button
+                    key={m.id}
+                    onClick={() => { setInputMode(m.id); setError(''); }}
+                    style={{
+                      padding: '6px 14px', borderRadius: 5, border: 'none', cursor: 'pointer',
+                      fontSize: 12, fontWeight: 600,
+                      background: inputMode === m.id ? 'var(--surface)' : 'transparent',
+                      color: inputMode === m.id ? 'var(--text)' : 'var(--text-muted)',
+                      boxShadow: inputMode === m.id ? 'var(--shadow)' : 'none',
+                      transition: 'all .15s',
+                    }}
+                  >{m.label}</button>
+                ))}
               </div>
+
+              {inputMode === 'text' ? (
+                <div>
+                  <label style={{ fontSize: 11, fontWeight: 800, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.05em', display: 'block', marginBottom: 6 }}>
+                    Proposal text
+                  </label>
+                  <textarea
+                    value={text}
+                    onChange={e => setText(e.target.value)}
+                    placeholder="Paste your full proposal, scope of work, or project brief here…"
+                    style={{ width: '100%', minHeight: 240, fontSize: 13, resize: 'vertical' }}
+                  />
+                </div>
+              ) : (
+                <div>
+                  <label style={{ fontSize: 11, fontWeight: 800, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.05em', display: 'block', marginBottom: 6 }}>
+                    PDF file
+                  </label>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="application/pdf"
+                    onChange={handleFileChange}
+                    style={{ display: 'none' }}
+                  />
+                  <div
+                    onClick={() => fileInputRef.current.click()}
+                    style={{
+                      border: '2px dashed var(--border)', borderRadius: 8, padding: '36px 24px',
+                      textAlign: 'center', cursor: 'pointer', transition: 'border-color .15s, background .15s',
+                      background: pdfFile ? 'var(--surface-2)' : 'transparent',
+                    }}
+                    onMouseEnter={e => e.currentTarget.style.borderColor = 'var(--accent)'}
+                    onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--border)'}
+                  >
+                    {pdfFile ? (
+                      <>
+                        <div style={{ fontSize: 28, marginBottom: 6 }}>📄</div>
+                        <div style={{ fontWeight: 700, fontSize: 13 }}>{pdfFile.name}</div>
+                        <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 3 }}>
+                          {(pdfFile.size / 1024).toFixed(0)} KB · Click to change
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <div style={{ fontSize: 28, marginBottom: 6 }}>📂</div>
+                        <div style={{ fontWeight: 700, fontSize: 13 }}>Click to select a PDF</div>
+                        <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 3 }}>Proposal, scope of work, or project brief</div>
+                      </>
+                    )}
+                  </div>
+                </div>
+              )}
+
               {error && <p style={{ fontSize: 13, color: '#ef4444', margin: 0 }}>{error}</p>}
               <button
                 className="btn btn-primary"
                 onClick={handleParse}
-                disabled={!text.trim()}
+                disabled={inputMode === 'text' ? !text.trim() : !pdfBase64}
                 style={{ alignSelf: 'flex-start' }}
               >
                 Parse with AI →
