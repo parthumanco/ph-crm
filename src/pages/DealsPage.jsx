@@ -125,11 +125,12 @@ export default function DealsPage() {
   const [loading, setLoading]       = useState(true);
   const [selectedDeal, setSelectedDeal] = useState(null);
   const [showNewDeal, setShowNewDeal]   = useState(false);
-  const [dragOver, setDragOver]     = useState(null);
-  const [isDragging, setIsDragging] = useState(false);
-  const [trashHover, setTrashHover] = useState(false);
-  const [lostAnim, setLostAnim]     = useState(null); // null | {dealId, phase:'fly'|'impact'}
-  const [wonAnim,  setWonAnim]      = useState(null); // null | {dealId, phase:'plant'|'celebrate'}
+  const [dragOver, setDragOver]       = useState(null);
+  const [isDragging, setIsDragging]   = useState(false);
+  const [trashHover, setTrashHover]   = useState(false);
+  const [wonCardHover, setWonCardHover] = useState(false);
+  const [lostAnim, setLostAnim]       = useState(null); // null | {dealId, phase:'fly'|'impact'}
+  const [wonAnim,  setWonAnim]        = useState(null); // null | {dealId, phase:'plant'|'celebrate'}
   const [showLostPanel, setShowLostPanel] = useState(false);
   const dragDealId = useRef(null);
 
@@ -308,18 +309,86 @@ export default function DealsPage() {
       </div>
 
       <div className="page-body">
-        {/* Stats */}
-        <div className="stats-row cols-3" style={{ marginBottom: 24 }}>
+        {/* Stats — Won column is a drag target; won deals expand below it */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 24, alignItems: 'start' }}>
+
+          {/* Pipeline Value */}
           <div className="stat-card">
             <div className="stat-val">{fmt$(totalPipeline)}</div>
             <div className="stat-label">Pipeline Value</div>
             <div className="stat-sub">Active deals (annualized)</div>
           </div>
-          <div className="stat-card">
-            <div className="stat-val" style={{ color: 'var(--green)' }}>{fmt$(totalWon)}</div>
-            <div className="stat-label">Won This Year</div>
-            <div className="stat-sub">{wonDeals.length} deal{wonDeals.length !== 1 ? 's' : ''} closed</div>
+
+          {/* Won This Year — drop target + won deal list */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div
+              className="stat-card"
+              onDragOver={e => { if (isDragging) { e.preventDefault(); setWonCardHover(true); } }}
+              onDragLeave={() => setWonCardHover(false)}
+              onDrop={e => { setWonCardHover(false); handleDrop(e, 'won'); }}
+              style={{
+                border: `2px solid ${wonCardHover ? '#10b981' : 'var(--border)'}`,
+                boxShadow: wonCardHover ? '0 0 18px rgba(16,185,129,0.25)' : 'var(--shadow)',
+                background: wonCardHover ? '#f0fdf4' : 'var(--surface)',
+                transition: 'all .18s',
+                cursor: isDragging ? 'copy' : 'default',
+                position: 'relative',
+              }}
+            >
+              <div className="stat-val" style={{ color: 'var(--green)' }}>{fmt$(totalWon)}</div>
+              <div className="stat-label" style={{ color: wonCardHover ? '#059669' : undefined }}>
+                {wonCardHover ? '🏆 Drop to close!' : 'Won This Year'}
+              </div>
+              <div className="stat-sub">{wonDeals.length} deal{wonDeals.length !== 1 ? 's' : ''} closed</div>
+              {isDragging && !wonCardHover && (
+                <div style={{
+                  position: 'absolute', bottom: 8, right: 10,
+                  fontSize: 10, fontWeight: 700, color: '#10b981',
+                  opacity: 0.7,
+                }}>← drag here to win</div>
+              )}
+            </div>
+
+            {/* Won deals list */}
+            {wonDeals.map(d => (
+              <div
+                key={d.id}
+                onClick={() => { setShowNewDeal(false); setSelectedDeal(d); }}
+                style={{
+                  background: '#f0fdf4',
+                  border: '1px solid #bbf7d0',
+                  borderRadius: 8,
+                  padding: '9px 14px',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  gap: 8,
+                  transition: 'border-color .15s, box-shadow .15s',
+                }}
+                onMouseEnter={e => { e.currentTarget.style.borderColor = '#10b981'; e.currentTarget.style.boxShadow = '0 2px 8px rgba(16,185,129,0.15)'; }}
+                onMouseLeave={e => { e.currentTarget.style.borderColor = '#bbf7d0'; e.currentTarget.style.boxShadow = 'none'; }}
+              >
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontWeight: 700, fontSize: 13, display: 'flex', alignItems: 'center', gap: 5 }}>
+                    <span style={{ fontSize: 11 }}>🏆</span>
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.company_name}</span>
+                  </div>
+                  {d.contact_name && (
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 1 }}>{d.contact_name}</div>
+                  )}
+                  {d.won_date && (
+                    <div style={{ fontSize: 10, color: 'var(--text-faint)', marginTop: 1 }}>{d.won_date}</div>
+                  )}
+                </div>
+                {dealValue(d) > 0 && (
+                  <div style={{ fontSize: 12, fontWeight: 800, color: '#059669', flexShrink: 0 }}>{fmt$(dealValue(d))}</div>
+                )}
+              </div>
+            ))}
           </div>
+
+          {/* Win Rate */}
           <div className="stat-card">
             <div className="stat-val" style={{ color: winRate === null ? 'var(--text-faint)' : winRate >= 50 ? 'var(--green)' : 'var(--amber)' }}>
               {winRate === null ? '—' : `${winRate}%`}
@@ -347,18 +416,18 @@ export default function DealsPage() {
                     onDragLeave={() => setDragOver(null)}
                     onDrop={e => handleDrop(e, stage.id)}
                     onCardDragStart={() => { setIsDragging(true); }}
-                    onCardDragEnd={() => { setIsDragging(false); setTrashHover(false); }}
+                    onCardDragEnd={() => { setIsDragging(false); setTrashHover(false); setWonCardHover(false); }}
                   />
                 ))}
               </div>
             </div>
 
-            {/* Closed section */}
-            {CLOSED_STAGES.some(s => byStage(s.id).length > 0) && (
+            {/* Closed section — Won is shown in the stat card above; only Lost + Nurture here */}
+            {CLOSED_STAGES.filter(s => s.id !== 'won').some(s => byStage(s.id).length > 0) && (
               <div style={{ marginTop: 32, borderTop: '1px solid var(--border)', paddingTop: 20 }}>
-                <div style={{ fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.06em', color: 'var(--text-faint)', marginBottom: 16 }}>Closed / Nurture</div>
+                <div style={{ fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.06em', color: 'var(--text-faint)', marginBottom: 16 }}>Nurture</div>
                 <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-                  {CLOSED_STAGES.map(stage => {
+                  {CLOSED_STAGES.filter(s => s.id !== 'won').map(stage => {
                     const stageDeals = byStage(stage.id);
                     if (!stageDeals.length) return null;
                     return (
@@ -375,7 +444,7 @@ export default function DealsPage() {
                               deal={d}
                               onClick={() => { setShowNewDeal(false); setSelectedDeal(d); }}
                               onDragStart={e => { e.dataTransfer.setData('dealId', d.id); setIsDragging(true); }}
-                              onDragEnd={() => { setIsDragging(false); setTrashHover(false); }}
+                              onDragEnd={() => { setIsDragging(false); setTrashHover(false); setWonCardHover(false); }}
                             />
                           ))}
                         </div>
