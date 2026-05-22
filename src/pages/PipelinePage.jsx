@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, Fragment } from 'react';
 import { supabase } from '../lib/supabase';
 import EmailDraftModal from '../components/EmailDraftModal';
 import { ENGAGEMENT_META, ENGAGEMENT_OPTIONS } from '../lib/anthropic';
+import { upsertDeal } from '../lib/deals';
 
 const STATUS_LABELS = {
   active:    { label: 'Active',     cls: 'badge-blue'  },
@@ -46,6 +47,7 @@ export default function PipelinePage({ icp = {} }) {
   const [responseModal, setResponseModal] = useState(null);
   const [notesEntry, setNotesEntry] = useState(null);
   const [contextMenu, setContextMenu] = useState(null);
+  const [creatingDeal, setCreatingDeal] = useState({});
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -159,6 +161,27 @@ export default function PipelinePage({ icp = {} }) {
     const last = sent.sort((a, b) => new Date(b.sent_date) - new Date(a.sent_date))[0];
     return last ? daysSince(last.sent_date) >= 7 : true;
   }).length;
+
+  const handleCreateDeal = async (entry, company) => {
+    const key = entry.id;
+    if (creatingDeal[key]) return;
+    setCreatingDeal(p => ({ ...p, [key]: true }));
+    try {
+      const primaryContact = (company.contacts || [])[0] || {};
+      await upsertDeal({
+        company_id:   company.id,
+        company_name: company.name,
+        contact_name: primaryContact.name || '',
+        contact_email: primaryContact.email || '',
+        stage: 'outreach',
+      });
+      alert(`Deal created for ${company.name} — open Deals to continue.`);
+    } catch (e) {
+      alert('Error creating deal: ' + e.message);
+    } finally {
+      setCreatingDeal(p => ({ ...p, [key]: false }));
+    }
+  };
 
   return (
     <>
@@ -357,6 +380,14 @@ export default function PipelinePage({ icp = {} }) {
                           <div style={{ display: 'flex', gap: 4 }}>
                             <button className="btn btn-secondary btn-xs" onClick={() => setResponseModal({ entry, company })}>Log Reply</button>
                             <button className="btn btn-ghost btn-xs" onClick={() => setNotesEntry(entry)}>Notes</button>
+                            <button
+                              className="btn btn-ghost btn-xs"
+                              onClick={() => handleCreateDeal(entry, company)}
+                              disabled={!!creatingDeal[entry.id]}
+                              title="Create a deal in the Deals pipeline for this company"
+                            >
+                              {creatingDeal[entry.id] ? '…' : '💼 Deal'}
+                            </button>
                           </div>
                         </td>
                       </tr>
