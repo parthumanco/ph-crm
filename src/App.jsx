@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import SignalWatchPage from './pages/SignalWatchPage';
 import PipelinePage from './pages/PipelinePage';
+import DealsPage from './pages/DealsPage';
 import DiscoverPage from './pages/DiscoverPage';
 import WeeklyReportPage from './pages/WeeklyReportPage';
 import ChatPage from './pages/ChatPage';
@@ -10,18 +11,20 @@ import { loadIcp, DEFAULT_ICP } from './lib/settings';
 const NAV = [
   { id: 'signals',  label: 'Signal Watch',  icon: '🔭' },
   { id: 'pipeline', label: 'Pipeline',       icon: '🔥' },
+  { id: 'deals',    label: 'Deals',          icon: '💼' },
   { id: 'discover', label: 'Discover',       icon: '🧭' },
   { id: 'report',   label: 'Weekly Report',  icon: '📋' },
-  { id: 'chat',     label: 'Little Stevie',   icon: '💬' },
+  { id: 'chat',     label: 'Little Stevie',  icon: '💬' },
   { id: 'settings', label: 'ICP Settings',   icon: '⚙️'  },
 ];
 
 const PAGE_TITLES = {
   signals:  { title: 'Signal Watch',  sub: 'Company intelligence & outreach triggers' },
   pipeline: { title: 'Pipeline',      sub: 'Active prospects & touch cadence' },
+  deals:    { title: 'Deals',         sub: 'CRM pipeline, activities & revenue tracking' },
   discover: { title: 'Discover',      sub: 'Find new companies to add to your watch list' },
   report:   { title: 'Weekly Report', sub: 'AI briefing & draft outreach' },
-  chat:     { title: 'Little Stevie',  sub: 'Ask anything about your pipeline' },
+  chat:     { title: 'Little Stevie', sub: 'Ask anything about your pipeline' },
   settings: { title: 'ICP Settings',  sub: 'Ideal customer profile & outreach voice' },
 };
 
@@ -82,6 +85,9 @@ export default function App() {
         </PageSlot>
         <PageSlot active={page === 'pipeline'}>
           <PipelinePage icp={icp} />
+        </PageSlot>
+        <PageSlot active={page === 'deals'}>
+          <DealsPage />
         </PageSlot>
         <PageSlot active={page === 'discover'}>
           <DiscoverPage icp={icp} />
