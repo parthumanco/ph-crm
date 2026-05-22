@@ -47,6 +47,11 @@ export async function upsertDeal(deal) {
   const now = new Date().toISOString();
   const payload = { ...deal, updated_at: now };
   if (!payload.id) payload.created_at = now;
+  // Coerce empty strings to null for numeric columns
+  for (const key of ['retainer_value', 'project_value']) {
+    if (payload[key] === '' || payload[key] === undefined) payload[key] = null;
+    else if (payload[key] !== null) payload[key] = parseFloat(payload[key]) || null;
+  }
   const { data, error } = await supabase
     .from('deals')
     .upsert(payload, { onConflict: 'id' })
