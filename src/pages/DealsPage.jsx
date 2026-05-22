@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   fetchDeals, moveStage,
   ACTIVE_STAGES, CLOSED_STAGES,
@@ -21,7 +21,7 @@ function OwnerPill({ owner }) {
   );
 }
 
-function DealCard({ deal, onClick, onDragStart }) {
+function DealCard({ deal, onClick, onDragStart, onDragEnd }) {
   const rv = parseFloat(deal.retainer_value) || 0;
   const pv = parseFloat(deal.project_value) || 0;
   const days = daysSince(deal.stage_entered_at);
@@ -30,6 +30,7 @@ function DealCard({ deal, onClick, onDragStart }) {
     <div
       draggable
       onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
       onClick={onClick}
       style={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 8, padding: '10px 12px', cursor: 'pointer', userSelect: 'none', transition: 'box-shadow .15s' }}
       onMouseEnter={e => e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,0.1)'}
@@ -65,7 +66,7 @@ function DealCard({ deal, onClick, onDragStart }) {
   );
 }
 
-function KanbanColumn({ stage, deals, onCardClick, onDrop, isDragOver, onDragOver, onDragLeave }) {
+function KanbanColumn({ stage, deals, onCardClick, onDrop, isDragOver, onDragOver, onDragLeave, onCardDragStart, onCardDragEnd }) {
   const total = deals.reduce((s, d) => s + dealValue(d), 0);
   return (
     <div
@@ -100,7 +101,8 @@ function KanbanColumn({ stage, deals, onCardClick, onDrop, isDragOver, onDragOve
             key={d.id}
             deal={d}
             onClick={() => onCardClick(d)}
-            onDragStart={e => e.dataTransfer.setData('dealId', d.id)}
+            onDragStart={e => { e.dataTransfer.setData('dealId', d.id); onCardDragStart?.(); }}
+            onDragEnd={onCardDragEnd}
           />
         ))}
         {deals.length === 0 && !isDragOver && (
@@ -123,7 +125,12 @@ export default function DealsPage() {
   const [loading, setLoading]       = useState(true);
   const [selectedDeal, setSelectedDeal] = useState(null);
   const [showNewDeal, setShowNewDeal]   = useState(false);
-  const [dragOver, setDragOver]     = useState(null); // stage id being dragged over
+  const [dragOver, setDragOver]     = useState(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const [trashHover, setTrashHover] = useState(false);
+  const [crumpling, setCrumpling]   = useState(false);
+  const [trashShaking, setTrashShaking] = useState(false);
+  const dragDealId = useRef(null);
 
   const load = useCallback(async () => {
     try {
@@ -166,6 +173,23 @@ export default function DealsPage() {
       console.error('Stage move failed:', e);
       load(); // revert
     }
+  };
+
+  // ── Trash bin (Lost) ──────────────────────────────────────────────────────
+  const handleTrashDrop = async (e) => {
+    e.preventDefault();
+    const dealId = e.dataTransfer.getData('dealId');
+    if (!dealId) return;
+    setTrashHover(false);
+    setIsDragging(false);
+    setCrumpling(true);
+    setTrashShaking(true);
+    setTimeout(() => setTrashShaking(false), 500);
+    setTimeout(async () => {
+      setCrumpling(false);
+      setDeals(prev => prev.map(d => d.id === dealId ? { ...d, stage: 'lost', stage_entered_at: new Date().toISOString() } : d));
+      try { await moveStage(dealId, 'lost'); } catch { load(); }
+    }, 580);
   };
 
   // ── Modal handlers ─────────────────────────────────────────────────────────
@@ -236,6 +260,8 @@ export default function DealsPage() {
                     onDragOver={() => setDragOver(stage.id)}
                     onDragLeave={() => setDragOver(null)}
                     onDrop={e => handleDrop(e, stage.id)}
+                    onCardDragStart={() => { setIsDragging(true); }}
+                    onCardDragEnd={() => { setIsDragging(false); setTrashHover(false); }}
                   />
                 ))}
               </div>
@@ -262,7 +288,8 @@ export default function DealsPage() {
                               key={d.id}
                               deal={d}
                               onClick={() => { setShowNewDeal(false); setSelectedDeal(d); }}
-                              onDragStart={e => e.dataTransfer.setData('dealId', d.id)}
+                              onDragStart={e => { e.dataTransfer.setData('dealId', d.id); setIsDragging(true); }}
+                              onDragEnd={() => { setIsDragging(false); setTrashHover(false); }}
                             />
                           ))}
                         </div>
@@ -284,6 +311,56 @@ export default function DealsPage() {
           </>
         )}
       </div>
+
+      {/* Trash bin — drag cards here to mark Lost */}
+      {(isDragging || crumpling) && (
+        <div
+          onDragOver={e => { e.preventDefault(); setTrashHover(true); }}
+          onDragLeave={() => setTrashHover(false)}
+          onDrop={handleTrashDrop}
+          style={{
+            position: 'fixed',
+            bottom: 32,
+            right: 36,
+            zIndex: 500,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            gap: 6,
+            pointerEvents: isDragging ? 'all' : 'none',
+          }}
+        >
+          {/* Crumpling paper */}
+          {crumpling && (
+            <div className="crumple-paper" style={{ fontSize: 28, lineHeight: 1, marginBottom: -8 }}>📄</div>
+          )}
+          {/* Bin */}
+          <div
+            className={trashHover ? 'trash-bin-hover' : trashShaking ? 'trash-bin-shake' : ''}
+            style={{
+              fontSize: 48,
+              lineHeight: 1,
+              filter: trashHover ? 'drop-shadow(0 0 12px rgba(239,68,68,0.6))' : 'drop-shadow(0 2px 6px rgba(0,0,0,0.2))',
+              transition: 'filter .2s',
+              cursor: 'default',
+            }}
+          >
+            🗑️
+          </div>
+          <span style={{
+            fontSize: 11,
+            fontWeight: 700,
+            color: trashHover ? '#ef4444' : 'var(--text-muted)',
+            background: trashHover ? '#fef2f2' : 'var(--surface)',
+            border: `1px solid ${trashHover ? '#fca5a5' : 'var(--border)'}`,
+            borderRadius: 6,
+            padding: '2px 8px',
+            transition: 'all .2s',
+          }}>
+            {trashHover ? 'Drop to lose' : 'Drag here to lose'}
+          </span>
+        </div>
+      )}
 
       {/* Deal detail modal */}
       {(selectedDeal || showNewDeal) && (
