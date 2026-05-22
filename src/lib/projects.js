@@ -251,3 +251,52 @@ export function buildTimelineFromParsed(parsed, projectId, startDateStr) {
 
   return { milestones, tasks, endDate: cursor };
 }
+
+// ── Project Files ─────────────────────────────────────────────────────────────
+
+export async function fetchProjectFiles(projectId) {
+  const { data, error } = await supabase
+    .from('project_files')
+    .select('*')
+    .eq('project_id', projectId)
+    .order('uploaded_at', { ascending: false });
+  if (error) throw new Error(error.message);
+  return data || [];
+}
+
+export async function uploadProjectFile(projectId, file, milestoneId = null) {
+  const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+  const folder   = milestoneId ? `${projectId}/${milestoneId}` : `${projectId}/general`;
+  const path     = `${folder}/${Date.now()}-${safeName}`;
+
+  const { error: storageErr } = await supabase.storage
+    .from('project-files')
+    .upload(path, file, { contentType: file.type });
+  if (storageErr) throw new Error(storageErr.message);
+
+  const { data: { publicUrl } } = supabase.storage
+    .from('project-files')
+    .getPublicUrl(path);
+
+  const { data, error } = await supabase
+    .from('project_files')
+    .insert({
+      project_id:   projectId,
+      milestone_id: milestoneId || null,
+      name:         file.name,
+      size:         file.size,
+      mime_type:    file.type,
+      storage_path: path,
+      url:          publicUrl,
+    })
+    .select()
+    .single();
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+export async function deleteProjectFile(id, storagePath) {
+  await supabase.storage.from('project-files').remove([storagePath]);
+  const { error } = await supabase.from('project_files').delete().eq('id', id);
+  if (error) throw new Error(error.message);
+}

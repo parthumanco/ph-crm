@@ -1,8 +1,9 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   fetchProjects, upsertProject, deleteProject,
   fetchMilestones, upsertMilestone, deleteMilestone,
   fetchProjectTasks, upsertProjectTask, toggleTask, deleteProjectTask,
+  fetchProjectFiles, uploadProjectFile, deleteProjectFile,
   bulkInsertMilestones, bulkInsertTasks,
   PROJECT_STATUSES, MILESTONE_STATUSES, OWNERS,
   projColor, projLabel, msColor, msLabel,
@@ -33,6 +34,23 @@ function ProgressBar({ pct, color = '#10b981', height = 6 }) {
 
 function Lbl({ children }) {
   return <div style={{ fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--text-faint)', marginBottom: 4 }}>{children}</div>;
+}
+
+function fileIcon(mime) {
+  if (!mime) return '📎';
+  if (mime.includes('pdf'))                                        return '📄';
+  if (mime.includes('image'))                                      return '🖼️';
+  if (mime.includes('word') || mime.includes('document'))         return '📝';
+  if (mime.includes('sheet') || mime.includes('excel') || mime.includes('csv')) return '📊';
+  if (mime.includes('presentation') || mime.includes('powerpoint')) return '📊';
+  return '📎';
+}
+
+function fmtFileSize(bytes) {
+  if (!bytes) return '';
+  if (bytes < 1024)        return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
 // ── Gantt chart ───────────────────────────────────────────────────────────────
@@ -141,7 +159,7 @@ function GanttChart({ milestones, projectStart, projectEnd }) {
 
 // ── Project list card ─────────────────────────────────────────────────────────
 
-function ProjectCard({ project, tasks, onClick }) {
+function ProjectCard({ project, tasks, onClick, onUpload, uploading }) {
   const pct   = projectProgress(tasks);
   const color = projColor(project.status);
   const active = !['completed', 'cancelled'].includes(project.status);
@@ -167,11 +185,25 @@ function ProjectCard({ project, tasks, onClick }) {
         </div>
       )}
       <ProgressBar pct={pct} color={active ? color : '#94a3b8'} />
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 6 }}>
-        <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>{pct}% complete · {tasks.length} tasks</span>
-        {project.end_date && (
-          <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>Due {fmtDate(project.end_date)}</span>
-        )}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--border-light)' }}>
+        <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>
+          {pct}% complete · {tasks.length} tasks
+          {project.end_date ? ` · Due ${fmtDate(project.end_date)}` : ''}
+        </span>
+        <button
+          onClick={e => { e.stopPropagation(); onUpload(project.id, null, e); }}
+          disabled={uploading}
+          title="Upload a file to this project"
+          style={{
+            display: 'flex', alignItems: 'center', gap: 4,
+            padding: '4px 10px', borderRadius: 5, border: '1px solid var(--border)',
+            background: 'var(--surface-2)', cursor: uploading ? 'default' : 'pointer',
+            fontSize: 11, fontWeight: 600, color: 'var(--text-muted)',
+            transition: 'border-color .15s',
+          }}
+        >
+          {uploading ? '⏳' : '📎'} {uploading ? 'Uploading…' : 'Upload'}
+        </button>
       </div>
     </div>
   );
@@ -202,6 +234,12 @@ export default function ProjectsPage() {
   const [projError, setProjError]           = useState('');
   const [confirmDeleteProj, setConfirmDeleteProj] = useState(false);
 
+  // File state
+  const [projectFiles, setProjectFiles]   = useState([]);
+  const [uploadingFor, setUploadingFor]   = useState(null); // projectId or milestoneId uploading
+  const fileInputRef                       = useRef(null);
+  const pendingUpload                      = useRef({ projectId: null, milestoneId: null });
+
   // Load projects + won deals
   const loadAll = useCallback(async () => {
     setLoading(true);
@@ -231,25 +269,30 @@ export default function ProjectsPage() {
     setLoadingDetail(true);
     setExpanded({});
     setEditingMs(null);
+    setProjectFiles([]);
     try {
-      const [ms, ts] = await Promise.all([
+      const [ms, ts, files] = await Promise.all([
         fetchMilestones(project.id),
         fetchProjectTasks(project.id),
+        fetchProjectFiles(project.id),
       ]);
       setMilestones(ms);
       setTasks(ts);
+      setProjectFiles(files);
     } finally {
       setLoadingDetail(false);
     }
   };
 
   const refreshDetail = async (projId) => {
-    const [ms, ts] = await Promise.all([
+    const [ms, ts, files] = await Promise.all([
       fetchMilestones(projId),
       fetchProjectTasks(projId),
+      fetchProjectFiles(projId),
     ]);
     setMilestones(ms);
     setTasks(ts);
+    setProjectFiles(files);
     setAllTasks(prev => ({ ...prev, [projId]: ts }));
   };
 
@@ -418,6 +461,37 @@ export default function ProjectsPage() {
     }
   };
 
+  // ── File uploads ──────────────────────────────────────────────────────────
+  const triggerFileUpload = (projectId, milestoneId = null, e) => {
+    if (e) e.stopPropagation();
+    pendingUpload.current = { projectId, milestoneId };
+    fileInputRef.current.value = '';
+    fileInputRef.current.click();
+  };
+
+  const handleFileSelected = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const { projectId, milestoneId } = pendingUpload.current;
+    setUploadingFor(milestoneId || projectId);
+    try {
+      const saved = await uploadProjectFile(projectId, file, milestoneId);
+      if (activeProject?.id === projectId) {
+        setProjectFiles(prev => [saved, ...prev]);
+      }
+    } catch (err) {
+      console.error('Upload failed:', err.message);
+      alert(`Upload failed: ${err.message}`);
+    } finally {
+      setUploadingFor(null);
+    }
+  };
+
+  const handleDeleteFile = async (file) => {
+    await deleteProjectFile(file.id, file.storage_path);
+    setProjectFiles(prev => prev.filter(f => f.id !== file.id));
+  };
+
   // ── Stats ─────────────────────────────────────────────────────────────────
   const activeCount    = projects.filter(p => p.status === 'active').length;
   const completedCount = projects.filter(p => p.status === 'completed').length;
@@ -469,18 +543,25 @@ export default function ProjectsPage() {
             <button className="btn btn-primary" style={{ marginTop: 12 }} onClick={() => setShowNewProject(true)}>+ New Project</button>
           </div>
         ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 16 }}>
-            {projects.map(p => (
-              <ProjectCard
-                key={p.id}
-                project={p}
-                tasks={allTasks[p.id] || []}
-                onClick={() => openProject(p)}
-              />
-            ))}
-          </div>
+          <>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 16 }}>
+              {projects.map(p => (
+                <ProjectCard
+                  key={p.id}
+                  project={p}
+                  tasks={allTasks[p.id] || []}
+                  onClick={() => openProject(p)}
+                  onUpload={triggerFileUpload}
+                  uploading={uploadingFor === p.id}
+                />
+              ))}
+            </div>
+          </>
         )}
       </div>
+
+      {/* Global file input */}
+      <input ref={fileInputRef} type="file" accept="*/*" style={{ display: 'none' }} onChange={handleFileSelected} />
 
       {/* New project modal */}
       {showNewProject && (
@@ -567,6 +648,7 @@ export default function ProjectsPage() {
           </p>
         </div>
         <div className="page-header-actions" style={{ gap: 8 }}>
+          <button className="btn" style={{ fontSize: 13 }} onClick={() => triggerFileUpload(activeProject.id)}>📎 Upload File</button>
           <button className="btn" style={{ fontSize: 13 }} onClick={() => setShowImporter(true)}>📋 Import Proposal</button>
           <button className="btn btn-primary" onClick={handleAddMilestone}>+ Milestone</button>
         </div>
@@ -643,6 +725,23 @@ export default function ProjectsPage() {
                 projectStart={activeProject.start_date}
                 projectEnd={activeProject.end_date}
               />
+            </div>
+          )}
+
+          {/* ── Project Files ─────────────────────────────────────── */}
+          {projectFiles.filter(f => !f.milestone_id).length > 0 && (
+            <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: '16px 20px', marginBottom: 20 }}>
+              <div style={{ fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--text-faint)', marginBottom: 10 }}>Project Documents</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {projectFiles.filter(f => !f.milestone_id).map(f => (
+                  <div key={f.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 10px', borderRadius: 6, background: 'var(--bg)', border: '1px solid var(--border-light)' }}>
+                    <span style={{ fontSize: 18, flexShrink: 0 }}>{fileIcon(f.mime_type)}</span>
+                    <a href={f.url} target="_blank" rel="noopener noreferrer" style={{ flex: 1, fontSize: 13, fontWeight: 600, color: 'var(--accent)', textDecoration: 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</a>
+                    <span style={{ fontSize: 11, color: 'var(--text-faint)', whiteSpace: 'nowrap', flexShrink: 0 }}>{fmtFileSize(f.size)}</span>
+                    <button onClick={() => handleDeleteFile(f)} style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 13, padding: '2px 4px', flexShrink: 0 }} title="Remove file">✕</button>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
 
@@ -745,6 +844,16 @@ export default function ProjectsPage() {
                         )}
                       </div>
 
+                      {/* Milestone Files */}
+                      {projectFiles.filter(f => f.milestone_id === ms.id).map(f => (
+                        <div key={f.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 16px 7px 48px', borderBottom: '1px solid var(--border-light)', background: 'var(--bg)' }}>
+                          <span style={{ fontSize: 16, flexShrink: 0 }}>{fileIcon(f.mime_type)}</span>
+                          <a href={f.url} target="_blank" rel="noopener noreferrer" style={{ flex: 1, fontSize: 12, fontWeight: 600, color: 'var(--accent)', textDecoration: 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</a>
+                          <span style={{ fontSize: 10, color: 'var(--text-faint)', whiteSpace: 'nowrap', flexShrink: 0 }}>{fmtFileSize(f.size)}</span>
+                          <button onClick={() => handleDeleteFile(f)} style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 12, padding: '2px 4px', flexShrink: 0 }}>✕</button>
+                        </div>
+                      ))}
+
                       {/* Tasks */}
                       {msTasks.map(task => (
                         <div key={task.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 16px 9px 48px', borderBottom: '1px solid var(--border-light)', background: task.completed ? 'var(--surface-2)' : 'var(--surface)' }}>
@@ -794,6 +903,17 @@ export default function ProjectsPage() {
                           + Add task
                         </button>
                       )}
+
+                      {/* Attach file to milestone */}
+                      <button
+                        onClick={() => triggerFileUpload(activeProject.id, ms.id)}
+                        disabled={uploadingFor === ms.id}
+                        style={{ width: '100%', padding: '7px 16px 7px 48px', background: 'none', border: 'none', borderTop: '1px solid var(--border-light)', cursor: uploadingFor === ms.id ? 'default' : 'pointer', fontSize: 12, color: 'var(--text-faint)', textAlign: 'left', transition: 'color .15s' }}
+                        onMouseEnter={e => e.currentTarget.style.color = 'var(--accent)'}
+                        onMouseLeave={e => e.currentTarget.style.color = 'var(--text-faint)'}
+                      >
+                        {uploadingFor === ms.id ? '⏳ Uploading…' : '📎 Attach file to milestone'}
+                      </button>
                     </div>
                   )}
                 </div>
@@ -812,6 +932,9 @@ export default function ProjectsPage() {
           </div>
         </>)}
       </div>
+
+      {/* Global file input */}
+      <input ref={fileInputRef} type="file" accept="*/*" style={{ display: 'none' }} onChange={handleFileSelected} />
 
       {/* Proposal importer modal */}
       {showImporter && (
