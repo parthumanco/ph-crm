@@ -159,9 +159,9 @@ function GanttChart({ milestones, projectStart, projectEnd }) {
 
 // ── Project list card ─────────────────────────────────────────────────────────
 
-function ProjectCard({ project, tasks, onClick, onUpload, uploading }) {
-  const pct   = projectProgress(tasks);
-  const color = projColor(project.status);
+function ProjectCard({ project, tasks, files, onClick, onUpload, onImport, uploading }) {
+  const pct    = projectProgress(tasks);
+  const color  = projColor(project.status);
   const active = !['completed', 'cancelled'].includes(project.status);
 
   return (
@@ -171,38 +171,81 @@ function ProjectCard({ project, tasks, onClick, onUpload, uploading }) {
         background: 'var(--surface)', border: '1px solid var(--border)',
         borderRadius: 10, padding: '18px 20px', cursor: 'pointer',
         transition: 'box-shadow .15s, border-color .15s',
+        display: 'flex', flexDirection: 'column', gap: 0,
       }}
       onMouseEnter={e => { e.currentTarget.style.boxShadow = '0 4px 16px rgba(0,0,0,0.08)'; e.currentTarget.style.borderColor = 'var(--accent-border)'; }}
       onMouseLeave={e => { e.currentTarget.style.boxShadow = 'none'; e.currentTarget.style.borderColor = 'var(--border)'; }}
     >
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8, marginBottom: 8 }}>
+      {/* Header */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8, marginBottom: 6 }}>
         <div style={{ fontWeight: 800, fontSize: 15, lineHeight: 1.3 }}>{project.name}</div>
         <Badge label={projLabel(project.status)} color={color} small />
       </div>
+
+      {/* Client */}
       {project.client_name && (
-        <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12 }}>
+        <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 10 }}>
           {project.client_name}{project.contact_name ? ` · ${project.contact_name}` : ''}
         </div>
       )}
+
+      {/* Progress */}
       <ProgressBar pct={pct} color={active ? color : '#94a3b8'} />
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--border-light)' }}>
-        <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>
-          {pct}% complete · {tasks.length} tasks
-          {project.end_date ? ` · Due ${fmtDate(project.end_date)}` : ''}
-        </span>
+      <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 4, marginBottom: files?.length ? 10 : 0 }}>
+        {pct}% complete · {tasks.length} tasks
+        {project.end_date ? ` · Due ${fmtDate(project.end_date)}` : ''}
+      </div>
+
+      {/* Attached files */}
+      {files?.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 10 }}>
+          {files.map(f => (
+            <a
+              key={f.id}
+              href={f.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={e => e.stopPropagation()}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 6,
+                padding: '5px 8px', borderRadius: 6,
+                background: 'var(--bg)', border: '1px solid var(--border-light)',
+                textDecoration: 'none', color: 'var(--text)',
+              }}
+            >
+              <span style={{ fontSize: 14, flexShrink: 0 }}>{fileIcon(f.mime_type)}</span>
+              <span style={{ flex: 1, fontSize: 12, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--accent)' }}>{f.name}</span>
+              <span style={{ fontSize: 10, color: 'var(--text-faint)', flexShrink: 0 }}>{fmtFileSize(f.size)}</span>
+            </a>
+          ))}
+        </div>
+      )}
+
+      {/* Action buttons */}
+      <div style={{ display: 'flex', gap: 6, marginTop: 'auto', paddingTop: 10, borderTop: '1px solid var(--border-light)' }}>
+        <button
+          onClick={e => { e.stopPropagation(); onImport(project.id); }}
+          style={{
+            flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4,
+            padding: '5px 8px', borderRadius: 5, border: '1px solid var(--border)',
+            background: 'var(--surface-2)', cursor: 'pointer',
+            fontSize: 11, fontWeight: 600, color: 'var(--text-muted)',
+          }}
+        >
+          📋 Import Proposal
+        </button>
         <button
           onClick={e => { e.stopPropagation(); onUpload(project.id, null, e); }}
           disabled={uploading}
-          title="Upload a file to this project"
+          title="Upload a file"
           style={{
-            display: 'flex', alignItems: 'center', gap: 4,
-            padding: '4px 10px', borderRadius: 5, border: '1px solid var(--border)',
+            flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4,
+            padding: '5px 8px', borderRadius: 5, border: '1px solid var(--border)',
             background: 'var(--surface-2)', cursor: uploading ? 'default' : 'pointer',
             fontSize: 11, fontWeight: 600, color: 'var(--text-muted)',
-            transition: 'border-color .15s',
           }}
         >
-          {uploading ? '⏳' : '📎'} {uploading ? 'Uploading…' : 'Upload'}
+          {uploading ? '⏳ Uploading…' : '📎 Upload File'}
         </button>
       </div>
     </div>
@@ -235,24 +278,32 @@ export default function ProjectsPage() {
   const [confirmDeleteProj, setConfirmDeleteProj] = useState(false);
 
   // File state
-  const [projectFiles, setProjectFiles]   = useState([]);
-  const [uploadingFor, setUploadingFor]   = useState(null); // projectId or milestoneId uploading
-  const fileInputRef                       = useRef(null);
-  const pendingUpload                      = useRef({ projectId: null, milestoneId: null });
+  const [projectFiles, setProjectFiles]         = useState([]);
+  const [cardFiles, setCardFiles]               = useState({});   // { projectId: files[] } for list view
+  const [uploadingFor, setUploadingFor]         = useState(null);
+  const [showImporterForProject, setShowImporterForProject] = useState(null); // projectId | null
+  const fileInputRef                             = useRef(null);
+  const pendingUpload                            = useRef({ projectId: null, milestoneId: null });
 
-  // Load projects + won deals
+  // Load projects + won deals + card-level files
   const loadAll = useCallback(async () => {
     setLoading(true);
     try {
       const [ps, deals] = await Promise.all([fetchProjects(), fetchDeals()]);
       setProjects(ps);
       setWonDeals(deals.filter(d => d.stage === 'won'));
-      // Load tasks for all projects (for progress bars)
       const taskMap = {};
+      const fileMap = {};
       await Promise.all(ps.map(async p => {
-        taskMap[p.id] = await fetchProjectTasks(p.id);
+        const [tasks, files] = await Promise.all([
+          fetchProjectTasks(p.id),
+          fetchProjectFiles(p.id),
+        ]);
+        taskMap[p.id] = tasks;
+        fileMap[p.id] = files;
       }));
       setAllTasks(taskMap);
+      setCardFiles(fileMap);
     } catch (e) {
       console.error(e);
     } finally {
@@ -394,13 +445,15 @@ export default function ProjectsPage() {
     setAllTasks(prev => ({ ...prev, [activeProject.id]: updated }));
   };
 
-  // ── Proposal import callback ──────────────────────────────────────────────
-  const handleImported = async ({ startDate, projectName, milestones: msParsed }) => {
+  // ── Proposal import callback (works from card OR detail view) ────────────
+  const handleImported = async ({ startDate, projectName, milestones: msParsed }, fromProjectId) => {
+    const projectId = fromProjectId || activeProject?.id;
+    const baseProj  = projects.find(p => p.id === projectId) || activeProject;
+    const fromCard  = !!fromProjectId;
     try {
-      // Update project dates + name if blank
       const updatedProj = {
-        ...activeProject,
-        name:       activeProject.name || projectName || activeProject.name,
+        ...baseProj,
+        name:       baseProj.name || projectName || baseProj.name,
         start_date: startDate,
       };
 
@@ -410,12 +463,11 @@ export default function ProjectsPage() {
       const tRows  = [];
 
       msParsed.forEach((m, mi) => {
-        const msId = m._id || crypto.randomUUID();
+        const msId  = m._id || crypto.randomUUID();
         const msEnd = addDays(cursor, m.duration);
-
         msRows.push({
           id:          msId,
-          project_id:  activeProject.id,
+          project_id:  projectId,
           title:       m.title,
           description: m.description || '',
           status:      'not_started',
@@ -426,12 +478,11 @@ export default function ProjectsPage() {
           created_at:  now,
           updated_at:  now,
         });
-
         let taskCursor = cursor;
         (m.tasks || []).forEach((t, ti) => {
           const tEnd = addDays(taskCursor, t.duration || 2);
           tRows.push({
-            project_id:   activeProject.id,
+            project_id:   projectId,
             milestone_id: msId,
             title:        t.title,
             assigned_to:  t.assigned_to || '',
@@ -442,7 +493,6 @@ export default function ProjectsPage() {
           });
           taskCursor = tEnd;
         });
-
         cursor = msEnd;
       });
 
@@ -451,13 +501,22 @@ export default function ProjectsPage() {
       await bulkInsertMilestones(msRows);
       await bulkInsertTasks(tRows);
 
-      setActiveProject(savedProj);
       setProjects(prev => prev.map(p => p.id === savedProj.id ? savedProj : p));
-      await refreshDetail(savedProj.id);
-      setShowImporter(false);
+
+      if (fromCard) {
+        // Refresh card tasks
+        const ts = await fetchProjectTasks(projectId);
+        setAllTasks(prev => ({ ...prev, [projectId]: ts }));
+        setShowImporterForProject(null);
+      } else {
+        setActiveProject(savedProj);
+        await refreshDetail(savedProj.id);
+        setShowImporter(false);
+      }
     } catch (e) {
       console.error('Import failed:', e);
-      setShowImporter(false);
+      if (fromCard) setShowImporterForProject(null);
+      else setShowImporter(false);
     }
   };
 
@@ -479,6 +538,8 @@ export default function ProjectsPage() {
       if (activeProject?.id === projectId) {
         setProjectFiles(prev => [saved, ...prev]);
       }
+      // Always update card-level files map so it shows on the card
+      setCardFiles(prev => ({ ...prev, [projectId]: [saved, ...(prev[projectId] || [])] }));
     } catch (err) {
       console.error('Upload failed:', err.message);
       alert(`Upload failed: ${err.message}`);
@@ -544,14 +605,16 @@ export default function ProjectsPage() {
           </div>
         ) : (
           <>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 16 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 16 }}>
               {projects.map(p => (
                 <ProjectCard
                   key={p.id}
                   project={p}
                   tasks={allTasks[p.id] || []}
+                  files={cardFiles[p.id] || []}
                   onClick={() => openProject(p)}
                   onUpload={triggerFileUpload}
+                  onImport={id => setShowImporterForProject(id)}
                   uploading={uploadingFor === p.id}
                 />
               ))}
@@ -562,6 +625,16 @@ export default function ProjectsPage() {
 
       {/* Global file input */}
       <input ref={fileInputRef} type="file" accept="*/*" style={{ display: 'none' }} onChange={handleFileSelected} />
+
+      {/* Proposal importer from card */}
+      {showImporterForProject && (
+        <ProposalImporter
+          projectId={showImporterForProject}
+          projectStart={projects.find(p => p.id === showImporterForProject)?.start_date}
+          onImported={(payload) => handleImported(payload, showImporterForProject)}
+          onClose={() => setShowImporterForProject(null)}
+        />
+      )}
 
       {/* New project modal */}
       {showNewProject && (
