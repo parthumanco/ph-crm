@@ -129,6 +129,7 @@ export default function DealsPage() {
   const [isDragging, setIsDragging] = useState(false);
   const [trashHover, setTrashHover] = useState(false);
   const [lostAnim, setLostAnim]     = useState(null); // null | {dealId, phase:'fly'|'impact'}
+  const [wonAnim,  setWonAnim]      = useState(null); // null | {dealId, phase:'plant'|'celebrate'}
   const [showLostPanel, setShowLostPanel] = useState(false);
   const dragDealId = useRef(null);
 
@@ -157,6 +158,42 @@ export default function DealsPage() {
     ? Math.round(wonDeals.length / (wonDeals.length + lostDeals.length) * 100)
     : null;
 
+  // ── Win fanfare (ascending square-wave arpeggio) ──────────────────────────
+  function playWinSound() {
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const notes = [
+        // Rising arpeggio
+        { freq: 261, t: 0,    dur: 0.11, vol: 0.10 },  // C4
+        { freq: 329, t: 0.12, dur: 0.11, vol: 0.10 },  // E4
+        { freq: 392, t: 0.24, dur: 0.11, vol: 0.10 },  // G4
+        { freq: 523, t: 0.36, dur: 0.30, vol: 0.12 },  // C5 hold
+        // Harmony on the hold
+        { freq: 329, t: 0.38, dur: 0.26, vol: 0.07 },  // E4
+        { freq: 392, t: 0.38, dur: 0.26, vol: 0.07 },  // G4
+        // Second stab — higher
+        { freq: 523, t: 0.72, dur: 0.10, vol: 0.10 },  // C5
+        { freq: 659, t: 0.83, dur: 0.10, vol: 0.10 },  // E5
+        { freq: 784, t: 0.94, dur: 0.50, vol: 0.12 },  // G5 hold
+        { freq: 659, t: 0.96, dur: 0.45, vol: 0.07 },  // E5 harmony
+        { freq: 523, t: 0.96, dur: 0.45, vol: 0.07 },  // C5 harmony
+      ];
+      notes.forEach(({ freq, t, dur, vol }) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.type = 'square';
+        osc.frequency.setValueAtTime(freq, ctx.currentTime + t);
+        gain.gain.setValueAtTime(vol, ctx.currentTime + t);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + t + dur);
+        osc.start(ctx.currentTime + t);
+        osc.stop(ctx.currentTime + t + dur + 0.01);
+      });
+      setTimeout(() => ctx.close(), 2200);
+    } catch { /* audio unavailable */ }
+  }
+
   // ── Drag and drop ──────────────────────────────────────────────────────────
   const handleDrop = async (e, stageId) => {
     e.preventDefault();
@@ -165,13 +202,30 @@ export default function DealsPage() {
     if (!dealId) return;
     const deal = deals.find(d => d.id === dealId);
     if (!deal || deal.stage === stageId) return;
-    // Optimistic update
+
+    // 🏆 Won — trigger arcade celebration
+    if (stageId === 'won') {
+      setIsDragging(false);
+      setWonAnim({ dealId, phase: 'plant' });
+      playWinSound();
+      setTimeout(() => setWonAnim({ dealId, phase: 'celebrate' }), 750);
+      setTimeout(async () => {
+        setWonAnim(null);
+        setDeals(prev => prev.map(d => d.id === dealId
+          ? { ...d, stage: 'won', stage_entered_at: new Date().toISOString(), won_date: new Date().toISOString().slice(0, 10) }
+          : d));
+        try { await moveStage(dealId, 'won'); } catch { load(); }
+      }, 2750);
+      return;
+    }
+
+    // Normal stage move
     setDeals(prev => prev.map(d => d.id === dealId ? { ...d, stage: stageId, stage_entered_at: new Date().toISOString() } : d));
     try {
       await moveStage(dealId, stageId);
     } catch (e) {
       console.error('Stage move failed:', e);
-      load(); // revert
+      load();
     }
   };
 
@@ -485,6 +539,154 @@ export default function DealsPage() {
           {lostAnim ? '…' : isDragging ? (trashHover ? 'Drop to lose' : 'Drag here') : `${lostDeals.length} lost`}
         </span>
       </div>
+
+      {/* ═══ Win Celebration Overlay ════════════════════════════════════════════ */}
+      {wonAnim && (() => {
+        const winDeal = deals.find(d => d.id === wonAnim.dealId);
+        const winVal  = winDeal ? dealValue(winDeal) : 0;
+        return (
+          <div style={{
+            position: 'fixed', inset: 0, zIndex: 700,
+            background: 'rgba(2, 26, 12, 0.72)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            animation: 'win-overlay-in 0.25s ease-out',
+            pointerEvents: 'none',
+          }}>
+            <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+
+              {/* Dollar bills — all start at character center, fly outward */}
+              {[1,2,3,4,5,6,7,8].map(i => (
+                <div key={i} className={`bill-fly-${i}`} style={{
+                  position: 'absolute', top: 28, left: '50%', marginLeft: -12,
+                  fontSize: 24, pointerEvents: 'none', zIndex: 2,
+                }}>💵</div>
+              ))}
+
+              {/* ── Minotaur pixel-art character ── */}
+              <div className={wonAnim.phase === 'celebrate' ? 'char-celebrate' : ''} style={{ position: 'relative', zIndex: 3 }}>
+                {/* SVG Minotaur */}
+                <svg width="80" height="104" viewBox="0 0 80 104" style={{ imageRendering: 'pixelated', display: 'block', overflow: 'visible' }}>
+                  {/* Horns */}
+                  <rect x="4"  y="0"  width="14" height="22" rx="3" fill="#92400e" />
+                  <rect x="2"  y="0"  width="8"  height="10" rx="2" fill="#a16207" />
+                  <rect x="62" y="0"  width="14" height="22" rx="3" fill="#92400e" />
+                  <rect x="70" y="0"  width="8"  height="10" rx="2" fill="#a16207" />
+                  {/* Head */}
+                  <rect x="12" y="12" width="56" height="36" rx="4" fill="#b45309" />
+                  <rect x="12" y="12" width="56" height="8"  rx="3" fill="#c2410c" />
+                  {/* Eyes — red (fierce) */}
+                  <rect x="18" y="20" width="12" height="12" rx="1" fill="#fef3c7" />
+                  <rect x="50" y="20" width="12" height="12" rx="1" fill="#fef3c7" />
+                  <rect x="21" y="22" width="6"  height="7"  rx="1" fill="#dc2626" />
+                  <rect x="53" y="22" width="6"  height="7"  rx="1" fill="#dc2626" />
+                  <rect x="22" y="23" width="3"  height="3"  fill="#7f1d1d" />
+                  <rect x="54" y="23" width="3"  height="3"  fill="#7f1d1d" />
+                  {/* Snout */}
+                  <rect x="22" y="34" width="36" height="16" rx="4" fill="#9a3412" />
+                  <rect x="26" y="37" width="10" height="6"  rx="2" fill="#7f1d1d" />
+                  <rect x="44" y="37" width="10" height="6"  rx="2" fill="#7f1d1d" />
+                  {/* Body — blue tunic */}
+                  <rect x="14" y="48" width="52" height="34" rx="2" fill="#1d4ed8" />
+                  <rect x="14" y="48" width="52" height="7"  rx="1" fill="#2563eb" />
+                  {/* Chest stripe */}
+                  <rect x="32" y="52" width="16" height="5"  fill="#1e40af" />
+                  {/* Belt */}
+                  <rect x="14" y="74" width="52" height="8"  fill="#78350f" />
+                  <rect x="32" y="75" width="16" height="6"  rx="1" fill="#d97706" />
+                  <rect x="36" y="76" width="8"  height="4"  rx="0" fill="#fbbf24" />
+                  {/* Left arm (hanging) */}
+                  <rect x="0"  y="50" width="14" height="26" rx="4" fill="#b45309" />
+                  <rect x="0"  y="70" width="14" height="10" rx="4" fill="#9a3412" />
+                  {/* Right arm (raised — gripping flag pole) */}
+                  <rect x="66" y="38" width="14" height="26" rx="4" fill="#b45309" />
+                  <rect x="66" y="36" width="14" height="10" rx="4" fill="#9a3412" />
+                  {/* Legs */}
+                  <rect x="16" y="82" width="20" height="22" rx="2" fill="#1e40af" />
+                  <rect x="44" y="82" width="20" height="22" rx="2" fill="#1e40af" />
+                  {/* Hooves */}
+                  <rect x="12" y="96" width="28" height="8"  rx="3" fill="#111827" />
+                  <rect x="40" y="96" width="28" height="8"  rx="3" fill="#111827" />
+                </svg>
+
+                {/* Flag — plants down from raised position */}
+                <div
+                  className={wonAnim.phase === 'plant' ? 'flag-plant-anim' : ''}
+                  style={{
+                    position: 'absolute', top: 20, right: -48,
+                    transformOrigin: 'bottom left',
+                    transform: wonAnim.phase === 'celebrate' ? 'rotate(0deg)' : undefined,
+                  }}
+                >
+                  <svg width="48" height="70" viewBox="0 0 48 70" style={{ imageRendering: 'pixelated', display: 'block' }}>
+                    {/* Pole */}
+                    <rect x="20" y="0"  width="5" height="70" fill="#d1d5db" />
+                    <rect x="22" y="0"  width="2" height="70" fill="rgba(255,255,255,0.4)" />
+                    {/* Flag — green with $ */}
+                    <polygon points="25,4 25,32 48,18" fill="#10b981" />
+                    <polygon points="25,4 25,32 48,18" fill="none" stroke="#059669" strokeWidth="1.5" />
+                    <text x="32" y="22" fontFamily="monospace" fontSize="13" fontWeight="800" fill="#fff" textAnchor="middle">$</text>
+                  </svg>
+                </div>
+              </div>
+
+              {/* Ground bar */}
+              <div style={{
+                width: 180, height: 5, marginTop: 2,
+                background: 'linear-gradient(90deg, transparent, #10b981 20%, #fbbf24 50%, #10b981 80%, transparent)',
+                borderRadius: 3,
+              }} />
+
+              {/* DEAL WON! popup — appears on celebrate phase */}
+              {wonAnim.phase === 'celebrate' && (
+                <div className="win-popup-anim" style={{
+                  marginTop: 20,
+                  background: '#052e16',
+                  border: '3px solid #fbbf24',
+                  borderRadius: 3,
+                  padding: '14px 26px 16px',
+                  textAlign: 'center',
+                  boxShadow: [
+                    '4px 4px 0 #78350f',
+                    '0 0 32px rgba(251,191,36,0.55)',
+                    'inset 0 0 0 1px #14532d',
+                  ].join(', '),
+                }}>
+                  <div style={{
+                    fontFamily: '"Press Start 2P", "Courier New", monospace',
+                    fontSize: 16,
+                    color: '#fde68a',
+                    textShadow: '0 0 14px rgba(251,191,36,0.9), 2px 2px 0 #78350f',
+                    letterSpacing: '0.04em',
+                    lineHeight: 1.7,
+                  }}>
+                    DEAL WON!
+                  </div>
+                  {winVal > 0 && (
+                    <div style={{
+                      fontFamily: '"Press Start 2P", "Courier New", monospace',
+                      fontSize: 9,
+                      color: '#86efac',
+                      marginTop: 8,
+                      textShadow: '0 0 8px rgba(16,185,129,0.7)',
+                    }}>
+                      {fmt$(winVal)}
+                    </div>
+                  )}
+                  <div style={{
+                    fontFamily: '"Press Start 2P", "Courier New", monospace',
+                    fontSize: 6,
+                    color: '#4b5563',
+                    marginTop: 8,
+                    letterSpacing: '0.06em',
+                  }}>
+                    ACHIEVEMENT UNLOCKED
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Lost deals panel */}
       {showLostPanel && (

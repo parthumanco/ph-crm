@@ -676,3 +676,62 @@ label {
 .retro-spark-4        { animation: spark-4 0.60s ease-out forwards; }
 .retro-spark-5        { animation: spark-5 0.70s ease-out forwards; }
 .retro-spark-6        { animation: spark-6 0.55s ease-out forwards; }
+
+/* ── Win celebration animation ─────────────────────────────────────────────── */
+
+/* Flag slams down from raised position — transformOrigin: bottom left */
+@keyframes flag-plant {
+  0%   { transform: rotate(-115deg) translateY(-28px); }
+  55%  { transform: rotate(14deg)   translateY(8px);   }
+  70%  { transform: rotate(-7deg)   translateY(0);     }
+  84%  { transform: rotate(3deg)    translateY(0);     }
+  100% { transform: rotate(0deg)    translateY(0);     }
+}
+
+/* Character bounce on flag impact */
+@keyframes char-celebrate {
+  0%   { transform: translateY(0) scaleX(1) scaleY(1); }
+  22%  { transform: translateY(-22px) scaleX(1.05) scaleY(1.04); }
+  44%  { transform: translateY(0) scaleX(0.95) scaleY(0.97); }
+  62%  { transform: translateY(-10px) scaleX(1.02) scaleY(1.02); }
+  80%  { transform: translateY(0) scaleX(0.99) scaleY(1); }
+  100% { transform: translateY(0) scaleX(1) scaleY(1); }
+}
+
+/* Dollar bills exploding outward in 8 directions */
+@keyframes bill-fly-1 { 0%{transform:translate(0,0)rotate(0);opacity:1}  100%{transform:translate(-165px,-240px)rotate(-55deg);opacity:0} }
+@keyframes bill-fly-2 { 0%{transform:translate(0,0)rotate(0);opacity:1}  100%{transform:translate(-60px,-275px)rotate(28deg);opacity:0} }
+@keyframes bill-fly-3 { 0%{transform:translate(0,0)rotate(0);opacity:1}  100%{transform:translate(20px,-285px)rotate(-18deg);opacity:0} }
+@keyframes bill-fly-4 { 0%{transform:translate(0,0)rotate(0);opacity:1}  100%{transform:translate(100px,-265px)rotate(42deg);opacity:0} }
+@keyframes bill-fly-5 { 0%{transform:translate(0,0)rotate(0);opacity:1}  100%{transform:translate(175px,-235px)rotate(-38deg);opacity:0} }
+@keyframes bill-fly-6 { 0%{transform:translate(0,0)rotate(0);opacity:1}  100%{transform:translate(-200px,-120px)rotate(60deg);opacity:0} }
+@keyframes bill-fly-7 { 0%{transform:translate(0,0)rotate(0);opacity:1}  100%{transform:translate(210px,-110px)rotate(-62deg);opacity:0} }
+@keyframes bill-fly-8 { 0%{transform:translate(0,0)rotate(0);opacity:1}  100%{transform:translate(-115px,-200px)rotate(35deg);opacity:0} }
+
+/* DEAL WON! banner */
+@keyframes win-popup {
+  0%   { transform: scale(0) rotate(-10deg); opacity: 0; }
+  16%  { transform: scale(1.42) rotate(5deg);  opacity: 1; }
+  30%  { transform: scale(0.86) rotate(-3deg); opacity: 1; }
+  44%  { transform: scale(1.10) rotate(1deg);  opacity: 1; }
+  58%  { transform: scale(1) rotate(0deg);     opacity: 1; }
+  78%  { transform: scale(1) rotate(0deg);     opacity: 1; }
+  90%  { transform: scale(1.04) translateY(-6px);  opacity: 0.8; }
+  100% { transform: scale(0.55) translateY(-28px); opacity: 0; }
+}
+
+/* Win overlay fade in/out */
+@keyframes win-overlay-in  { from { opacity:0 } to { opacity:1 } }
+@keyframes win-overlay-out { from { opacity:1 } to { opacity:0 } }
+
+.flag-plant-anim  { animation: flag-plant 0.78s cubic-bezier(0.34,1.15,0.64,1) forwards; }
+.char-celebrate   { animation: char-celebrate 0.72s ease-in-out; }
+.bill-fly-1       { animation: bill-fly-1 1.30s ease-out forwards; }
+.bill-fly-2       { animation: bill-fly-2 1.50s ease-out forwards; }
+.bill-fly-3       { animation: bill-fly-3 1.20s ease-out forwards; }
+.bill-fly-4       { animation: bill-fly-4 1.40s ease-out forwards; }
+.bill-fly-5       { animation: bill-fly-5 1.35s ease-out forwards; }
+.bill-fly-6       { animation: bill-fly-6 1.10s ease-out forwards; }
+.bill-fly-7       { animation: bill-fly-7 1.25s ease-out forwards; }
+.bill-fly-8       { animation: bill-fly-8 1.45s ease-out forwards; }
+.win-popup-anim   { animation: win-popup 1.75s ease-out forwards; }
