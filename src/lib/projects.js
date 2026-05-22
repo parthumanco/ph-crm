@@ -54,7 +54,10 @@ export async function fetchProjects() {
 export async function upsertProject(p) {
   const now = new Date().toISOString();
   const payload = { ...p, updated_at: now };
-  if (!payload.id) payload.created_at = now;
+  if (!payload.id) {
+    payload.id = crypto.randomUUID();
+    payload.created_at = now;
+  }
   const { data, error } = await supabase
     .from('projects').upsert(payload, { onConflict: 'id' }).select().single();
   if (error) throw new Error(error.message);

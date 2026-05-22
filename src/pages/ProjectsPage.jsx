@@ -199,6 +199,7 @@ export default function ProjectsPage() {
   const [showNewProject, setShowNewProject] = useState(false);
   const [newProj, setNewProj]               = useState({ name: '', client_name: '', contact_name: '', status: 'active', start_date: new Date().toISOString().slice(0, 10), end_date: '', description: '' });
   const [savingProj, setSavingProj]         = useState(false);
+  const [projError, setProjError]           = useState('');
   const [confirmDeleteProj, setConfirmDeleteProj] = useState(false);
 
   // Load projects + won deals
@@ -256,12 +257,15 @@ export default function ProjectsPage() {
   const handleCreateProject = async () => {
     if (!newProj.name.trim()) return;
     setSavingProj(true);
+    setProjError('');
     try {
       const saved = await upsertProject(newProj);
       await loadAll();
       setShowNewProject(false);
       setNewProj({ name: '', client_name: '', contact_name: '', status: 'active', start_date: new Date().toISOString().slice(0, 10), end_date: '', description: '' });
       openProject(saved);
+    } catch (e) {
+      setProjError(e.message || 'Failed to save project. Check Supabase RLS is disabled on the projects table.');
     } finally {
       setSavingProj(false);
     }
@@ -514,8 +518,13 @@ export default function ProjectsPage() {
                   <input type="date" value={newProj.start_date} onChange={e => setNewProj(p => ({ ...p, start_date: e.target.value }))} />
                 </div>
               </div>
+              {projError && (
+                <p style={{ fontSize: 12, color: '#ef4444', margin: 0, padding: '8px 12px', background: '#fef2f2', borderRadius: 6, border: '1px solid #fecaca' }}>
+                  ⚠️ {projError}
+                </p>
+              )}
               <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 4 }}>
-                <button onClick={() => setShowNewProject(false)} style={{ padding: '8px 16px', borderRadius: 6, border: '1px solid var(--border)', background: 'transparent', cursor: 'pointer', fontSize: 13 }}>Cancel</button>
+                <button onClick={() => { setShowNewProject(false); setProjError(''); }} style={{ padding: '8px 16px', borderRadius: 6, border: '1px solid var(--border)', background: 'transparent', cursor: 'pointer', fontSize: 13 }}>Cancel</button>
                 <button className="btn btn-primary" onClick={handleCreateProject} disabled={savingProj || !newProj.name.trim()}>
                   {savingProj ? 'Creating…' : 'Create Project'}
                 </button>
