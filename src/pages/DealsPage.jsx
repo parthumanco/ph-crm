@@ -128,8 +128,7 @@ export default function DealsPage() {
   const [dragOver, setDragOver]     = useState(null);
   const [isDragging, setIsDragging] = useState(false);
   const [trashHover, setTrashHover] = useState(false);
-  const [crumpling, setCrumpling]   = useState(false);
-  const [trashShaking, setTrashShaking] = useState(false);
+  const [lostAnim, setLostAnim]     = useState(null); // null | {dealId, phase:'fly'|'impact'}
   const [showLostPanel, setShowLostPanel] = useState(false);
   const dragDealId = useRef(null);
 
@@ -176,6 +175,33 @@ export default function DealsPage() {
     }
   };
 
+  // ── Retro arcade lose sound ────────────────────────────────────────────────
+  function playLoseSound() {
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      // Descending 4-note "wah wah wah waaah" in square wave
+      const notes = [
+        { freq: 523, t: 0,    dur: 0.13 },
+        { freq: 415, t: 0.14, dur: 0.13 },
+        { freq: 330, t: 0.28, dur: 0.13 },
+        { freq: 196, t: 0.42, dur: 0.35 },
+      ];
+      notes.forEach(({ freq, t, dur }) => {
+        const osc  = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.type = 'square';
+        osc.frequency.setValueAtTime(freq, ctx.currentTime + t);
+        gain.gain.setValueAtTime(0.09, ctx.currentTime + t);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + t + dur);
+        osc.start(ctx.currentTime + t);
+        osc.stop(ctx.currentTime + t + dur + 0.01);
+      });
+      setTimeout(() => ctx.close(), 1400);
+    } catch { /* audio unavailable */ }
+  }
+
   // ── Trash bin (Lost) ──────────────────────────────────────────────────────
   const handleTrashDrop = async (e) => {
     e.preventDefault();
@@ -183,14 +209,19 @@ export default function DealsPage() {
     if (!dealId) return;
     setTrashHover(false);
     setIsDragging(false);
-    setCrumpling(true);
-    setTrashShaking(true);
-    setTimeout(() => setTrashShaking(false), 500);
+    // Phase 1: ball flies in (0–680ms)
+    setLostAnim({ dealId, phase: 'fly' });
+    // Phase 2: impact effects + sound (680ms–2150ms)
+    setTimeout(() => {
+      setLostAnim({ dealId, phase: 'impact' });
+      playLoseSound();
+    }, 680);
+    // Done: update deal, clear animation
     setTimeout(async () => {
-      setCrumpling(false);
+      setLostAnim(null);
       setDeals(prev => prev.map(d => d.id === dealId ? { ...d, stage: 'lost', stage_entered_at: new Date().toISOString() } : d));
       try { await moveStage(dealId, 'lost'); } catch { load(); }
-    }, 580);
+    }, 2150);
   };
 
   // ── Modal handlers ─────────────────────────────────────────────────────────
@@ -313,60 +344,145 @@ export default function DealsPage() {
         )}
       </div>
 
-      {/* Trash bin — always visible, drag to lose or click to view lost deals */}
-      <div
-        onDragOver={e => { if (isDragging) { e.preventDefault(); setTrashHover(true); } }}
-        onDragLeave={() => setTrashHover(false)}
-        onDrop={handleTrashDrop}
-        onClick={() => { if (!isDragging) setShowLostPanel(true); }}
-        style={{
-          position: 'fixed',
-          bottom: 32,
-          right: 36,
-          zIndex: 500,
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          gap: 4,
-          cursor: isDragging ? 'default' : 'pointer',
-        }}
-      >
-        {/* Crumpling paper */}
-        {crumpling && (
-          <div className="crumple-paper" style={{ fontSize: 28, lineHeight: 1, marginBottom: -8 }}>📄</div>
+      {/* ═══ Retro Arcade Trash Bin ═══════════════════════════════════════════ */}
+      <div style={{
+        position: 'fixed', bottom: 28, right: 32, zIndex: 600,
+        display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
+      }}>
+
+        {/* ── Flying paper ball (phase: fly) ── */}
+        {lostAnim?.phase === 'fly' && (
+          <div className="retro-ball-fly" style={{
+            position: 'absolute', bottom: 18, right: 18,
+            pointerEvents: 'none', zIndex: 20,
+          }}>
+            <svg width="28" height="28" viewBox="0 0 28 28" xmlns="http://www.w3.org/2000/svg">
+              <circle cx="14" cy="14" r="12" fill="#e5e7eb" />
+              <circle cx="14" cy="14" r="12" fill="none" stroke="#9ca3af" strokeWidth="1" />
+              {/* Crumple lines */}
+              <line x1="5"  y1="10" x2="14" y2="17" stroke="#6b7280" strokeWidth="1.5" strokeLinecap="round" />
+              <line x1="12" y1="5"  x2="21" y2="17" stroke="#9ca3af" strokeWidth="1"   strokeLinecap="round" />
+              <line x1="7"  y1="18" x2="18" y2="23" stroke="#9ca3af" strokeWidth="1"   strokeLinecap="round" />
+              <line x1="16" y1="7"  x2="23" y2="13" stroke="#6b7280" strokeWidth="1"   strokeLinecap="round" />
+              <line x1="4"  y1="15" x2="10" y2="20" stroke="#9ca3af" strokeWidth="1"   strokeLinecap="round" />
+              {/* Highlight */}
+              <circle cx="9" cy="9" r="3.5" fill="rgba(255,255,255,0.55)" />
+            </svg>
+          </div>
         )}
-        {/* Bin + badge */}
-        <div style={{ position: 'relative' }}>
+
+        {/* ── Impact effects (phase: impact) ── */}
+        {lostAnim?.phase === 'impact' && (<>
+          {/* Shockwave ring */}
+          <div className="retro-impact-ring" style={{
+            position: 'absolute', bottom: 8, right: 8,
+            width: 50, height: 50,
+            border: '4px solid #ef4444',
+            borderRadius: '50%',
+            pointerEvents: 'none', zIndex: 20,
+          }} />
+          {/* Sparks — pixel squares in 6 arcade colors */}
+          {['#ef4444','#f59e0b','#10b981','#3b82f6','#ec4899','#f97316'].map((color, i) => (
+            <div key={i} className={`retro-spark-${i + 1}`} style={{
+              position: 'absolute', bottom: 22, right: 22,
+              width: 8, height: 8,
+              background: color,
+              borderRadius: 1,
+              pointerEvents: 'none', zIndex: 20,
+            }} />
+          ))}
+          {/* DEAL LOST! popup */}
+          <div className="retro-popup-anim" style={{
+            position: 'absolute',
+            bottom: 95, left: '50%', /* retro-popup-anim handles the translateX(-50%) */
+            pointerEvents: 'none', zIndex: 30,
+            background: '#0f0a1e',
+            border: '3px solid #ef4444',
+            borderRadius: 3,
+            padding: '11px 18px 13px',
+            boxShadow: [
+              '4px 4px 0 #7f1d1d',
+              '0 0 24px rgba(239,68,68,0.5)',
+              'inset 0 0 0 1px #450a0a',
+            ].join(', '),
+          }}>
+            <div style={{
+              fontFamily: '"Press Start 2P", "Courier New", monospace',
+              fontSize: 13,
+              color: '#fca5a5',
+              textShadow: '0 0 10px rgba(239,68,68,0.9), 2px 2px 0 #450a0a',
+              textAlign: 'center',
+              letterSpacing: '0.04em',
+              lineHeight: 1.7,
+            }}>
+              DEAL<br />LOST!
+            </div>
+            <div style={{
+              fontFamily: '"Press Start 2P", "Courier New", monospace',
+              fontSize: 6,
+              color: '#4b5563',
+              textAlign: 'center',
+              marginTop: 6,
+              letterSpacing: '0.06em',
+            }}>
+              CONTINUE?
+            </div>
+          </div>
+        </>)}
+
+        {/* ── Bin (drag target + click to view) ── */}
+        <div
+          onDragOver={e => { if (isDragging) { e.preventDefault(); setTrashHover(true); } }}
+          onDragLeave={() => setTrashHover(false)}
+          onDrop={handleTrashDrop}
+          onClick={() => { if (!isDragging && !lostAnim) setShowLostPanel(true); }}
+          style={{ cursor: isDragging ? 'default' : 'pointer', position: 'relative', userSelect: 'none' }}
+        >
           <div
-            className={trashHover ? 'trash-bin-hover' : trashShaking ? 'trash-bin-shake' : ''}
+            className={
+              lostAnim?.phase === 'impact' ? 'retro-bin-bounce'
+              : trashHover ? 'trash-bin-hover'
+              : ''
+            }
             style={{
-              fontSize: isDragging ? 48 : 36,
+              fontSize: isDragging || lostAnim ? 52 : 38,
               lineHeight: 1,
-              filter: trashHover ? 'drop-shadow(0 0 12px rgba(239,68,68,0.6))' : 'drop-shadow(0 2px 6px rgba(0,0,0,0.15))',
+              filter: trashHover
+                ? 'drop-shadow(0 0 14px rgba(239,68,68,0.7))'
+                : lostAnim?.phase === 'impact'
+                  ? 'drop-shadow(0 0 18px rgba(239,68,68,0.9))'
+                  : 'drop-shadow(0 2px 6px rgba(0,0,0,0.15))',
               transition: 'font-size .2s, filter .2s',
-              opacity: isDragging ? 1 : 0.7,
+              opacity: isDragging || lostAnim ? 1 : 0.72,
             }}
           >
             🗑️
           </div>
-          {lostDeals.length > 0 && !isDragging && (
-            <span style={{ position: 'absolute', top: -4, right: -6, fontSize: 10, fontWeight: 800, background: '#ef4444', color: '#fff', borderRadius: 10, padding: '1px 5px', minWidth: 16, textAlign: 'center' }}>
+          {/* Lost count badge */}
+          {lostDeals.length > 0 && !isDragging && !lostAnim && (
+            <span style={{
+              position: 'absolute', top: -5, right: -7,
+              fontSize: 10, fontWeight: 800,
+              background: '#ef4444', color: '#fff',
+              borderRadius: 10, padding: '1px 5px',
+              minWidth: 17, textAlign: 'center',
+              boxShadow: '0 1px 4px rgba(239,68,68,0.4)',
+            }}>
               {lostDeals.length}
             </span>
           )}
         </div>
+
+        {/* Label */}
         <span style={{
-          fontSize: 10,
-          fontWeight: 700,
+          fontSize: 10, fontWeight: 700,
           color: trashHover ? '#ef4444' : 'var(--text-muted)',
           background: trashHover ? '#fef2f2' : 'var(--surface)',
           border: `1px solid ${trashHover ? '#fca5a5' : 'var(--border)'}`,
-          borderRadius: 6,
-          padding: '2px 7px',
-          transition: 'all .2s',
-          whiteSpace: 'nowrap',
+          borderRadius: 6, padding: '2px 7px',
+          transition: 'all .2s', whiteSpace: 'nowrap',
         }}>
-          {isDragging ? (trashHover ? 'Drop to lose' : 'Drag here') : `${lostDeals.length} lost`}
+          {lostAnim ? '…' : isDragging ? (trashHover ? 'Drop to lose' : 'Drag here') : `${lostDeals.length} lost`}
         </span>
       </div>
 
