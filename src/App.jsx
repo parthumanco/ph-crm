@@ -13,7 +13,7 @@ import { loadIcp, DEFAULT_ICP } from './lib/settings';
 const NAV = [
   { id: 'signals',  label: 'Signal Watch',  icon: '🔭' },
   { id: 'pipeline', label: 'Pipeline',       icon: '🔥' },
-  { id: 'deals',    label: 'Deals',          icon: '💼' },
+  { id: 'deals',    label: 'Deals',          icon: '💵' },
   { id: 'projects', label: 'Projects',       icon: '🗂️'  },
   { id: 'discover', label: 'Discover',       icon: '🧭' },
   { id: 'report',   label: 'Weekly Report',  icon: '📋' },
