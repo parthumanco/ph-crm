@@ -363,7 +363,7 @@ function ProjectCard({ project, tasks, files, onClick, onUpload, onImport, uploa
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 
-export default function ProjectsPage({ goHomeRef }) {
+export default function ProjectsPage({ goHomeRef, refreshKey = 0 }) {
   const [view, setView]             = useState('list');   // 'list' | 'detail'
   const [projects, setProjects]     = useState([]);
   const [allTasks, setAllTasks]     = useState({});       // { projectId: tasks[] }
@@ -440,7 +440,7 @@ export default function ProjectsPage({ goHomeRef }) {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [refreshKey]);
 
   useEffect(() => { loadAll(); }, [loadAll]);
 
@@ -1301,14 +1301,16 @@ export default function ProjectsPage({ goHomeRef }) {
                   {/* Expanded: inline edit fields + tasks */}
                   {isOpen && (
                     <div>
-                      {/* Edit fields row */}
-                      <div style={{ display: 'flex', gap: 12, padding: '10px 16px 10px 48px', borderBottom: '1px solid var(--border-light)', flexWrap: 'wrap', background: 'var(--bg)' }}>
-                        <div>
-                          <Lbl>Status</Lbl>
-                          <select value={ms.status} onChange={e => { const u = { ...ms, status: e.target.value }; setMilestones(p => p.map(m => m.id === ms.id ? u : m)); upsertMilestone(u); }} style={{ fontSize: 12, padding: '3px 8px', width: 'auto' }}>
-                            {MILESTONE_STATUSES.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
-                          </select>
+                      {/* Row 1 – Description */}
+                      {ms.description && (
+                        <div style={{ padding: '10px 16px 10px 48px', borderBottom: '1px solid var(--border-light)', background: 'var(--bg)' }}>
+                          <Lbl>Description</Lbl>
+                          <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.55 }}>{ms.description}</div>
                         </div>
+                      )}
+
+                      {/* Row 2 – Assigned to · Start · Due */}
+                      <div style={{ display: 'flex', gap: 16, padding: '10px 16px 10px 48px', borderBottom: '1px solid var(--border-light)', background: 'var(--bg)', alignItems: 'flex-end', flexWrap: 'wrap' }}>
                         <div>
                           <Lbl>Assigned to</Lbl>
                           <select value={ms.assigned_to || ''} onChange={e => { const u = { ...ms, assigned_to: e.target.value }; setMilestones(p => p.map(m => m.id === ms.id ? u : m)); upsertMilestone(u); }} style={{ fontSize: 12, padding: '3px 8px', width: 'auto' }}>
@@ -1324,12 +1326,27 @@ export default function ProjectsPage({ goHomeRef }) {
                           <Lbl>Due</Lbl>
                           <input type="date" value={ms.due_date || ''} onChange={e => { const u = { ...ms, due_date: e.target.value }; setMilestones(p => p.map(m => m.id === ms.id ? u : m)); upsertMilestone(u); }} style={{ fontSize: 12, padding: '3px 8px', width: 'auto' }} />
                         </div>
-                        {ms.description && (
-                          <div style={{ flex: 1, minWidth: 200 }}>
-                            <Lbl>Description</Lbl>
-                            <div style={{ fontSize: 12, color: 'var(--text-muted)', paddingTop: 6 }}>{ms.description}</div>
-                          </div>
-                        )}
+                      </div>
+
+                      {/* Row 3 – Status buttons */}
+                      <div style={{ display: 'flex', gap: 6, padding: '8px 16px 8px 48px', borderBottom: '1px solid var(--border-light)', background: 'var(--bg)', alignItems: 'center', flexWrap: 'wrap' }}>
+                        <Lbl>Status</Lbl>
+                        {MILESTONE_STATUSES.map(s => {
+                          const active = ms.status === s.id;
+                          return (
+                            <button
+                              key={s.id}
+                              onClick={() => { const u = { ...ms, status: s.id }; setMilestones(p => p.map(m => m.id === ms.id ? u : m)); upsertMilestone(u); }}
+                              style={{
+                                fontSize: 11, fontWeight: 700, padding: '4px 12px', borderRadius: 20, cursor: 'pointer',
+                                border: `1.5px solid ${s.color}`,
+                                background: active ? s.color : 'transparent',
+                                color: active ? '#fff' : s.color,
+                                transition: 'all .15s',
+                              }}
+                            >{s.label}</button>
+                          );
+                        })}
                       </div>
 
                       {/* Milestone Files */}

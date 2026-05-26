@@ -58,7 +58,7 @@ function fundingColor(stage) {
   return '#94a3b8';
 }
 
-export default function DiscoverPage({ icp }) {
+export default function DiscoverPage({ icp, refreshKey = 0 }) {
   const [criteria, setCriteria] = useState('');
   const [locationFilter, setLocationFilter] = useState('');
   const [fundingFilter, setFundingFilter] = useState('');
@@ -83,7 +83,7 @@ export default function DiscoverPage({ icp }) {
       setExistingNames(new Set((data || []).map(c => c.name?.toLowerCase().trim())));
     }
     loadExisting();
-  }, []);
+  }, [refreshKey]);
 
   function buildFullCriteria() {
     let parts = [criteria.trim()];

@@ -121,7 +121,7 @@ function KanbanColumn({ stage, deals, onCardClick, onDrop, isDragOver, onDragOve
   );
 }
 
-export default function DealsPage() {
+export default function DealsPage({ refreshKey = 0 }) {
   const [deals, setDeals]           = useState([]);
   const [loading, setLoading]       = useState(true);
   const [selectedDeal, setSelectedDeal] = useState(null);
@@ -145,7 +145,7 @@ export default function DealsPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [refreshKey]);
 
   useEffect(() => { load(); }, [load]);
 

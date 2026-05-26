@@ -132,7 +132,7 @@ function parseCSV(text) {
   }).filter(Boolean);
 }
 
-export default function SignalWatchPage({ onNavigate, icp }) {
+export default function SignalWatchPage({ onNavigate, icp, refreshKey = 0 }) {
   // companies: array of {id (db uuid), _tempId, name, website, hq, contacts, ...scan fields}
   const [companies, setCompanies]     = useState([]);
   const [scanning, setScanning]       = useState({});
@@ -231,7 +231,7 @@ export default function SignalWatchPage({ onNavigate, icp }) {
       }
     }
     load();
-  }, []);
+  }, [refreshKey]);
 
   // ── CSV import ──────────────────────────────────────────────────────────────
 

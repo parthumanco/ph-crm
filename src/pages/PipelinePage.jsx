@@ -34,7 +34,7 @@ function nextTouchDue(entryTouches) {
   return `In ${7 - days}d`;
 }
 
-export default function PipelinePage({ icp = {} }) {
+export default function PipelinePage({ icp = {}, refreshKey = 0 }) {
   const [entries, setEntries]     = useState([]);
   const [companies, setCompanies] = useState({});
   const [touches, setTouches]     = useState([]);
@@ -77,7 +77,7 @@ export default function PipelinePage({ icp = {} }) {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [refreshKey]);
 
   useEffect(() => { load(); }, [load]);
 

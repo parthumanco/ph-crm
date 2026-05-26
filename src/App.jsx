@@ -46,13 +46,21 @@ function PageSlot({ active, children }) {
 }
 
 export default function App() {
-  const [page, setPage] = useState('projects');
-  const [icp, setIcp]   = useState(DEFAULT_ICP);
-  const projectsGoHome  = useRef(null); // ProjectsPage registers its goHome fn here
+  const [page, setPage]         = useState('projects');
+  const [pageKeys, setPageKeys] = useState({});
+  const [icp, setIcp]           = useState(DEFAULT_ICP);
+  const projectsGoHome          = useRef(null); // ProjectsPage registers its goHome fn here
 
   useEffect(() => {
     loadIcp().then(loaded => setIcp(loaded));
   }, []);
+
+  // Increment the refresh key for a page every time the user navigates to it,
+  // so each page's load useEffect re-runs on every tab switch.
+  function handleSetPage(newPage) {
+    setPageKeys(prev => ({ ...prev, [newPage]: (prev[newPage] || 0) + 1 }));
+    setPage(newPage);
+  }
 
   const pt = PAGE_TITLES[page] || {};
 
@@ -62,7 +70,7 @@ export default function App() {
       <div style={{ position: 'fixed', top: 0, left: 0, right: 0, height: 3, background: 'var(--accent)', zIndex: 200 }} />
 
       <aside className="sidebar">
-        <div className="sidebar-logo" style={{ cursor: 'pointer' }} onClick={() => setPage('projects')}>
+        <div className="sidebar-logo" style={{ cursor: 'pointer' }} onClick={() => handleSetPage('projects')}>
           <img src="/ph-logo.svg" alt="Part Human" className="sidebar-logo-img" />
           <div className="sidebar-logo-tag">Sales Intelligence</div>
         </div>
@@ -73,7 +81,7 @@ export default function App() {
               <button
                 key={n.id}
                 className={`nav-item${page === n.id ? ' active' : ''}`}
-                onClick={() => setPage(n.id)}
+                onClick={() => handleSetPage(n.id)}
               >
                 <span className="nav-icon">{n.icon}</span>
                 {n.label}
@@ -88,7 +96,7 @@ export default function App() {
         {/* Unified page header driven by page state */}
         <div className="app-page-header">
           <button
-            onClick={() => { setPage('projects'); projectsGoHome.current?.(); }}
+            onClick={() => { handleSetPage('projects'); projectsGoHome.current?.(); }}
             style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', textAlign: 'left' }}
           >
             <h2 className="app-page-title">{pt.title}</h2>
@@ -96,25 +104,25 @@ export default function App() {
           </button>
         </div>
         <PageSlot active={page === 'signals'}>
-          <SignalWatchPage onNavigate={setPage} icp={icp} />
+          <SignalWatchPage onNavigate={handleSetPage} icp={icp} refreshKey={pageKeys.signals || 0} />
         </PageSlot>
         <PageSlot active={page === 'pipeline'}>
-          <PipelinePage icp={icp} />
+          <PipelinePage icp={icp} refreshKey={pageKeys.pipeline || 0} />
         </PageSlot>
         <PageSlot active={page === 'deals'}>
-          <DealsPage />
+          <DealsPage refreshKey={pageKeys.deals || 0} />
         </PageSlot>
         <PageSlot active={page === 'support'}>
           <SupportPage />
         </PageSlot>
         <PageSlot active={page === 'projects'}>
-          <ProjectsPage goHomeRef={projectsGoHome} />
+          <ProjectsPage goHomeRef={projectsGoHome} refreshKey={pageKeys.projects || 0} />
         </PageSlot>
         <PageSlot active={page === 'discover'}>
-          <DiscoverPage icp={icp} />
+          <DiscoverPage icp={icp} refreshKey={pageKeys.discover || 0} />
         </PageSlot>
         <PageSlot active={page === 'report'}>
-          <WeeklyReportPage icp={icp} />
+          <WeeklyReportPage icp={icp} refreshKey={pageKeys.report || 0} />
         </PageSlot>
         <PageSlot active={page === 'chat'}>
           <ChatPage />

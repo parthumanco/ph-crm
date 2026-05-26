@@ -21,7 +21,7 @@ function formatDate(d) {
   return d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
 }
 
-export default function WeeklyReportPage({ icp = DEFAULT_ICP }) {
+export default function WeeklyReportPage({ icp = DEFAULT_ICP, refreshKey = 0 }) {
   const [entries, setEntries]       = useState([]);
   const [companies, setCompanies]   = useState({});
   const [touches, setTouches]       = useState([]);
@@ -56,7 +56,7 @@ export default function WeeklyReportPage({ icp = DEFAULT_ICP }) {
     } catch (e) {
       console.error('WeeklyReport load error:', e);
     }
-  }, []);
+  }, [refreshKey]);
 
   useEffect(() => { load(); }, [load]);
 
