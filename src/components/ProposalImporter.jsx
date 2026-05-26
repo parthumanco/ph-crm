@@ -9,6 +9,7 @@ export default function ProposalImporter({ projectId, projectStart, onImported, 
   const [text, setText]           = useState('');
   const [gdocUrl, setGdocUrl]     = useState('');
   const [gdocName, setGdocName]   = useState('');
+  const [gdocText, setGdocText]   = useState(''); // fetched plain text, saved for handleConfirm
   const [pdfFile, setPdfFile]     = useState(null);      // File object
   const [pdfBase64, setPdfBase64] = useState(null);      // base64 string
   const [startDate, setStartDate] = useState(projectStart || today);
@@ -43,20 +44,13 @@ export default function ProposalImporter({ projectId, projectStart, onImported, 
     const id = gdocIdFromUrl(url);
     if (!id) throw new Error('Could not read a Google Doc ID from that URL. Make sure you copied the full link.');
 
-    const [textRes, htmlRes] = await Promise.all([
-      fetch(`https://docs.google.com/document/d/${id}/export?format=txt`),
-      fetch(`https://docs.google.com/document/d/${id}/export?format=html`),
-    ]);
-    if (!textRes.ok) throw new Error('Could not fetch the Google Doc. Make sure the doc is shared as "Anyone with the link can view".');
+    const res = await fetch(`https://docs.google.com/document/d/${id}/export?format=txt`);
+    if (!res.ok) throw new Error('Could not fetch the Google Doc. Make sure the doc is shared as "Anyone with the link can view".');
 
-    const text = await textRes.text();
+    const text = await res.text();
 
-    let title = 'Google Doc';
-    if (htmlRes.ok) {
-      const html = await htmlRes.text();
-      const m = html.match(/<title[^>]*>([^<]+)<\/title>/i);
-      if (m) title = m[1].replace(/ - Google Docs$/i, '').trim();
-    }
+    // Use the first non-empty line as the document title — always reliable
+    const title = text.split('\n').map(l => l.trim()).find(l => l.length > 0) || 'Google Doc';
 
     return { text, title };
   }
@@ -73,6 +67,7 @@ export default function ProposalImporter({ projectId, projectStart, onImported, 
       if (inputMode === 'gdoc') {
         const { text: fetched, title } = await fetchGdocText(gdocUrl);
         parseText = fetched;
+        setGdocText(fetched);  // persist for handleConfirm
         setGdocName(title);
       }
       const result = await parseProposalWithAI(
@@ -152,12 +147,16 @@ export default function ProposalImporter({ projectId, projectStart, onImported, 
   // ── Step 3: confirm → pass back to parent ────────────────────────────────
   const handleConfirm = async () => {
     setStep('saving');
-    let proposalText      = inputMode === 'text' ? text : null;
+    // proposalText: use stored gdoc text, pasted text, or extract from PDF
+    let proposalText =
+      inputMode === 'text' ? text :
+      inputMode === 'gdoc' ? gdocText :
+      null;
+
     let proposalPageHints = null;
 
-    // Build page hints directly from what Claude already identified during parsing.
-    // parsed.milestones[].tasks[].page is the page Claude pulled each task from.
-    if (parsed) {
+    // Build page hints from what Claude recorded during parsing (PDF only — gdocs have no page numbers)
+    if (parsed && inputMode === 'pdf') {
       const hints = {};
       (parsed.milestones || []).forEach(m => {
         (m.tasks || []).forEach(t => {
@@ -167,7 +166,7 @@ export default function ProposalImporter({ projectId, projectStart, onImported, 
       if (Object.keys(hints).length) proposalPageHints = hints;
     }
 
-    // For PDFs: also extract the full text for the text-excerpt panel
+    // For PDFs: also extract full text for the text-excerpt panel
     if (inputMode === 'pdf' && pdfBase64) {
       try {
         const { text: extracted } = await extractPdfTextAndPages(pdfBase64);
@@ -185,7 +184,7 @@ export default function ProposalImporter({ projectId, projectStart, onImported, 
       proposalPdfFile: inputMode === 'pdf' ? pdfFile : null,
       proposalPageHints,
       gdocUrl:         inputMode === 'gdoc' ? gdocUrl : null,
-      gdocName:        inputMode === 'gdoc' ? (gdocName || 'Google Doc') : null,
+      gdocName:        inputMode === 'gdoc' ? gdocName : null,
     });
   };
 
