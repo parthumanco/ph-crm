@@ -380,6 +380,13 @@ export default function ProjectsPage() {
     setLoadingDetail(true);
     setExpanded({});
     setEditingMs(null);
+    setEditingTask(null);
+    setConfirmDeleteTask(null);
+    setNewTaskMs(null);
+    setNewTaskTitle('');
+    setProposalPanel(null);
+    setDeletedTasks({});
+    setShowArchivedMs({});
     setMilestones([]);
     setTasks([]);
     setProjectFiles([]);
@@ -447,10 +454,16 @@ export default function ProjectsPage() {
   // ── Archive / restore project ─────────────────────────────────────────────
   const handleArchiveProject = async () => {
     if (!confirmDeleteProj) { setConfirmDeleteProj(true); return; }
-    await archiveProject(activeProject.id);
-    setProjects(prev => prev.filter(p => p.id !== activeProject.id));
-    setView('list');
-    setConfirmDeleteProj(false);
+    try {
+      await archiveProject(activeProject.id);
+      setProjects(prev => prev.filter(p => p.id !== activeProject.id));
+      setView('list');
+    } catch (e) {
+      console.error('Archive failed:', e);
+      alert('Failed to archive project. Please try again.');
+    } finally {
+      setConfirmDeleteProj(false);
+    }
   };
 
   const handleLoadArchived = async () => {
@@ -529,16 +542,20 @@ export default function ProjectsPage() {
 
   const handleDeleteTask = async (id) => {
     const task = tasks.find(t => t.id === id);
-    await deleteProjectTask(id);
-    const updated = tasks.filter(t => t.id !== id);
-    setTasks(updated);
-    setAllTasks(prev => ({ ...prev, [activeProject.id]: updated }));
-    // Stash for in-session restore
-    if (task) {
-      setDeletedTasks(prev => ({
-        ...prev,
-        [task.milestone_id]: [{ ...task, deleted_at: new Date().toISOString() }, ...(prev[task.milestone_id] || [])],
-      }));
+    try {
+      await deleteProjectTask(id);
+      const updated = tasks.filter(t => t.id !== id);
+      setTasks(updated);
+      setAllTasks(prev => ({ ...prev, [activeProject.id]: updated }));
+      // Stash for in-session restore
+      if (task) {
+        setDeletedTasks(prev => ({
+          ...prev,
+          [task.milestone_id]: [{ ...task, deleted_at: new Date().toISOString() }, ...(prev[task.milestone_id] || [])],
+        }));
+      }
+    } catch (e) {
+      console.error('Delete task failed:', e);
     }
   };
 
@@ -915,7 +932,13 @@ export default function ProjectsPage() {
   // ═════════════════════════════════════════════════════════════════════════
   const pct        = projectProgress(tasks);
   const pColor     = projColor(activeProject.status);
-  const msForTasks = id => tasks.filter(t => t.milestone_id === id);
+  // Pre-group tasks by milestone once — O(T) — instead of O(M×T) per render
+  const tasksByMs  = tasks.reduce((acc, t) => {
+    if (!acc[t.milestone_id]) acc[t.milestone_id] = [];
+    acc[t.milestone_id].push(t);
+    return acc;
+  }, {});
+  const msForTasks = id => tasksByMs[id] || [];
 
   return (
     <>
@@ -968,7 +991,7 @@ export default function ProjectsPage() {
               <Lbl>Status</Lbl>
               <select
                 value={activeProject.status}
-                onChange={e => { setActiveProject(p => ({ ...p, status: e.target.value })); setTimeout(handleSaveProject, 50); }}
+                onChange={e => { const u = { ...activeProject, status: e.target.value }; setActiveProject(u); upsertProject(u); }}
                 style={{ fontSize: 12, padding: '4px 8px', width: 'auto', color: pColor, fontWeight: 700 }}
               >
                 {PROJECT_STATUSES.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
@@ -1030,11 +1053,14 @@ export default function ProjectsPage() {
           )}
 
           {/* ── Project Files ─────────────────────────────────────── */}
-          {projectFiles.filter(f => !f.milestone_id && !f.task_id).length > 0 && (
+          {(() => {
+            const generalFiles = projectFiles.filter(f => !f.milestone_id && !f.task_id);
+            if (!generalFiles.length) return null;
+            return (
             <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: '16px 20px', marginBottom: 20 }}>
               <div style={{ fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--text-faint)', marginBottom: 10 }}>Project Documents</div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                {projectFiles.filter(f => !f.milestone_id && !f.task_id).map(f => (
+                {generalFiles.map(f => (
                   <div key={f.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 10px', borderRadius: 6, background: 'var(--bg)', border: '1px solid var(--border-light)' }}>
                     <span style={{ fontSize: 18, flexShrink: 0 }}>{fileIcon(f.mime_type)}</span>
                     <a href={f.url} target="_blank" rel="noopener noreferrer" style={{ flex: 1, fontSize: 13, fontWeight: 600, color: 'var(--accent)', textDecoration: 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</a>
@@ -1044,11 +1070,12 @@ export default function ProjectsPage() {
                 ))}
               </div>
             </div>
-          )}
+            );
+          })()}
 
           {/* ── Milestones & Tasks ─────────────────────────────────── */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {milestones.map((ms, msi) => {
+            {milestones.map((ms) => {
               const msTasks   = msForTasks(ms.id);
               const msPct     = projectProgress(msTasks);
               const isOpen    = expanded[ms.id];
@@ -1340,7 +1367,7 @@ export default function ProjectsPage() {
                         </div>
                       ) : (
                         <button
-                          onClick={() => { setNewTaskMs(ms.id); setNewTaskTitle(''); }}
+                          onClick={() => { setNewTaskMs(ms.id); setNewTaskTitle(''); setEditingTask(null); setConfirmDeleteTask(null); }}
                           style={{ width: '100%', padding: '8px 16px 8px 48px', background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, color: 'var(--text-faint)', textAlign: 'left' }}
                         >
                           + Add task

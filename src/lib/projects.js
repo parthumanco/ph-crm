@@ -27,8 +27,10 @@ export function daysBetween(a, b) {
 }
 
 export function addDays(dateStr, n) {
+  if (!dateStr) return new Date().toISOString().slice(0, 10);
   const d = new Date(dateStr);
-  d.setDate(d.getDate() + n);
+  if (isNaN(d.getTime())) return new Date().toISOString().slice(0, 10);
+  d.setDate(d.getDate() + (Number(n) || 0));
   return d.toISOString().slice(0, 10);
 }
 
@@ -171,9 +173,10 @@ export async function restoreProjectTask(id, taskData = null) {
   const { data, error } = await supabase
     .from('project_tasks').update({ deleted_at: null }).eq('id', id).select().single();
 
-  if (data) return data;
+  // Successful restore
+  if (data && !error) return data;
 
-  // Row was hard-deleted (deleted_at column didn't exist yet) — re-insert from local state
+  // Row was hard-deleted or column missing — re-insert from local state
   if (taskData) {
     // eslint-disable-next-line no-unused-vars
     const { deleted_at, ...clean } = taskData;
