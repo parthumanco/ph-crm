@@ -5,7 +5,7 @@ import {
   fetchProjectTasks, upsertProjectTask, toggleTask, deleteProjectTask,
   fetchProjectFiles, uploadProjectFile, deleteProjectFile, addExternalLink,
   restoreProjectTask,
-  bulkInsertMilestones, bulkInsertTasks, indexTaskPages,
+  bulkInsertMilestones, bulkInsertTasks, parseProposalWithAI,
   PROJECT_STATUSES, MILESTONE_STATUSES, OWNERS,
   projColor, projLabel, msColor, msLabel,
   daysBetween, addDays, projectProgress, fmtDate,
@@ -564,7 +564,7 @@ export default function ProjectsPage() {
   };
 
   // ── Hard delete (permanent) ───────────────────────────────────────────────
-  // Re-index page positions by fetching the stored PDF and asking Claude directly
+  // Re-index: re-parse the stored PDF so Claude maps tasks → pages in one pass
   const handleReindexPages = async () => {
     const pdfUrl = activeProject.proposal_pdf_url;
     if (!pdfUrl || reindexing) return;
@@ -580,23 +580,24 @@ export default function ProjectsPage() {
         r.readAsDataURL(blob);
       });
 
-      // Collect every task title in the project
-      const allTaskTitles = milestones.flatMap(ms =>
-        (tasks.filter(t => t.milestone_id === ms.id)).map(t => t.title)
-      );
+      // Re-parse — Claude reads the PDF and returns page numbers for every task
+      const parsed = await parseProposalWithAI('', activeProject.start_date || new Date().toISOString().slice(0,10), base64);
 
-      console.log('[Re-index] task titles sent:', allTaskTitles);
-      const pageIndex = await indexTaskPages(base64, allTaskTitles);
-      console.log('[Re-index] page index returned:', pageIndex);
-      if (!Object.keys(pageIndex).length) throw new Error('No pages returned');
+      const hints = {};
+      (parsed.milestones || []).forEach(m => {
+        (m.tasks || []).forEach(t => {
+          if (t.title && t.page != null) hints[t.title] = t.page;
+        });
+      });
+      if (!Object.keys(hints).length) throw new Error('No page numbers returned — try re-importing the proposal');
 
-      // Save directly to DB + update local state
-      await upsertProject({ ...activeProject, proposal_page_hints: pageIndex });
-      setActiveProject(prev => ({ ...prev, proposal_page_hints: pageIndex }));
-      setProjects(prev => prev.map(p => p.id === activeProject.id
-        ? { ...p, proposal_page_hints: pageIndex } : p));
+      // Save to DB + update local state
+      await upsertProject({ ...activeProject, proposal_page_hints: hints });
+      setActiveProject(prev => ({ ...prev, proposal_page_hints: hints }));
+      setProjects(prev => prev.map(p => p.id === activeProject.id ? { ...p, proposal_page_hints: hints } : p));
     } catch (e) {
       console.error('Re-index failed:', e.message);
+      alert('Re-index failed: ' + e.message);
     } finally {
       setReindexing(false);
     }
@@ -1674,12 +1675,8 @@ export default function ProjectsPage() {
           pageNum = hints[proposalPanel.task.title]
             ?? findPageHint(hints, proposalPanel.task.title)
             ?? null;
-          console.log('[Proposal] hints format=indexed, task=', proposalPanel.task.title, 'pageNum=', pageNum, 'hints=', hints);
         } else if (Array.isArray(hints) && highlightIdx >= 0) {
           pageNum = hints[highlightIdx] || null;
-          console.log('[Proposal] hints format=legacy-array, highlightIdx=', highlightIdx, 'pageNum=', pageNum);
-        } else {
-          console.log('[Proposal] no hints stored. hints=', hints);
         }
 
         const searchParam = pdfSearchParam(proposalPanel.task.title);

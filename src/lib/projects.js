@@ -357,9 +357,10 @@ Return ONLY a valid JSON object with no markdown, no explanation, no code fences
       "title": "Phase name",
       "description": "What this phase delivers",
       "duration_days": 14,
+      "page": 3,
       "assigned_to": "",
       "tasks": [
-        { "title": "Specific deliverable or action", "duration_days": 3, "assigned_to": "" }
+        { "title": "Specific deliverable or action", "duration_days": 3, "page": 4, "assigned_to": "" }
       ]
     }
   ]
@@ -371,6 +372,7 @@ Rules:
 - Tasks within a milestone are concrete, actionable deliverables
 - Estimate realistic durations based on the described work
 - assigned_to fields should be blank strings
+- "page" is the PDF page number where the section describing that milestone or task appears — the dedicated section, NOT a table of contents or overview list. If the proposal is plain text (not a PDF), omit page fields or set them to null
 - Return ONLY the raw JSON object, nothing else`;
 
   // Build content array — PDF document block or plain text

@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react';
-import { parseProposalWithAI, extractPdfTextAndPages, indexTaskPages, addDays, OWNERS } from '../lib/projects';
+import { parseProposalWithAI, extractPdfTextAndPages, addDays, OWNERS } from '../lib/projects';
 
 const today = new Date().toISOString().slice(0, 10);
 
@@ -117,22 +117,25 @@ export default function ProposalImporter({ projectId, projectStart, onImported, 
     let proposalText      = inputMode === 'text' ? text : null;
     let proposalPageHints = null;
 
+    // Build page hints directly from what Claude already identified during parsing.
+    // parsed.milestones[].tasks[].page is the page Claude pulled each task from.
+    if (parsed) {
+      const hints = {};
+      (parsed.milestones || []).forEach(m => {
+        (m.tasks || []).forEach(t => {
+          if (t.title && t.page != null) hints[t.title] = t.page;
+        });
+      });
+      if (Object.keys(hints).length) proposalPageHints = hints;
+    }
+
+    // For PDFs: also extract the full text for the text-excerpt panel
     if (inputMode === 'pdf' && pdfBase64) {
       try {
-        // Collect every task title from the confirmed timeline
-        const taskTitles = preview.flatMap(m => m.tasks.map(t => t.title));
-
-        // Run text extraction and direct page indexing in parallel
-        const [{ text: extracted }, pageIndex] = await Promise.all([
-          extractPdfTextAndPages(pdfBase64),
-          indexTaskPages(pdfBase64, taskTitles),
-        ]);
-
+        const { text: extracted } = await extractPdfTextAndPages(pdfBase64);
         proposalText = extracted || null;
-        // pageIndex is { "Task title": pageNumber } — direct lookup, no fuzzy matching needed
-        proposalPageHints = Object.keys(pageIndex).length ? pageIndex : null;
       } catch (e) {
-        console.warn('PDF extraction/indexing failed:', e.message);
+        console.warn('PDF text extraction failed:', e.message);
       }
     }
 
