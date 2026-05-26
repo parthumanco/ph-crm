@@ -61,7 +61,7 @@ export default function App() {
       <div style={{ position: 'fixed', top: 0, left: 0, right: 0, height: 3, background: 'var(--accent)', zIndex: 200 }} />
 
       <aside className="sidebar">
-        <div className="sidebar-logo">
+        <div className="sidebar-logo" style={{ cursor: 'pointer' }} onClick={() => setPage('projects')}>
           <img src="/ph-logo.svg" alt="Part Human" className="sidebar-logo-img" />
           <div className="sidebar-logo-tag">Sales Intelligence</div>
         </div>
@@ -85,11 +85,14 @@ export default function App() {
 
       <main className="main-content">
         {/* Unified page header driven by page state */}
-        <div className="app-page-header" style={{ cursor: 'pointer' }} onClick={() => setPage('projects')}>
-          <div>
+        <div className="app-page-header">
+          <button
+            onClick={() => setPage('projects')}
+            style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', textAlign: 'left' }}
+          >
             <h2 className="app-page-title">{pt.title}</h2>
             <p className="app-page-sub">{pt.sub}</p>
-          </div>
+          </button>
         </div>
         <PageSlot active={page === 'signals'}>
           <SignalWatchPage onNavigate={setPage} icp={icp} />
