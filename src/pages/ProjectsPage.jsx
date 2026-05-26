@@ -69,20 +69,54 @@ function fmtFileSize(bytes) {
 
 // ── Proposal text helpers ─────────────────────────────────────────────────────
 
+const STOP_WORDS = new Set(['a','an','the','and','or','to','of','in','for','with','on','at','by','from','is','are','be','that','this','it','as','will','we','our','your','their','its','any','all','can','not','have','has','had']);
+
+function titleWords(str) {
+  return str.toLowerCase().split(/\W+/).filter(w => w.length > 2 && !STOP_WORDS.has(w));
+}
+
+// Find the best-matching key in pageHints for a given title using word overlap
+function findPageHint(pageHints, taskTitle, fallbackTitle = '') {
+  if (!pageHints || !taskTitle) return null;
+  const keys = Object.keys(pageHints);
+  if (!keys.length) return null;
+
+  // 1. Exact match
+  if (pageHints[taskTitle] != null) return pageHints[taskTitle];
+
+  // 2. Case-insensitive exact match
+  const lower = taskTitle.toLowerCase();
+  const ciKey = keys.find(k => k.toLowerCase() === lower);
+  if (ciKey) return pageHints[ciKey];
+
+  // 3. Best word-overlap match across all keys
+  const words = titleWords(taskTitle);
+  if (words.length) {
+    let bestKey = null, bestScore = 0;
+    keys.forEach(k => {
+      const score = titleWords(k).filter(w => words.includes(w)).length;
+      if (score > bestScore) { bestScore = score; bestKey = k; }
+    });
+    if (bestScore > 0) return pageHints[bestKey];
+  }
+
+  // 4. Fall back to milestone title
+  if (fallbackTitle) return findPageHint(pageHints, fallbackTitle);
+
+  return null;
+}
+
 // Split proposal text into paragraphs and find the one most relevant to a task title
 function findRelevantParaIndex(proposalText, taskTitle) {
   if (!proposalText || !taskTitle) return -1;
   const paras = proposalText.split(/\n\s*\n/).map(p => p.trim()).filter(Boolean);
   if (!paras.length) return -1;
 
-  // Stopwords to ignore when matching
-  const STOP = new Set(['a','an','the','and','or','to','of','in','for','with','on','at','by','from','is','are','be','that','this','it','as','will','we','our','your','their','its','any','all','can','not','have','has','had']);
-  const titleWords = taskTitle.toLowerCase().split(/\W+/).filter(w => w.length > 2 && !STOP.has(w));
-
+  const words = titleWords(taskTitle);
   let bestIdx = 0, bestScore = -1;
   paras.forEach((p, i) => {
     const lower = p.toLowerCase();
-    const score = titleWords.reduce((s, w) => s + (lower.includes(w) ? 1 : 0), 0);
+    const score = words.reduce((s, w) => s + (lower.includes(w) ? 1 : 0), 0);
     if (score > bestScore) { bestScore = score; bestIdx = i; }
   });
   return bestIdx;
@@ -1510,9 +1544,9 @@ export default function ProjectsPage() {
         const isPdf          = !!proposalPdfUrl;
         const paras          = proposalText.split(/\n\s*\n/).map(p => p.trim()).filter(Boolean);
         const highlightIdx   = findRelevantParaIndex(proposalText, proposalPanel.task.title);
-        // Page jump: look up by task title, fall back to milestone title
-        const taskMs         = milestones.find(m => tasks.find(t => t.id === proposalPanel.task.id && t.milestone_id === m.id));
-        const pageNum        = pageHints[proposalPanel.task.title] || (taskMs && pageHints[taskMs.title]) || null;
+        // Page jump: fuzzy-match task title against hint keys, fall back to milestone
+        const taskMs  = milestones.find(m => tasks.find(t => t.id === proposalPanel.task.id && t.milestone_id === m.id));
+        const pageNum = findPageHint(pageHints, proposalPanel.task.title, taskMs?.title);
 
         return (
           <>
@@ -1574,7 +1608,7 @@ export default function ProjectsPage() {
                 <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
                   {/* PDF embed — jumps to page if we have a hint */}
                   <embed
-                    key={`${proposalPanel.task.id}-${pageNum}`}
+                    key={`${proposalPanel.task.id}-p${pageNum}`}
                     src={`${proposalPdfUrl}#page=${pageNum || 1}&toolbar=1&navpanes=0`}
                     type="application/pdf"
                     style={{ flex: paras.length ? '0 0 55%' : 1, width: '100%', border: 'none' }}
