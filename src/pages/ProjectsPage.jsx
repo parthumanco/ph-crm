@@ -67,6 +67,27 @@ function fmtFileSize(bytes) {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
+// ── Proposal text helpers ─────────────────────────────────────────────────────
+
+// Split proposal text into paragraphs and find the one most relevant to a task title
+function findRelevantParaIndex(proposalText, taskTitle) {
+  if (!proposalText || !taskTitle) return -1;
+  const paras = proposalText.split(/\n\s*\n/).map(p => p.trim()).filter(Boolean);
+  if (!paras.length) return -1;
+
+  // Stopwords to ignore when matching
+  const STOP = new Set(['a','an','the','and','or','to','of','in','for','with','on','at','by','from','is','are','be','that','this','it','as','will','we','our','your','their','its','any','all','can','not','have','has','had']);
+  const titleWords = taskTitle.toLowerCase().split(/\W+/).filter(w => w.length > 2 && !STOP.has(w));
+
+  let bestIdx = 0, bestScore = -1;
+  paras.forEach((p, i) => {
+    const lower = p.toLowerCase();
+    const score = titleWords.reduce((s, w) => s + (lower.includes(w) ? 1 : 0), 0);
+    if (score > bestScore) { bestScore = score; bestIdx = i; }
+  });
+  return bestIdx;
+}
+
 // ── Gantt chart ───────────────────────────────────────────────────────────────
 
 const LABEL_W = 190;
@@ -311,6 +332,7 @@ export default function ProjectsPage() {
   const [linkName, setLinkName]                   = useState('');
   const [editingTask, setEditingTask]             = useState(null); // task id
   const [editTaskDraft, setEditTaskDraft]         = useState({});   // { title, due_date, assigned_to }
+  const [proposalPanel, setProposalPanel]         = useState(null); // { task } | null
 
   // File state
   const [projectFiles, setProjectFiles]         = useState([]);
@@ -531,7 +553,7 @@ export default function ProjectsPage() {
   };
 
   // ── Proposal import callback (works from card OR detail view) ────────────
-  const handleImported = async ({ startDate, projectName, milestones: msParsed }, fromProjectId) => {
+  const handleImported = async ({ startDate, projectName, milestones: msParsed, proposalText }, fromProjectId) => {
     const projectId = fromProjectId || activeProject?.id;
     const baseProj  = projects.find(p => p.id === projectId) || activeProject;
     const fromCard  = !!fromProjectId;
@@ -582,6 +604,7 @@ export default function ProjectsPage() {
       });
 
       updatedProj.end_date = cursor;
+      if (proposalText) updatedProj.proposal_text = proposalText;
       const savedProj = await upsertProject(updatedProj);
       await bulkInsertMilestones(msRows);
       await bulkInsertTasks(tRows);
@@ -1126,6 +1149,20 @@ export default function ProjectsPage() {
                                   title="Edit task"
                                   style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 13, padding: '2px 4px', flexShrink: 0 }}
                                 >✏️</button>
+                                {/* See in proposal */}
+                                {activeProject.proposal_text && (
+                                  <button
+                                    onClick={() => setProposalPanel({ task })}
+                                    title="See in proposal"
+                                    style={{
+                                      background: 'none', border: '1px solid var(--border)',
+                                      color: 'var(--text-faint)', cursor: 'pointer',
+                                      fontSize: 10, fontWeight: 700, padding: '2px 7px',
+                                      borderRadius: 4, flexShrink: 0, whiteSpace: 'nowrap',
+                                      letterSpacing: '.02em',
+                                    }}
+                                  >📄 proposal</button>
+                                )}
                                 {/* Attach file to task */}
                                 <button
                                   onClick={e => { e.stopPropagation(); triggerFileUpload(activeProject.id, null, null, task.id); }}
@@ -1287,6 +1324,77 @@ export default function ProjectsPage() {
 
       {/* Global file input */}
       <input ref={fileInputRef} type="file" accept="*/*" style={{ display: 'none' }} onChange={handleFileSelected} />
+
+      {/* Proposal side drawer */}
+      {proposalPanel && (() => {
+        const proposalText = activeProject.proposal_text || '';
+        const paras = proposalText.split(/\n\s*\n/).map(p => p.trim()).filter(Boolean);
+        const highlightIdx = findRelevantParaIndex(proposalText, proposalPanel.task.title);
+        return (
+          <>
+            {/* Backdrop */}
+            <div
+              style={{ position: 'fixed', inset: 0, zIndex: 850, background: 'rgba(0,0,0,0.2)' }}
+              onClick={() => setProposalPanel(null)}
+            />
+            {/* Drawer */}
+            <div style={{
+              position: 'fixed', top: 0, right: 0, bottom: 0, zIndex: 860,
+              width: 440, maxWidth: '92vw',
+              background: 'var(--bg)',
+              boxShadow: '-8px 0 40px rgba(0,0,0,0.18)',
+              display: 'flex', flexDirection: 'column',
+              borderLeft: '1px solid var(--border)',
+            }}>
+              {/* Header */}
+              <div style={{ padding: '18px 20px 14px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>
+                  <div>
+                    <div style={{ fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--text-faint)', marginBottom: 4 }}>Proposal Reference</div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', lineHeight: 1.4 }}>{proposalPanel.task.title}</div>
+                  </div>
+                  <button
+                    onClick={() => setProposalPanel(null)}
+                    style={{ background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: 'var(--text-muted)', flexShrink: 0, padding: '2px 4px', lineHeight: 1 }}
+                  >✕</button>
+                </div>
+                {highlightIdx >= 0 && (
+                  <div style={{ marginTop: 10, padding: '7px 10px', background: '#fef9c3', border: '1px solid #fde68a', borderRadius: 6, fontSize: 11, color: '#92400e', fontWeight: 600 }}>
+                    ✨ Most relevant section highlighted below
+                  </div>
+                )}
+              </div>
+
+              {/* Body — scrollable proposal text */}
+              <div style={{ flex: 1, overflowY: 'auto', padding: '16px 20px' }}>
+                {paras.length === 0 ? (
+                  <p style={{ color: 'var(--text-faint)', fontSize: 13 }}>No proposal text available.</p>
+                ) : (
+                  paras.map((para, i) => (
+                    <p
+                      key={i}
+                      id={i === highlightIdx ? 'proposal-highlight' : undefined}
+                      ref={i === highlightIdx ? el => el?.scrollIntoView({ behavior: 'smooth', block: 'center' }) : undefined}
+                      style={{
+                        fontSize: 13, lineHeight: 1.7, marginBottom: 14,
+                        padding: i === highlightIdx ? '10px 12px' : '0',
+                        borderRadius: i === highlightIdx ? 6 : 0,
+                        background: i === highlightIdx ? '#fef9c3' : 'transparent',
+                        border: i === highlightIdx ? '1px solid #fde68a' : 'none',
+                        color: 'var(--text)',
+                        whiteSpace: 'pre-wrap',
+                        transition: 'background .2s',
+                      }}
+                    >
+                      {para}
+                    </p>
+                  ))
+                )}
+              </div>
+            </div>
+          </>
+        );
+      })()}
 
       {/* Add link modal */}
       {showLinkModal && (
