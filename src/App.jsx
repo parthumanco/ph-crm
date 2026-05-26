@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import SignalWatchPage from './pages/SignalWatchPage';
 import PipelinePage from './pages/PipelinePage';
 import DealsPage from './pages/DealsPage';
@@ -48,6 +48,7 @@ function PageSlot({ active, children }) {
 export default function App() {
   const [page, setPage] = useState('projects');
   const [icp, setIcp]   = useState(DEFAULT_ICP);
+  const projectsGoHome  = useRef(null); // ProjectsPage registers its goHome fn here
 
   useEffect(() => {
     loadIcp().then(loaded => setIcp(loaded));
@@ -87,7 +88,7 @@ export default function App() {
         {/* Unified page header driven by page state */}
         <div className="app-page-header">
           <button
-            onClick={() => setPage('projects')}
+            onClick={() => { setPage('projects'); projectsGoHome.current?.(); }}
             style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', textAlign: 'left' }}
           >
             <h2 className="app-page-title">{pt.title}</h2>
@@ -107,7 +108,7 @@ export default function App() {
           <SupportPage />
         </PageSlot>
         <PageSlot active={page === 'projects'}>
-          <ProjectsPage />
+          <ProjectsPage goHomeRef={projectsGoHome} />
         </PageSlot>
         <PageSlot active={page === 'discover'}>
           <DiscoverPage icp={icp} />

@@ -363,7 +363,7 @@ function ProjectCard({ project, tasks, files, onClick, onUpload, onImport, uploa
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 
-export default function ProjectsPage() {
+export default function ProjectsPage({ goHomeRef }) {
   const [view, setView]             = useState('list');   // 'list' | 'detail'
   const [projects, setProjects]     = useState([]);
   const [allTasks, setAllTasks]     = useState({});       // { projectId: tasks[] }
@@ -409,6 +409,12 @@ export default function ProjectsPage() {
   const [showImporterForProject, setShowImporterForProject] = useState(null); // projectId | null
   const fileInputRef                             = useRef(null);
   const pendingUpload                            = useRef({ projectId: null, milestoneId: null });
+
+  // Register go-home callback so the App header can trigger it
+  useEffect(() => {
+    if (goHomeRef) goHomeRef.current = () => { setView('list'); setActiveProject(null); };
+    return () => { if (goHomeRef) goHomeRef.current = null; };
+  }, [goHomeRef]);
 
   // Load projects + won deals + card-level files
   const loadAll = useCallback(async () => {
@@ -1102,10 +1108,6 @@ export default function ProjectsPage() {
     <>
       <div className="page-header">
         <div className="page-header-left">
-          <button
-            onClick={() => { setView('list'); setConfirmDeleteProj(false); }}
-            style={{ background: 'none', border: 'none', fontSize: 13, color: 'var(--text-muted)', cursor: 'pointer', padding: 0, marginBottom: 4, display: 'flex', alignItems: 'center', gap: 4 }}
-          >← All Projects</button>
           <h2 style={{ marginBottom: 2 }}>
             <input
               type="text"
