@@ -85,7 +85,7 @@ export default function App() {
 
       <main className="main-content">
         {/* Unified page header driven by page state */}
-        <div className="app-page-header">
+        <div className="app-page-header" style={{ cursor: 'pointer' }} onClick={() => setPage('projects')}>
           <div>
             <h2 className="app-page-title">{pt.title}</h2>
             <p className="app-page-sub">{pt.sub}</p>
