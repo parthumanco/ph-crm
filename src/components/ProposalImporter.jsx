@@ -121,9 +121,16 @@ export default function ProposalImporter({ projectId, projectStart, onImported, 
     if (inputMode === 'pdf' && pdfBase64) {
       try {
         const allTaskTitles = preview.flatMap(m => m.tasks.map(t => t.title));
-        const { text: extracted, pages } = await extractPdfTextAndPages(pdfBase64, allTaskTitles);
-        proposalText      = extracted || null;
-        proposalPageHints = Object.keys(pages).length ? pages : null;
+        const { text: extracted, pageArray } = await extractPdfTextAndPages(pdfBase64, allTaskTitles);
+        proposalText = extracted || null;
+        // Build hints keyed by the EXACT task titles we passed in — no mismatch possible
+        if (pageArray.length) {
+          const hints = {};
+          allTaskTitles.forEach((title, i) => {
+            if (pageArray[i]) hints[title] = pageArray[i];
+          });
+          proposalPageHints = Object.keys(hints).length ? hints : null;
+        }
       } catch (e) {
         console.warn('PDF text extraction failed:', e.message);
       }

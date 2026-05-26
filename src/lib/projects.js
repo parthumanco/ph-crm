@@ -223,19 +223,21 @@ export async function bulkInsertTasks(rows) {
 
 export async function extractPdfTextAndPages(pdfBase64, taskTitles = []) {
   const key = import.meta.env.VITE_ANTHROPIC_API_KEY;
-  if (!key) return { text: '', pages: {} };
+  if (!key) return { text: '', pageArray: [] };
 
   const taskList = taskTitles.length
-    ? `\n\nAlso, for each of these task titles, return the best matching page number where it is discussed:\n${taskTitles.map((t, i) => `${i + 1}. ${t}`).join('\n')}`
+    ? `\n\nFor each numbered task below, return the page number where it is most discussed. Return a JSON array with exactly ${taskTitles.length} numbers — one per task in the same order:\n${taskTitles.map((t, i) => `${i + 1}. ${t}`).join('\n')}\n\nIf a task isn't clearly on a specific page, use your best estimate.`
     : '';
 
   const prompt = `Extract the complete text content of this PDF. Preserve paragraph breaks using double newlines.${taskList}
 
-Return ONLY valid JSON:
+Return ONLY valid JSON in this exact format:
 {
   "text": "full document text here...",
-  "pages": { "task title": 2, "another task": 4 }
-}`;
+  "pageArray": [3, 3, 5, 5, 7, 8]
+}
+
+The pageArray must have exactly ${taskTitles.length} integers, one per task in order.`;
 
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
@@ -255,16 +257,19 @@ Return ONLY valid JSON:
     }),
   });
 
-  if (!res.ok) return { text: '', pages: {} };
+  if (!res.ok) return { text: '', pageArray: [] };
   const json = await res.json();
   const raw  = json.content[0].text.trim();
   const match = raw.match(/\{[\s\S]*\}/);
-  if (!match) return { text: raw, pages: {} };
+  if (!match) return { text: raw, pageArray: [] };
   try {
     const parsed = JSON.parse(match[0]);
-    return { text: parsed.text || '', pages: parsed.pages || {} };
+    return {
+      text:      parsed.text      || '',
+      pageArray: Array.isArray(parsed.pageArray) ? parsed.pageArray : [],
+    };
   } catch {
-    return { text: raw, pages: {} };
+    return { text: raw, pageArray: [] };
   }
 }
 
