@@ -324,31 +324,43 @@ export default function ProjectsPage() {
     setLoadingDetail(true);
     setExpanded({});
     setEditingMs(null);
+    setMilestones([]);
+    setTasks([]);
     setProjectFiles([]);
     try {
       const [ms, ts, files] = await Promise.all([
         fetchMilestones(project.id),
         fetchProjectTasks(project.id),
-        fetchProjectFiles(project.id),
+        fetchProjectFiles(project.id).catch(() => []),
       ]);
       setMilestones(ms);
       setTasks(ts);
       setProjectFiles(files);
+    } catch (e) {
+      console.error('Failed to load project detail:', e);
+      // Try loading milestones and tasks independently so a single failure
+      // doesn't blank the entire view
+      try { setMilestones(await fetchMilestones(project.id)); } catch {}
+      try { setTasks(await fetchProjectTasks(project.id)); } catch {}
     } finally {
       setLoadingDetail(false);
     }
   };
 
   const refreshDetail = async (projId) => {
-    const [ms, ts, files] = await Promise.all([
-      fetchMilestones(projId),
-      fetchProjectTasks(projId),
-      fetchProjectFiles(projId),
-    ]);
-    setMilestones(ms);
-    setTasks(ts);
-    setProjectFiles(files);
-    setAllTasks(prev => ({ ...prev, [projId]: ts }));
+    try {
+      const [ms, ts, files] = await Promise.all([
+        fetchMilestones(projId),
+        fetchProjectTasks(projId),
+        fetchProjectFiles(projId).catch(() => []),
+      ]);
+      setMilestones(ms);
+      setTasks(ts);
+      setProjectFiles(files);
+      setAllTasks(prev => ({ ...prev, [projId]: ts }));
+    } catch (e) {
+      console.error('refreshDetail failed:', e);
+    }
   };
 
   // ── New project ───────────────────────────────────────────────────────────
