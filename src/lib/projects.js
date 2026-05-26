@@ -330,7 +330,29 @@ export async function uploadProjectFile(projectId, file, milestoneId = null, tas
 }
 
 export async function deleteProjectFile(id, storagePath) {
-  await supabase.storage.from('project-files').remove([storagePath]);
+  // Don't try to delete external links from storage
+  if (storagePath && storagePath !== 'external') {
+    await supabase.storage.from('project-files').remove([storagePath]);
+  }
   const { error } = await supabase.from('project_files').delete().eq('id', id);
   if (error) throw new Error(error.message);
+}
+
+export async function addExternalLink(projectId, url, name, milestoneId = null, taskId = null) {
+  const { data, error } = await supabase
+    .from('project_files')
+    .insert({
+      project_id:   projectId,
+      milestone_id: milestoneId || null,
+      task_id:      taskId || null,
+      name:         name || url,
+      size:         null,
+      mime_type:    'link',
+      storage_path: 'external',
+      url,
+    })
+    .select()
+    .single();
+  if (error) throw new Error(error.message);
+  return data;
 }

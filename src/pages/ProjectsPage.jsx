@@ -3,7 +3,7 @@ import {
   fetchProjects, upsertProject, deleteProject,
   fetchMilestones, upsertMilestone, deleteMilestone,
   fetchProjectTasks, upsertProjectTask, toggleTask, deleteProjectTask,
-  fetchProjectFiles, uploadProjectFile, deleteProjectFile,
+  fetchProjectFiles, uploadProjectFile, deleteProjectFile, addExternalLink,
   restoreProjectTask,
   bulkInsertMilestones, bulkInsertTasks,
   PROJECT_STATUSES, MILESTONE_STATUSES, OWNERS,
@@ -39,12 +39,25 @@ function Lbl({ children }) {
 
 function fileIcon(mime) {
   if (!mime) return '📎';
+  if (mime === 'link') return '🔗';
   if (mime.includes('pdf'))                                        return '📄';
   if (mime.includes('image'))                                      return '🖼️';
   if (mime.includes('word') || mime.includes('document'))         return '📝';
   if (mime.includes('sheet') || mime.includes('excel') || mime.includes('csv')) return '📊';
   if (mime.includes('presentation') || mime.includes('powerpoint')) return '📊';
   return '📎';
+}
+
+function parseLinkName(url) {
+  try {
+    const u = new URL(url);
+    const parts = u.pathname.split('/').filter(Boolean);
+    const last = decodeURIComponent(parts[parts.length - 1] || '');
+    if (last && last.length > 2) return last;
+    return u.hostname.replace('www.', '');
+  } catch {
+    return url;
+  }
 }
 
 function fmtFileSize(bytes) {
@@ -277,9 +290,12 @@ export default function ProjectsPage() {
   const [savingProj, setSavingProj]         = useState(false);
   const [projError, setProjError]           = useState('');
   const [confirmDeleteProj, setConfirmDeleteProj] = useState(false);
-  const [confirmDeleteTask, setConfirmDeleteTask] = useState(null); // taskId pending confirm
-  const [deletedTasks, setDeletedTasks]           = useState({});   // { milestoneId: Task[] }
-  const [showArchivedMs, setShowArchivedMs]       = useState({});   // { milestoneId: bool }
+  const [confirmDeleteTask, setConfirmDeleteTask] = useState(null);
+  const [deletedTasks, setDeletedTasks]           = useState({});
+  const [showArchivedMs, setShowArchivedMs]       = useState({});
+  const [showLinkModal, setShowLinkModal]         = useState(null); // { projectId, milestoneId, taskId }
+  const [linkUrl, setLinkUrl]                     = useState('');
+  const [linkName, setLinkName]                   = useState('');
 
   // File state
   const [projectFiles, setProjectFiles]         = useState([]);
@@ -585,6 +601,26 @@ export default function ProjectsPage() {
   const handleDeleteFile = async (file) => {
     await deleteProjectFile(file.id, file.storage_path);
     setProjectFiles(prev => prev.filter(f => f.id !== file.id));
+    setCardFiles(prev => ({
+      ...prev,
+      [file.project_id]: (prev[file.project_id] || []).filter(f => f.id !== file.id),
+    }));
+  };
+
+  const openLinkModal = (projectId, milestoneId = null, taskId = null) => {
+    setShowLinkModal({ projectId, milestoneId, taskId });
+    setLinkUrl('');
+    setLinkName('');
+  };
+
+  const handleAddLink = async () => {
+    if (!linkUrl.trim()) return;
+    const { projectId, milestoneId, taskId } = showLinkModal;
+    const name = linkName.trim() || parseLinkName(linkUrl.trim());
+    const saved = await addExternalLink(projectId, linkUrl.trim(), name, milestoneId, taskId);
+    setProjectFiles(prev => [saved, ...prev]);
+    setCardFiles(prev => ({ ...prev, [projectId]: [saved, ...(prev[projectId] || [])] }));
+    setShowLinkModal(null);
   };
 
   // ── Stats ─────────────────────────────────────────────────────────────────
@@ -756,6 +792,7 @@ export default function ProjectsPage() {
         </div>
         <div className="page-header-actions" style={{ gap: 8 }}>
           <button className="btn" style={{ fontSize: 13 }} onClick={() => triggerFileUpload(activeProject.id)}>📎 Upload File</button>
+          <button className="btn" style={{ fontSize: 13 }} onClick={() => openLinkModal(activeProject.id)}>🔗 Add Link</button>
           <button className="btn" style={{ fontSize: 13 }} onClick={() => setShowImporter(true)}>📋 Import Proposal</button>
           <button className="btn btn-primary" onClick={handleAddMilestone}>+ Milestone</button>
         </div>
@@ -1011,6 +1048,12 @@ export default function ProjectsPage() {
                               >
                                 {uploadingFor === task.id ? '⏳' : '📎'}
                               </button>
+                              {/* Add link to task */}
+                              <button
+                                onClick={e => { e.stopPropagation(); openLinkModal(activeProject.id, null, task.id); }}
+                                title="Add link"
+                                style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 13, padding: '2px 4px', flexShrink: 0 }}
+                              >🔗</button>
                               {/* Delete with confirmation */}
                               <button
                                 onClick={() => {
@@ -1095,6 +1138,14 @@ export default function ProjectsPage() {
                       >
                         {uploadingFor === ms.id ? '⏳ Uploading…' : '📎 Attach file to milestone'}
                       </button>
+                      <button
+                        onClick={() => openLinkModal(activeProject.id, ms.id)}
+                        style={{ width: '100%', padding: '7px 16px 7px 48px', background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, color: 'var(--text-faint)', textAlign: 'left', transition: 'color .15s' }}
+                        onMouseEnter={e => e.currentTarget.style.color = 'var(--accent)'}
+                        onMouseLeave={e => e.currentTarget.style.color = 'var(--text-faint)'}
+                      >
+                        🔗 Add link to milestone
+                      </button>
 
                       {/* Archived tasks toggle */}
                       {(deletedTasks[ms.id] || []).length > 0 && (
@@ -1147,6 +1198,44 @@ export default function ProjectsPage() {
 
       {/* Global file input */}
       <input ref={fileInputRef} type="file" accept="*/*" style={{ display: 'none' }} onChange={handleFileSelected} />
+
+      {/* Add link modal */}
+      {showLinkModal && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 900, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.35)' }} onClick={() => setShowLinkModal(null)} />
+          <div style={{ position: 'relative', zIndex: 1, background: 'var(--bg)', borderRadius: 12, padding: 28, width: 460, maxWidth: '95vw', boxShadow: '0 16px 48px rgba(0,0,0,0.18)' }}>
+            <h3 style={{ fontSize: 15, fontWeight: 800, marginBottom: 18 }}>🔗 Add Link</h3>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <div>
+                <Lbl>URL</Lbl>
+                <input
+                  type="url"
+                  value={linkUrl}
+                  onChange={e => setLinkUrl(e.target.value)}
+                  placeholder="https://www.dropbox.com/…"
+                  autoFocus
+                  style={{ width: '100%' }}
+                  onKeyDown={e => { if (e.key === 'Enter') handleAddLink(); if (e.key === 'Escape') setShowLinkModal(null); }}
+                />
+              </div>
+              <div>
+                <Lbl>Label (optional)</Lbl>
+                <input
+                  type="text"
+                  value={linkName}
+                  onChange={e => setLinkName(e.target.value)}
+                  placeholder={linkUrl ? parseLinkName(linkUrl) : 'Auto-detected from URL'}
+                  style={{ width: '100%' }}
+                />
+              </div>
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 4 }}>
+                <button onClick={() => setShowLinkModal(null)} style={{ padding: '8px 16px', borderRadius: 6, border: '1px solid var(--border)', background: 'transparent', cursor: 'pointer', fontSize: 13 }}>Cancel</button>
+                <button className="btn btn-primary" onClick={handleAddLink} disabled={!linkUrl.trim()}>Add Link</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Proposal importer modal */}
       {showImporter && (
