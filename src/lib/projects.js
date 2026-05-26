@@ -226,7 +226,7 @@ export async function extractPdfTextAndPages(pdfBase64, taskTitles = []) {
   if (!key) return { text: '', pageArray: [] };
 
   const taskList = taskTitles.length
-    ? `\n\nFor each numbered task below, return the page number where it is most discussed. Return a JSON array with exactly ${taskTitles.length} numbers — one per task in the same order:\n${taskTitles.map((t, i) => `${i + 1}. ${t}`).join('\n')}\n\nIf a task isn't clearly on a specific page, use your best estimate.`
+    ? `\n\nFor each numbered task below, identify the page where that task is described IN THE MOST DETAIL — meaning the page with the longest or most specific explanation of that deliverable. Ignore pages that only briefly mention or list the task. Return a JSON array with exactly ${taskTitles.length} integers — one per task in the same order:\n${taskTitles.map((t, i) => `${i + 1}. ${t}`).join('\n')}\n\nIMPORTANT: Different tasks should map to different pages where possible. Only use the same page for multiple tasks if they are truly co-located in the document.`
     : '';
 
   const prompt = `Extract the complete text content of this PDF. Preserve paragraph breaks using double newlines.${taskList}
@@ -234,10 +234,10 @@ export async function extractPdfTextAndPages(pdfBase64, taskTitles = []) {
 Return ONLY valid JSON in this exact format:
 {
   "text": "full document text here...",
-  "pageArray": [3, 3, 5, 5, 7, 8]
+  "pageArray": [3, 4, 5, 5, 7, 8]
 }
 
-The pageArray must have exactly ${taskTitles.length} integers, one per task in order.`;
+The pageArray must have exactly ${taskTitles.length} integers, one per task in order. Vary the page numbers — do not return the same page for all tasks.`;
 
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',

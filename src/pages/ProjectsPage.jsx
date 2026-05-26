@@ -1547,6 +1547,7 @@ export default function ProjectsPage() {
         // Page jump: fuzzy-match task title against hint keys, fall back to milestone
         const taskMs  = milestones.find(m => tasks.find(t => t.id === proposalPanel.task.id && t.milestone_id === m.id));
         const pageNum = findPageHint(pageHints, proposalPanel.task.title, taskMs?.title);
+        console.log('[ProposalDrawer] task:', proposalPanel.task.title, '| pageHints keys:', Object.keys(pageHints), '| resolved page:', pageNum);
 
         return (
           <>

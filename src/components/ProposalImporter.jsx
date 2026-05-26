@@ -122,6 +122,8 @@ export default function ProposalImporter({ projectId, projectStart, onImported, 
       try {
         const allTaskTitles = preview.flatMap(m => m.tasks.map(t => t.title));
         const { text: extracted, pageArray } = await extractPdfTextAndPages(pdfBase64, allTaskTitles);
+        console.log('[ProposalImporter] pageArray from Claude:', pageArray);
+        console.log('[ProposalImporter] task titles:', allTaskTitles);
         proposalText = extracted || null;
         // Build hints keyed by the EXACT task titles we passed in — no mismatch possible
         if (pageArray.length) {
@@ -129,6 +131,7 @@ export default function ProposalImporter({ projectId, projectStart, onImported, 
           allTaskTitles.forEach((title, i) => {
             if (pageArray[i]) hints[title] = pageArray[i];
           });
+          console.log('[ProposalImporter] built page hints:', hints);
           proposalPageHints = Object.keys(hints).length ? hints : null;
         }
       } catch (e) {
