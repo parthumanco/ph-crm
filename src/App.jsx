@@ -11,13 +11,15 @@ import SettingsPage from './pages/SettingsPage';
 import { loadIcp, DEFAULT_ICP } from './lib/settings';
 
 const NAV = [
-  { id: 'signals',  label: 'Signal Watch',  icon: '🔭' },
+  { id: 'projects', label: 'Projects',       icon: '🗂️'  },
   { id: 'pipeline', label: 'Pipeline',       icon: '🔥' },
   { id: 'deals',    label: 'Deals',          icon: '💵' },
-  { id: 'projects', label: 'Projects',       icon: '🗂️'  },
+  { divider: true },
+  { id: 'signals',  label: 'Signal Watch',  icon: '🔭' },
   { id: 'discover', label: 'Discover',       icon: '🧭' },
   { id: 'report',   label: 'Weekly Report',  icon: '📋' },
   { id: 'chat',     label: 'Little Stevie',  icon: '💬' },
+  { divider: true },
   { id: 'settings', label: 'ICP Settings',   icon: '⚙️'  },
   { id: 'support',  label: 'Support',        icon: '🎧' },
 ];
@@ -44,7 +46,7 @@ function PageSlot({ active, children }) {
 }
 
 export default function App() {
-  const [page, setPage] = useState('signals');
+  const [page, setPage] = useState('projects');
   const [icp, setIcp]   = useState(DEFAULT_ICP);
 
   useEffect(() => {
@@ -64,16 +66,19 @@ export default function App() {
           <div className="sidebar-logo-tag">Sales Intelligence</div>
         </div>
         <nav className="sidebar-nav">
-          {NAV.map(n => (
-            <button
-              key={n.id}
-              className={`nav-item${page === n.id ? ' active' : ''}`}
-              onClick={() => setPage(n.id)}
-            >
-              <span className="nav-icon">{n.icon}</span>
-              {n.label}
-            </button>
-          ))}
+          {NAV.map((n, i) => n.divider
+            ? <div key={`divider-${i}`} style={{ height: 1, background: 'var(--border)', margin: '6px 12px' }} />
+            : (
+              <button
+                key={n.id}
+                className={`nav-item${page === n.id ? ' active' : ''}`}
+                onClick={() => setPage(n.id)}
+              >
+                <span className="nav-icon">{n.icon}</span>
+                {n.label}
+              </button>
+            )
+          )}
         </nav>
         <div className="sidebar-footer">v1.7</div>
       </aside>
