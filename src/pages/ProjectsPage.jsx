@@ -5,7 +5,7 @@ import {
   fetchProjectTasks, upsertProjectTask, toggleTask, deleteProjectTask,
   fetchProjectFiles, uploadProjectFile, deleteProjectFile, addExternalLink,
   restoreProjectTask,
-  bulkInsertMilestones, bulkInsertTasks,
+  bulkInsertMilestones, bulkInsertTasks, indexTaskPages,
   PROJECT_STATUSES, MILESTONE_STATUSES, OWNERS,
   projColor, projLabel, msColor, msLabel,
   daysBetween, addDays, projectProgress, fmtDate,
@@ -386,6 +386,7 @@ export default function ProjectsPage() {
   const [archivedMilestones, setArchivedMilestones]   = useState([]);
   const [showArchivedMilestones, setShowArchivedMilestones] = useState(false);
   const [confirmHardDelete, setConfirmHardDelete]   = useState(null); // { type: 'task'|'milestone'|'project', item }
+  const [reindexing, setReindexing]                 = useState(false);
   const [showLinkModal, setShowLinkModal]         = useState(null); // { projectId, milestoneId, taskId }
   const [linkUrl, setLinkUrl]                     = useState('');
   const [linkName, setLinkName]                   = useState('');
@@ -563,6 +564,42 @@ export default function ProjectsPage() {
   };
 
   // ── Hard delete (permanent) ───────────────────────────────────────────────
+  // Re-index page positions by fetching the stored PDF and asking Claude directly
+  const handleReindexPages = async () => {
+    const pdfUrl = activeProject.proposal_pdf_url;
+    if (!pdfUrl || reindexing) return;
+    setReindexing(true);
+    try {
+      // Fetch PDF → base64
+      const resp = await fetch(pdfUrl);
+      const blob = await resp.blob();
+      const base64 = await new Promise((res, rej) => {
+        const r = new FileReader();
+        r.onload  = () => res(r.result.split(',')[1]);
+        r.onerror = rej;
+        r.readAsDataURL(blob);
+      });
+
+      // Collect every task title in the project
+      const allTaskTitles = milestones.flatMap(ms =>
+        (tasks.filter(t => t.milestone_id === ms.id)).map(t => t.title)
+      );
+
+      const pageIndex = await indexTaskPages(base64, allTaskTitles);
+      if (!Object.keys(pageIndex).length) throw new Error('No pages returned');
+
+      // Save directly to DB + update local state
+      await upsertProject({ ...activeProject, proposal_page_hints: pageIndex });
+      setActiveProject(prev => ({ ...prev, proposal_page_hints: pageIndex }));
+      setProjects(prev => prev.map(p => p.id === activeProject.id
+        ? { ...p, proposal_page_hints: pageIndex } : p));
+    } catch (e) {
+      console.error('Re-index failed:', e.message);
+    } finally {
+      setReindexing(false);
+    }
+  };
+
   const handleHardDeleteTask = async (task) => {
     await deleteProjectTask(task.id);
     setDeletedTasks(prev => ({
@@ -1629,8 +1666,9 @@ export default function ProjectsPage() {
         // Resolve page number:
         // • New format: hints is an object { "Task title": pageNum } — direct lookup
         // • Legacy format: hints is a paraPages array — use highlight index
+        const hintsAreIndexed = hints && !Array.isArray(hints) && typeof hints === 'object';
         let pageNum = null;
-        if (hints && !Array.isArray(hints) && typeof hints === 'object') {
+        if (hintsAreIndexed) {
           pageNum = hints[proposalPanel.task.title]
             ?? findPageHint(hints, proposalPanel.task.title)
             ?? null;
@@ -1667,6 +1705,16 @@ export default function ProjectsPage() {
                     <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', lineHeight: 1.4 }}>{proposalPanel.task.title}</div>
                   </div>
                   <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexShrink: 0 }}>
+                    {isPdf && !hintsAreIndexed && (
+                      <button
+                        onClick={handleReindexPages}
+                        disabled={reindexing}
+                        title="Re-index page positions using AI"
+                        style={{ fontSize: 11, fontWeight: 700, color: '#8b5cf6', padding: '4px 10px', border: '1px solid #8b5cf6', borderRadius: 5, background: 'none', cursor: reindexing ? 'default' : 'pointer', opacity: reindexing ? 0.6 : 1, whiteSpace: 'nowrap' }}
+                      >
+                        {reindexing ? '⏳ Indexing…' : '✦ Fix pages'}
+                      </button>
+                    )}
                     {isPdf && (
                       <a
                         href={`${proposalPdfUrl}#page=${pageNum || 1}&search=${searchParam}`}
