@@ -11,29 +11,29 @@ import SettingsPage from './pages/SettingsPage';
 import { loadIcp, DEFAULT_ICP } from './lib/settings';
 
 const NAV = [
-  { id: 'projects', label: 'Projects',       icon: '🗂️'  },
-  { id: 'pipeline', label: 'Pipeline',       icon: '🔥' },
-  { id: 'deals',    label: 'Deals',          icon: '💵' },
+  { id: 'projects', label: 'Projects',           icon: '⛏️'  },
+  { id: 'deals',    label: 'Pipeline',           icon: '💵' },
+  { id: 'pipeline', label: 'Active Prospects',   icon: '🔥' },
   { divider: true },
-  { id: 'signals',  label: 'Signal Watch',  icon: '🔭' },
-  { id: 'discover', label: 'Discover',       icon: '🧭' },
-  { id: 'report',   label: 'Weekly Report',  icon: '📋' },
-  { id: 'chat',     label: 'Little Stevie',  icon: '💬' },
+  { id: 'discover', label: 'Find New Companies', icon: '🧭' },
+  { id: 'signals',  label: 'Rate & Review',      icon: '🔭' },
+  { id: 'report',   label: 'Weekly Report',      icon: '📋' },
+  { id: 'chat',     label: 'Little Stevie',      icon: '💬' },
   { divider: true },
-  { id: 'settings', label: 'ICP Settings',   icon: '⚙️'  },
-  { id: 'support',  label: 'Support',        icon: '🎧' },
+  { id: 'settings', label: 'ICP Settings',       icon: '⚙️'  },
+  { id: 'support',  label: 'Support',            icon: '🎧' },
 ];
 
 const PAGE_TITLES = {
-  signals:  { title: 'Signal Watch',  sub: 'Company intelligence & outreach triggers' },
-  pipeline: { title: 'Pipeline',      sub: 'Active prospects & touch cadence' },
-  deals:    { title: 'Deals',         sub: 'CRM pipeline, activities & revenue tracking' },
-  support:  { title: 'Support',       sub: 'Case management & client communication' },
-  projects: { title: 'Projects',      sub: 'Timelines, milestones & deliverables' },
-  discover: { title: 'Discover',      sub: 'Find new companies to add to your watch list' },
-  report:   { title: 'Weekly Report', sub: 'AI briefing & draft outreach' },
-  chat:     { title: 'Little Stevie', sub: 'Ask anything about your pipeline' },
-  settings: { title: 'ICP Settings',  sub: 'Ideal customer profile & outreach voice' },
+  signals:  { title: 'Rate & Review',       sub: 'Company intelligence & outreach triggers' },
+  pipeline: { title: 'Active Prospects',    sub: 'Active prospects & touch cadence' },
+  deals:    { title: 'Pipeline',            sub: 'CRM pipeline, activities & revenue tracking' },
+  support:  { title: 'Support',             sub: 'Case management & client communication' },
+  projects: { title: 'Projects',            sub: 'Timelines, milestones & deliverables' },
+  discover: { title: 'Find New Companies',  sub: 'Find new companies to add to your watch list' },
+  report:   { title: 'Weekly Report',       sub: 'AI briefing & draft outreach' },
+  chat:     { title: 'Little Stevie',       sub: 'Ask anything about your pipeline' },
+  settings: { title: 'ICP Settings',        sub: 'Ideal customer profile & outreach voice' },
 };
 
 // Keeps a page mounted but invisible so background work (scans, report generation) isn't interrupted.
