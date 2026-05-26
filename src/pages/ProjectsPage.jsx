@@ -604,14 +604,27 @@ export default function ProjectsPage() {
       });
 
       updatedProj.end_date = cursor;
-      if (proposalText)    updatedProj.proposal_text    = proposalText;
-      if (proposalPdfFile) {
-        const fileRecord = await uploadProjectFile(projectId, proposalPdfFile);
-        updatedProj.proposal_pdf_url = fileRecord.url;
-      }
+
+      // ── Save timeline first (never blocked by proposal columns) ──────────
       const savedProj = await upsertProject(updatedProj);
       await bulkInsertMilestones(msRows);
       await bulkInsertTasks(tRows);
+
+      // ── Save proposal reference separately — fails gracefully if columns
+      //    haven't been added to the DB yet ──────────────────────────────────
+      try {
+        const proposalUpdate = { id: savedProj.id };
+        if (proposalText) proposalUpdate.proposal_text = proposalText;
+        if (proposalPdfFile) {
+          const fileRecord = await uploadProjectFile(projectId, proposalPdfFile);
+          proposalUpdate.proposal_pdf_url = fileRecord.url;
+        }
+        if (proposalText || proposalPdfFile) {
+          await upsertProject({ ...savedProj, ...proposalUpdate });
+        }
+      } catch (proposalErr) {
+        console.warn('Proposal reference not saved (run DB migrations):', proposalErr.message);
+      }
 
       setProjects(prev => prev.map(p => p.id === savedProj.id ? savedProj : p));
 
@@ -621,7 +634,11 @@ export default function ProjectsPage() {
         setAllTasks(prev => ({ ...prev, [projectId]: ts }));
         setShowImporterForProject(null);
       } else {
-        setActiveProject(savedProj);
+        // Re-fetch project so we get proposal_text / proposal_pdf_url fields
+        const freshProjects = await fetchProjects();
+        const freshProj = freshProjects.find(p => p.id === savedProj.id) || savedProj;
+        setProjects(freshProjects);
+        setActiveProject(freshProj);
         await refreshDetail(savedProj.id);
         setShowImporter(false);
       }
