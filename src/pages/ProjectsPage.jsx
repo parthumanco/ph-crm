@@ -276,6 +276,7 @@ export default function ProjectsPage() {
   const [savingProj, setSavingProj]         = useState(false);
   const [projError, setProjError]           = useState('');
   const [confirmDeleteProj, setConfirmDeleteProj] = useState(false);
+  const [confirmDeleteTask, setConfirmDeleteTask] = useState(null); // taskId pending confirm
 
   // File state
   const [projectFiles, setProjectFiles]         = useState([]);
@@ -521,9 +522,9 @@ export default function ProjectsPage() {
   };
 
   // ── File uploads ──────────────────────────────────────────────────────────
-  const triggerFileUpload = (projectId, milestoneId = null, e) => {
+  const triggerFileUpload = (projectId, milestoneId = null, e = null, taskId = null) => {
     if (e) e.stopPropagation();
-    pendingUpload.current = { projectId, milestoneId };
+    pendingUpload.current = { projectId, milestoneId, taskId };
     fileInputRef.current.value = '';
     fileInputRef.current.click();
   };
@@ -531,14 +532,13 @@ export default function ProjectsPage() {
   const handleFileSelected = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
-    const { projectId, milestoneId } = pendingUpload.current;
-    setUploadingFor(milestoneId || projectId);
+    const { projectId, milestoneId, taskId } = pendingUpload.current;
+    setUploadingFor(taskId || milestoneId || projectId);
     try {
-      const saved = await uploadProjectFile(projectId, file, milestoneId);
+      const saved = await uploadProjectFile(projectId, file, milestoneId, taskId);
       if (activeProject?.id === projectId) {
         setProjectFiles(prev => [saved, ...prev]);
       }
-      // Always update card-level files map so it shows on the card
       setCardFiles(prev => ({ ...prev, [projectId]: [saved, ...(prev[projectId] || [])] }));
     } catch (err) {
       console.error('Upload failed:', err.message);
@@ -802,11 +802,11 @@ export default function ProjectsPage() {
           )}
 
           {/* ── Project Files ─────────────────────────────────────── */}
-          {projectFiles.filter(f => !f.milestone_id).length > 0 && (
+          {projectFiles.filter(f => !f.milestone_id && !f.task_id).length > 0 && (
             <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: '16px 20px', marginBottom: 20 }}>
               <div style={{ fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--text-faint)', marginBottom: 10 }}>Project Documents</div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                {projectFiles.filter(f => !f.milestone_id).map(f => (
+                {projectFiles.filter(f => !f.milestone_id && !f.task_id).map(f => (
                   <div key={f.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 10px', borderRadius: 6, background: 'var(--bg)', border: '1px solid var(--border-light)' }}>
                     <span style={{ fontSize: 18, flexShrink: 0 }}>{fileIcon(f.mime_type)}</span>
                     <a href={f.url} target="_blank" rel="noopener noreferrer" style={{ flex: 1, fontSize: 13, fontWeight: 600, color: 'var(--accent)', textDecoration: 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</a>
@@ -918,7 +918,7 @@ export default function ProjectsPage() {
                       </div>
 
                       {/* Milestone Files */}
-                      {projectFiles.filter(f => f.milestone_id === ms.id).map(f => (
+                      {projectFiles.filter(f => f.milestone_id === ms.id && !f.task_id).map(f => (
                         <div key={f.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 16px 7px 48px', borderBottom: '1px solid var(--border-light)', background: 'var(--bg)' }}>
                           <span style={{ fontSize: 16, flexShrink: 0 }}>{fileIcon(f.mime_type)}</span>
                           <a href={f.url} target="_blank" rel="noopener noreferrer" style={{ flex: 1, fontSize: 12, fontWeight: 600, color: 'var(--accent)', textDecoration: 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</a>
@@ -928,30 +928,104 @@ export default function ProjectsPage() {
                       ))}
 
                       {/* Tasks */}
-                      {msTasks.map(task => (
-                        <div key={task.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 16px 9px 48px', borderBottom: '1px solid var(--border-light)', background: task.completed ? 'var(--surface-2)' : 'var(--surface)' }}>
-                          <input
-                            type="checkbox"
-                            checked={task.completed}
-                            onChange={() => handleToggleTask(task)}
-                            style={{ width: 15, height: 15, accentColor: color, cursor: 'pointer', flexShrink: 0 }}
-                          />
-                          <span style={{ flex: 1, fontSize: 13, color: task.completed ? 'var(--text-faint)' : 'var(--text)', textDecoration: task.completed ? 'line-through' : 'none' }}>
-                            {task.title}
-                          </span>
-                          <select
-                            value={task.assigned_to || ''}
-                            onChange={e => { const u = { ...task, assigned_to: e.target.value }; setTasks(p => p.map(t => t.id === task.id ? u : t)); upsertProjectTask(u); }}
-                            onClick={e => e.stopPropagation()}
-                            style={{ fontSize: 11, padding: '2px 6px', width: 'auto', color: 'var(--text-muted)' }}
-                          >
-                            <option value="">—</option>
-                            {OWNERS.map(o => <option key={o} value={o}>{o}</option>)}
-                          </select>
-                          {task.due_date && <span style={{ fontSize: 11, color: 'var(--text-faint)', whiteSpace: 'nowrap' }}>{fmtDate(task.due_date)}</span>}
-                          <button onClick={() => handleDeleteTask(task.id)} style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 13, padding: '2px 4px', flexShrink: 0 }}>✕</button>
-                        </div>
-                      ))}
+                      {msTasks.map(task => {
+                        const taskFiles      = projectFiles.filter(f => f.task_id === task.id);
+                        const pendingDelete  = confirmDeleteTask === task.id;
+                        return (
+                          <div key={task.id} style={{ borderBottom: '1px solid var(--border-light)', background: 'var(--surface)' }}>
+                            {/* Main row */}
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 16px 9px 48px' }}>
+                              <input
+                                type="checkbox"
+                                checked={task.completed}
+                                onChange={() => handleToggleTask(task)}
+                                style={{ width: 15, height: 15, accentColor: color, cursor: 'pointer', flexShrink: 0 }}
+                              />
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <span style={{
+                                  fontSize: 13,
+                                  color: 'var(--text)',
+                                  textDecoration: task.completed ? 'line-through' : 'none',
+                                  textDecorationColor: '#ef4444',
+                                }}>
+                                  {task.title}
+                                </span>
+                                {task.completed && task.completed_at && (
+                                  <div style={{ fontSize: 10, color: 'var(--text-faint)', marginTop: 2 }}>
+                                    ✓ Completed {fmtDate(task.completed_at)}
+                                  </div>
+                                )}
+                              </div>
+                              <select
+                                value={task.assigned_to || ''}
+                                onChange={e => { const u = { ...task, assigned_to: e.target.value }; setTasks(p => p.map(t => t.id === task.id ? u : t)); upsertProjectTask(u); }}
+                                onClick={e => e.stopPropagation()}
+                                style={{ fontSize: 11, padding: '2px 6px', width: 'auto', color: 'var(--text-muted)', flexShrink: 0 }}
+                              >
+                                <option value="">—</option>
+                                {OWNERS.map(o => <option key={o} value={o}>{o}</option>)}
+                              </select>
+                              {task.due_date && (
+                                <span style={{ fontSize: 11, color: 'var(--text-faint)', whiteSpace: 'nowrap', flexShrink: 0 }}>{fmtDate(task.due_date)}</span>
+                              )}
+                              {/* Attach file to task */}
+                              <button
+                                onClick={e => { e.stopPropagation(); triggerFileUpload(activeProject.id, null, null, task.id); }}
+                                disabled={uploadingFor === task.id}
+                                title="Attach file"
+                                style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 13, padding: '2px 4px', flexShrink: 0 }}
+                              >
+                                {uploadingFor === task.id ? '⏳' : '📎'}
+                              </button>
+                              {/* Delete with confirmation */}
+                              <button
+                                onClick={() => {
+                                  if (pendingDelete) {
+                                    handleDeleteTask(task.id);
+                                    setConfirmDeleteTask(null);
+                                  } else {
+                                    setConfirmDeleteTask(task.id);
+                                  }
+                                }}
+                                style={{
+                                  background: pendingDelete ? '#fef2f2' : 'none',
+                                  border: pendingDelete ? '1px solid #fecaca' : 'none',
+                                  color: pendingDelete ? '#ef4444' : 'var(--text-faint)',
+                                  cursor: 'pointer', fontSize: pendingDelete ? 11 : 13,
+                                  padding: pendingDelete ? '2px 7px' : '2px 4px',
+                                  borderRadius: 4, fontWeight: pendingDelete ? 700 : 400,
+                                  flexShrink: 0, whiteSpace: 'nowrap',
+                                  transition: 'all .15s',
+                                }}
+                              >
+                                {pendingDelete ? 'Delete?' : '✕'}
+                              </button>
+                            </div>
+                            {/* Task-level attached files */}
+                            {taskFiles.length > 0 && (
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, padding: '4px 16px 8px 64px' }}>
+                                {taskFiles.map(f => (
+                                  <a
+                                    key={f.id}
+                                    href={f.url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    onClick={e => e.stopPropagation()}
+                                    style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '3px 8px', borderRadius: 4, background: 'var(--bg)', border: '1px solid var(--border-light)', fontSize: 11, color: 'var(--accent)', textDecoration: 'none' }}
+                                  >
+                                    <span>{fileIcon(f.mime_type)}</span>
+                                    <span style={{ maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</span>
+                                    <button
+                                      onClick={e => { e.preventDefault(); e.stopPropagation(); handleDeleteFile(f); }}
+                                      style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: '0 0 0 2px', fontSize: 11, lineHeight: 1 }}
+                                    >✕</button>
+                                  </a>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
 
                       {/* Add task row */}
                       {newTaskMs === ms.id ? (

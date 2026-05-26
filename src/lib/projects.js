@@ -264,9 +264,11 @@ export async function fetchProjectFiles(projectId) {
   return data || [];
 }
 
-export async function uploadProjectFile(projectId, file, milestoneId = null) {
+export async function uploadProjectFile(projectId, file, milestoneId = null, taskId = null) {
   const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-  const folder   = milestoneId ? `${projectId}/${milestoneId}` : `${projectId}/general`;
+  const folder   = taskId       ? `${projectId}/tasks/${taskId}`
+                 : milestoneId  ? `${projectId}/${milestoneId}`
+                 : `${projectId}/general`;
   const path     = `${folder}/${Date.now()}-${safeName}`;
 
   const { error: storageErr } = await supabase.storage
@@ -283,6 +285,7 @@ export async function uploadProjectFile(projectId, file, milestoneId = null) {
     .insert({
       project_id:   projectId,
       milestone_id: milestoneId || null,
+      task_id:      taskId || null,
       name:         file.name,
       size:         file.size,
       mime_type:    file.type,
