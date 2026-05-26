@@ -289,6 +289,56 @@ Return only the marked text, nothing else.`;
   return parseMarkedText(raw);
 }
 
+// Ask Claude to map each task title directly to the page where it's discussed.
+// Returns a plain object { "Task title": pageNumber, ... }.
+export async function indexTaskPages(pdfBase64, taskTitles) {
+  if (!pdfBase64 || !taskTitles.length) return {};
+  const key = import.meta.env.VITE_ANTHROPIC_API_KEY;
+  if (!key) return {};
+
+  const list = taskTitles.map(t => `- ${t}`).join('\n');
+  const prompt = `You are reading a project proposal PDF. Below is a list of task titles that were extracted from this proposal.
+
+For each task title, identify the page number where that task or deliverable is described in the most detail (i.e. the dedicated section or paragraph — NOT a brief mention in an overview list or table of contents).
+
+Task titles:
+${list}
+
+Return ONLY a valid JSON object — no markdown, no explanation:
+{"exact task title": page_number, ...}
+
+Use the exact task title strings as keys. If a task has no dedicated section, use the page where it is most substantively discussed.`;
+
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': key,
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true',
+    },
+    body: JSON.stringify({
+      model: 'claude-haiku-4-5',
+      max_tokens: 1024,
+      messages: [{ role: 'user', content: [
+        { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: pdfBase64 } },
+        { type: 'text', text: prompt },
+      ]}],
+    }),
+  });
+
+  if (!res.ok) return {};
+  const json = await res.json();
+  try {
+    const raw = json.content[0].text.trim();
+    // Strip any accidental markdown fences
+    const cleaned = raw.replace(/^```[a-z]*\n?/i, '').replace(/\n?```$/,'');
+    return JSON.parse(cleaned);
+  } catch {
+    return {};
+  }
+}
+
 // ── AI Proposal Parsing ───────────────────────────────────────────────────────
 
 export async function parseProposalWithAI(proposalText, startDate, pdfBase64 = null) {

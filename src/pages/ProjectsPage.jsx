@@ -1551,14 +1551,22 @@ export default function ProjectsPage() {
       {proposalPanel && (() => {
         const proposalText   = activeProject.proposal_text       || '';
         const proposalPdfUrl = activeProject.proposal_pdf_url    || '';
-        // paraPages is an array: paraPages[i] = page number for paragraph i
-        const paraPages      = Array.isArray(activeProject.proposal_page_hints)
-                               ? activeProject.proposal_page_hints : [];
+        const hints          = activeProject.proposal_page_hints;
         const isPdf          = !!proposalPdfUrl;
         const paras          = proposalText.split(/\n\s*\n/).map(p => p.trim()).filter(Boolean);
         const highlightIdx   = findRelevantParaIndex(proposalText, proposalPanel.task.title);
-        // Page number comes directly from the same index used for highlighting
-        const pageNum        = (highlightIdx >= 0 && paraPages[highlightIdx]) || null;
+
+        // Resolve page number:
+        // • New format: hints is an object { "Task title": pageNum } — direct lookup
+        // • Legacy format: hints is a paraPages array — use highlight index
+        let pageNum = null;
+        if (hints && !Array.isArray(hints) && typeof hints === 'object') {
+          pageNum = hints[proposalPanel.task.title]
+            ?? findPageHint(hints, proposalPanel.task.title)
+            ?? null;
+        } else if (Array.isArray(hints) && highlightIdx >= 0) {
+          pageNum = hints[highlightIdx] || null;
+        }
 
         return (
           <>
