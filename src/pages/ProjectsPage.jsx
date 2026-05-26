@@ -470,7 +470,7 @@ export default function ProjectsPage() {
   };
 
   const handleRestoreTask = async (task) => {
-    const restored = await restoreProjectTask(task.id);
+    const restored = await restoreProjectTask(task.id, task);
     const updated = [...tasks, restored].sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0));
     setTasks(updated);
     setAllTasks(prev => ({ ...prev, [activeProject.id]: updated }));

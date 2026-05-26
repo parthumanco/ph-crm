@@ -143,11 +143,21 @@ export async function deleteProjectTask(id) {
   }
 }
 
-export async function restoreProjectTask(id) {
+export async function restoreProjectTask(id, taskData = null) {
+  // Try soft-restore first (update deleted_at → null)
   const { data, error } = await supabase
     .from('project_tasks').update({ deleted_at: null }).eq('id', id).select().single();
-  if (error) throw new Error(error.message);
-  return data;
+
+  if (data) return data;
+
+  // Row was hard-deleted (deleted_at column didn't exist yet) — re-insert from local state
+  if (taskData) {
+    // eslint-disable-next-line no-unused-vars
+    const { deleted_at, ...clean } = taskData;
+    return upsertProjectTask({ ...clean, deleted_at: null });
+  }
+
+  throw new Error(error?.message || 'Task not found — run: alter table project_tasks add column if not exists deleted_at timestamptz;');
 }
 
 // Bulk insert for AI-generated timelines
