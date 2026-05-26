@@ -120,20 +120,10 @@ export default function ProposalImporter({ projectId, projectStart, onImported, 
     // For PDFs: extract full text + page hints in parallel with the save
     if (inputMode === 'pdf' && pdfBase64) {
       try {
-        const allTaskTitles = preview.flatMap(m => m.tasks.map(t => t.title));
-        const { text: extracted, pageArray } = await extractPdfTextAndPages(pdfBase64, allTaskTitles);
-        console.log('[ProposalImporter] pageArray from Claude:', pageArray);
-        console.log('[ProposalImporter] task titles:', allTaskTitles);
-        proposalText = extracted || null;
-        // Build hints keyed by the EXACT task titles we passed in — no mismatch possible
-        if (pageArray.length) {
-          const hints = {};
-          allTaskTitles.forEach((title, i) => {
-            if (pageArray[i]) hints[title] = pageArray[i];
-          });
-          console.log('[ProposalImporter] built page hints:', hints);
-          proposalPageHints = Object.keys(hints).length ? hints : null;
-        }
+        const { text: extracted, paraPages } = await extractPdfTextAndPages(pdfBase64);
+        proposalText      = extracted || null;
+        // Store paraPages as the hints — one page number per paragraph in the extracted text
+        proposalPageHints = paraPages.length ? paraPages : null;
       } catch (e) {
         console.warn('PDF text extraction failed:', e.message);
       }

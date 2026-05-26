@@ -221,23 +221,49 @@ export async function bulkInsertTasks(rows) {
 
 // ── PDF Text + Page Extraction ───────────────────────────────────────────────
 
-export async function extractPdfTextAndPages(pdfBase64, taskTitles = []) {
-  const key = import.meta.env.VITE_ANTHROPIC_API_KEY;
-  if (!key) return { text: '', pageArray: [] };
+// Parse Claude's page-marked text into clean text + per-paragraph page numbers
+function parseMarkedText(markedText) {
+  const sections = [];
+  const pagePattern = /\[PAGE (\d+)\]/g;
+  let lastIndex = 0, lastPage = 1, match;
 
-  const taskList = taskTitles.length
-    ? `\n\nFor each numbered task below, identify the page where that task is described IN THE MOST DETAIL — meaning the page with the longest or most specific explanation of that deliverable. Ignore pages that only briefly mention or list the task. Return a JSON array with exactly ${taskTitles.length} integers — one per task in the same order:\n${taskTitles.map((t, i) => `${i + 1}. ${t}`).join('\n')}\n\nIMPORTANT: Different tasks should map to different pages where possible. Only use the same page for multiple tasks if they are truly co-located in the document.`
-    : '';
+  while ((match = pagePattern.exec(markedText)) !== null) {
+    if (match.index > lastIndex) {
+      sections.push({ page: lastPage, text: markedText.slice(lastIndex, match.index) });
+    }
+    lastPage = parseInt(match[1]);
+    lastIndex = match.index + match[0].length;
+  }
+  if (lastIndex < markedText.length) {
+    sections.push({ page: lastPage, text: markedText.slice(lastIndex) });
+  }
 
-  const prompt = `Extract the complete text content of this PDF. Preserve paragraph breaks using double newlines.${taskList}
+  const allParas = [], paraPages = [];
+  for (const { page, text } of sections) {
+    const paras = text.split(/\n\s*\n/).map(p => p.trim()).filter(Boolean);
+    for (const para of paras) {
+      allParas.push(para);
+      paraPages.push(page);
+    }
+  }
 
-Return ONLY valid JSON in this exact format:
-{
-  "text": "full document text here...",
-  "pageArray": [3, 4, 5, 5, 7, 8]
+  return { text: allParas.join('\n\n'), paraPages };
 }
 
-The pageArray must have exactly ${taskTitles.length} integers, one per task in order. Vary the page numbers — do not return the same page for all tasks.`;
+export async function extractPdfTextAndPages(pdfBase64) {
+  const key = import.meta.env.VITE_ANTHROPIC_API_KEY;
+  if (!key) return { text: '', paraPages: [] };
+
+  const prompt = `Extract the complete text of this PDF. Before each new page insert the marker [PAGE N] where N is the page number.
+
+Example:
+[PAGE 1]
+First page text...
+
+[PAGE 2]
+Second page text...
+
+Return only the marked text, nothing else.`;
 
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
@@ -257,20 +283,10 @@ The pageArray must have exactly ${taskTitles.length} integers, one per task in o
     }),
   });
 
-  if (!res.ok) return { text: '', pageArray: [] };
+  if (!res.ok) return { text: '', paraPages: [] };
   const json = await res.json();
   const raw  = json.content[0].text.trim();
-  const match = raw.match(/\{[\s\S]*\}/);
-  if (!match) return { text: raw, pageArray: [] };
-  try {
-    const parsed = JSON.parse(match[0]);
-    return {
-      text:      parsed.text      || '',
-      pageArray: Array.isArray(parsed.pageArray) ? parsed.pageArray : [],
-    };
-  } catch {
-    return { text: raw, pageArray: [] };
-  }
+  return parseMarkedText(raw);
 }
 
 // ── AI Proposal Parsing ───────────────────────────────────────────────────────

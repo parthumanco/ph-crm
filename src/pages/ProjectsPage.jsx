@@ -1540,14 +1540,14 @@ export default function ProjectsPage() {
       {proposalPanel && (() => {
         const proposalText   = activeProject.proposal_text       || '';
         const proposalPdfUrl = activeProject.proposal_pdf_url    || '';
-        const pageHints      = activeProject.proposal_page_hints || {};
+        // paraPages is an array: paraPages[i] = page number for paragraph i
+        const paraPages      = Array.isArray(activeProject.proposal_page_hints)
+                               ? activeProject.proposal_page_hints : [];
         const isPdf          = !!proposalPdfUrl;
         const paras          = proposalText.split(/\n\s*\n/).map(p => p.trim()).filter(Boolean);
         const highlightIdx   = findRelevantParaIndex(proposalText, proposalPanel.task.title);
-        // Page jump: fuzzy-match task title against hint keys, fall back to milestone
-        const taskMs  = milestones.find(m => tasks.find(t => t.id === proposalPanel.task.id && t.milestone_id === m.id));
-        const pageNum = findPageHint(pageHints, proposalPanel.task.title, taskMs?.title);
-        console.log('[ProposalDrawer] task:', proposalPanel.task.title, '| pageHints keys:', Object.keys(pageHints), '| resolved page:', pageNum);
+        // Page number comes directly from the same index used for highlighting
+        const pageNum        = (highlightIdx >= 0 && paraPages[highlightIdx]) || null;
 
         return (
           <>
