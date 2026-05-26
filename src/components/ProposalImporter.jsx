@@ -319,6 +319,13 @@ export default function ProposalImporter({ projectId, projectStart, onImported, 
                   {/* Tasks */}
                   {m.tasks.length > 0 && (
                     <div style={{ borderTop: '1px solid var(--border-light)' }}>
+                      {/* Task column headers */}
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 80px 120px 32px', gap: 10, padding: '4px 14px 4px 28px', background: 'var(--bg)' }}>
+                        <div style={{ fontSize: 9, fontWeight: 800, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.05em' }}>Task</div>
+                        <div style={{ fontSize: 9, fontWeight: 800, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.05em', textAlign: 'center' }}>Days</div>
+                        <div style={{ fontSize: 9, fontWeight: 800, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.05em' }}>Assigned</div>
+                        <div />
+                      </div>
                       {m.tasks.map((t, ti) => (
                         <div key={t._id} style={{ display: 'grid', gridTemplateColumns: '1fr 80px 120px 32px', gap: 10, padding: '7px 14px 7px 28px', alignItems: 'center', borderBottom: ti < m.tasks.length - 1 ? '1px solid var(--border-light)' : 'none' }}>
                           <input
