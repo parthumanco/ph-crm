@@ -338,10 +338,7 @@ export default function DealsPage({ refreshKey = 0 }) {
       )}
 
       <div className="page-header">
-        <div className="page-header-left">
-          <h2>💼 Deals</h2>
-          <p>{activeDeals.length} active deal{activeDeals.length !== 1 ? 's' : ''} · {fmt$(totalPipeline)} pipeline</p>
-        </div>
+        <div className="page-header-left" />
         <div className="page-header-actions">
           <button className="btn btn-primary" onClick={() => { setSelectedDeal(null); setShowNewDeal(true); }}>
             + New Deal
@@ -351,7 +348,12 @@ export default function DealsPage({ refreshKey = 0 }) {
 
       <div className="page-body">
         {/* Stats */}
-        <div className="stats-row cols-3" style={{ marginBottom: 24 }}>
+        <div className="stats-row cols-4" style={{ marginBottom: 24 }}>
+          <div className="stat-card">
+            <div className="stat-val" style={{ color: 'var(--accent)' }}>{activeDeals.length}</div>
+            <div className="stat-label">Active Deals</div>
+            <div className="stat-sub">{fmt$(totalPipeline)} pipeline</div>
+          </div>
           <div className="stat-card">
             <div className="stat-val">{fmt$(totalPipeline)}</div>
             <div className="stat-label">Pipeline Value</div>
