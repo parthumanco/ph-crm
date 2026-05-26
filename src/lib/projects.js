@@ -190,6 +190,22 @@ export async function deleteProjectTask(id) {
   }
 }
 
+export async function fetchAllTasksByOwner(owner) {
+  const { data, error } = await supabase
+    .from('project_tasks').select('*')
+    .eq('assigned_to', owner)
+    .is('deleted_at', null)
+    .order('due_date', { ascending: true, nullsFirst: false });
+  if (!error) return data || [];
+  // fallback if deleted_at column doesn't exist
+  const { data: d2, error: e2 } = await supabase
+    .from('project_tasks').select('*')
+    .eq('assigned_to', owner)
+    .order('due_date', { ascending: true, nullsFirst: false });
+  if (e2) throw new Error(e2.message);
+  return d2 || [];
+}
+
 export async function restoreProjectTask(id, taskData = null) {
   // Try soft-restore first (update deleted_at → null)
   const { data, error } = await supabase

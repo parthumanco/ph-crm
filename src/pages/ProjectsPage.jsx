@@ -4,7 +4,7 @@ import {
   fetchMilestones, fetchArchivedMilestones, upsertMilestone, archiveMilestone, restoreMilestone, deleteMilestone,
   fetchProjectTasks, upsertProjectTask, toggleTask, deleteProjectTask,
   fetchProjectFiles, uploadProjectFile, deleteProjectFile, addExternalLink,
-  restoreProjectTask,
+  restoreProjectTask, fetchAllTasksByOwner,
   bulkInsertMilestones, bulkInsertTasks, parseProposalWithAI,
   PROJECT_STATUSES, MILESTONE_STATUSES, OWNERS,
   projColor, projLabel, msColor, msLabel,
@@ -395,6 +395,10 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0 }) {
   const [showArchivedMilestones, setShowArchivedMilestones] = useState(false);
   const [confirmHardDelete, setConfirmHardDelete]   = useState(null); // { type: 'task'|'milestone'|'project', item }
   const [reindexing, setReindexing]                 = useState(false);
+  const [assignedOwner, setAssignedOwner]   = useState(OWNERS[0]);
+  const [assignedTasks, setAssignedTasks]   = useState([]);
+  const [assignedFiles, setAssignedFiles]   = useState({});  // taskId → File[]
+  const [loadingAssigned, setLoadingAssigned] = useState(false);
   const [showLinkModal, setShowLinkModal]         = useState(null); // { projectId, milestoneId, taskId }
   const [linkUrl, setLinkUrl]                     = useState('');
   const [linkName, setLinkName]                   = useState('');
@@ -443,6 +447,37 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0 }) {
   }, [refreshKey]);
 
   useEffect(() => { loadAll(); }, [loadAll]);
+
+  const loadAssigned = useCallback(async (owner) => {
+    setLoadingAssigned(true);
+    try {
+      const rawTasks = await fetchAllTasksByOwner(owner);
+      const projectIds = [...new Set(rawTasks.map(t => t.project_id).filter(Boolean))];
+      const milestoneMap = {};
+      const fileMap = {};
+      await Promise.all(projectIds.map(async pid => {
+        const [ms, files] = await Promise.all([
+          fetchMilestones(pid),
+          fetchProjectFiles(pid),
+        ]);
+        ms.forEach(m => { milestoneMap[m.id] = m; });
+        files.filter(f => f.task_id).forEach(f => {
+          if (!fileMap[f.task_id]) fileMap[f.task_id] = [];
+          fileMap[f.task_id].push(f);
+        });
+      }));
+      setAssignedTasks(rawTasks.map(t => ({
+        ...t,
+        _project:   projects.find(p => p.id === t.project_id) || { name: 'Unknown', id: t.project_id },
+        _milestone: t.milestone_id ? milestoneMap[t.milestone_id] : null,
+      })));
+      setAssignedFiles(fileMap);
+    } catch (e) {
+      console.error('loadAssigned error:', e);
+    } finally {
+      setLoadingAssigned(false);
+    }
+  }, [projects]);
 
   // Open project detail
   const openProject = async (project) => {
@@ -732,6 +767,36 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0 }) {
     setEditingTask(null);
   };
 
+  const handleToggleAssignedTask = async (task) => {
+    await toggleTask(task.id, !task.completed);
+    setAssignedTasks(prev => prev.map(t =>
+      t.id === task.id ? { ...t, completed: !t.completed, completed_at: !task.completed ? new Date().toISOString() : null } : t
+    ));
+  };
+
+  const handleSaveAssignedTaskEdit = async (task) => {
+    if (!editTaskDraft.title?.trim()) { setEditingTask(null); return; }
+    const updated = { ...task, title: editTaskDraft.title.trim(), due_date: editTaskDraft.due_date || null, assigned_to: editTaskDraft.assigned_to || '' };
+    await upsertProjectTask(updated);
+    setAssignedTasks(prev => prev.map(t =>
+      t.id === updated.id ? { ...updated, _project: t._project, _milestone: t._milestone } : t
+    ));
+    setEditingTask(null);
+    // If owner changed away from current filter, remove from list
+    if (updated.assigned_to !== assignedOwner) {
+      setAssignedTasks(prev => prev.filter(t => t.id !== updated.id));
+    }
+  };
+
+  const handleDeleteAssignedTask = async (id) => {
+    try {
+      await deleteProjectTask(id);
+      setAssignedTasks(prev => prev.filter(t => t.id !== id));
+    } catch (e) {
+      console.error('Delete assigned task failed:', e);
+    }
+  };
+
   // ── Proposal import callback (works from card OR detail view) ────────────
   const handleImported = async ({ startDate, projectName, milestones: msParsed, proposalText, proposalPdfFile, proposalPageHints, gdocUrl, gdocName }, fromProjectId) => {
     const projectId = fromProjectId || activeProject?.id;
@@ -896,6 +961,201 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0 }) {
   const doneTasks      = totalTasks.filter(t => t.completed).length;
 
   // ═════════════════════════════════════════════════════════════════════════
+  // ── ASSIGNED VIEW ────────────────────────────────────────────────────────
+  // ═════════════════════════════════════════════════════════════════════════
+  if (view === 'assigned') {
+    const today = new Date().toISOString().slice(0, 10);
+    const completedCount2 = assignedTasks.filter(t => t.completed).length;
+    const overdueCount    = assignedTasks.filter(t => !t.completed && t.due_date && t.due_date < today).length;
+
+    return (
+      <>
+        <div className="page-header">
+          <div className="page-header-left">
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+              <button
+                onClick={() => setView('list')}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: 'var(--text-muted)', padding: '4px 0', fontWeight: 600 }}
+              >← Projects</button>
+              <h2 style={{ margin: 0 }}>👤 Team Tasks</h2>
+              <select
+                value={assignedOwner}
+                onChange={e => { setAssignedOwner(e.target.value); loadAssigned(e.target.value); }}
+                style={{ fontSize: 14, fontWeight: 700, padding: '5px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', cursor: 'pointer' }}
+              >
+                {OWNERS.map(o => <option key={o} value={o}>{o}</option>)}
+              </select>
+            </div>
+            <p style={{ margin: '4px 0 0', fontSize: 13, color: 'var(--text-muted)' }}>
+              {assignedTasks.length} tasks · {completedCount2} completed{overdueCount > 0 ? ` · ${overdueCount} overdue` : ''}
+            </p>
+          </div>
+          <div className="page-header-actions">
+            <button
+              onClick={() => loadAssigned(assignedOwner)}
+              disabled={loadingAssigned}
+              style={{ padding: '7px 14px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface)', cursor: 'pointer', fontSize: 13, color: 'var(--text-muted)' }}
+            >{loadingAssigned ? '⏳' : '↺ Refresh'}</button>
+          </div>
+        </div>
+
+        <div className="page-body">
+          {loadingAssigned ? (
+            <div className="empty-state"><div className="spinner" /><p style={{ marginTop: 12 }}>Loading tasks…</p></div>
+          ) : assignedTasks.length === 0 ? (
+            <div className="empty-state">
+              <div className="empty-icon">✅</div>
+              <h3>No tasks assigned to {assignedOwner}</h3>
+              <p>Tasks assigned to {assignedOwner} will appear here sorted by due date.</p>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 0, border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
+              {assignedTasks.map((task, idx) => {
+                const isEditingThis = editingTask === task.id;
+                const pendingDelete = confirmDeleteTask === task.id;
+                const taskFiles     = assignedFiles[task.id] || [];
+                const isOverdue     = !task.completed && task.due_date && task.due_date < today;
+                const msColor2      = task._milestone ? msColor(task._milestone.status) : 'var(--border)';
+
+                return (
+                  <div
+                    key={task.id}
+                    style={{
+                      borderBottom: idx < assignedTasks.length - 1 ? '1px solid var(--border-light)' : 'none',
+                      background: task.completed ? 'var(--surface)' : 'var(--bg)',
+                    }}
+                  >
+                    {isEditingThis ? (
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, padding: '10px 16px', alignItems: 'center', background: 'var(--bg)', borderLeft: '3px solid var(--accent)' }}>
+                        <input
+                          type="text"
+                          autoFocus
+                          value={editTaskDraft.title}
+                          onChange={e => setEditTaskDraft(d => ({ ...d, title: e.target.value }))}
+                          onKeyDown={e => { if (e.key === 'Enter') handleSaveAssignedTaskEdit(task); if (e.key === 'Escape') setEditingTask(null); }}
+                          style={{ flex: '1 1 180px', fontSize: 13, padding: '5px 10px', fontWeight: 600 }}
+                          placeholder="Task title"
+                        />
+                        <div>
+                          <Lbl>Due date</Lbl>
+                          <input type="date" value={editTaskDraft.due_date} onChange={e => setEditTaskDraft(d => ({ ...d, due_date: e.target.value }))} style={{ fontSize: 12, padding: '4px 8px', width: 'auto' }} />
+                        </div>
+                        <div>
+                          <Lbl>Assigned to</Lbl>
+                          <select value={editTaskDraft.assigned_to} onChange={e => setEditTaskDraft(d => ({ ...d, assigned_to: e.target.value }))} style={{ fontSize: 12, padding: '4px 8px', width: 'auto' }}>
+                            <option value="">—</option>
+                            {OWNERS.map(o => <option key={o} value={o}>{o}</option>)}
+                          </select>
+                        </div>
+                        <div style={{ display: 'flex', gap: 6, marginLeft: 'auto' }}>
+                          <button className="btn btn-primary" onClick={() => handleSaveAssignedTaskEdit(task)} style={{ fontSize: 12 }}>Save</button>
+                          <button onClick={() => setEditingTask(null)} style={{ padding: '5px 10px', borderRadius: 5, border: '1px solid var(--border)', background: 'transparent', cursor: 'pointer', fontSize: 12 }}>Cancel</button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 16px' }}>
+                        <input
+                          type="checkbox"
+                          checked={task.completed}
+                          onChange={() => handleToggleAssignedTask(task)}
+                          style={{ width: 15, height: 15, accentColor: msColor2, cursor: 'pointer', flexShrink: 0 }}
+                        />
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, flexWrap: 'wrap' }}>
+                            <span
+                              style={{ fontSize: 13, fontWeight: 600, color: task.completed ? 'var(--text-faint)' : 'var(--text)', textDecoration: task.completed ? 'line-through' : 'none', textDecorationColor: '#ef4444', cursor: 'text' }}
+                              onDoubleClick={() => startEditTask(task)}
+                              title="Double-click to edit"
+                            >{task.title}</span>
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 3, flexWrap: 'wrap' }}>
+                            <span style={{ fontSize: 11, color: 'var(--accent)', fontWeight: 600, cursor: 'pointer' }}
+                              onClick={() => { openProject(task._project); }}
+                            >{task._project?.name}</span>
+                            {task._milestone && (
+                              <>
+                                <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>›</span>
+                                <span style={{ fontSize: 11, color: msColor2, fontWeight: 600 }}>{task._milestone.title}</span>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                        {task.due_date && (
+                          <span style={{ fontSize: 11, color: isOverdue ? '#ef4444' : 'var(--text-faint)', whiteSpace: 'nowrap', flexShrink: 0, fontWeight: isOverdue ? 700 : 400 }}>
+                            {isOverdue ? '⚠ ' : ''}{fmtDate(task.due_date)}
+                          </span>
+                        )}
+                        <button onClick={() => startEditTask(task)} title="Edit" style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 13, padding: '2px 4px', flexShrink: 0 }}>✏️</button>
+                        <button
+                          onClick={e => { e.stopPropagation(); triggerFileUpload(task.project_id, null, null, task.id); }}
+                          disabled={uploadingFor === task.id}
+                          title="Attach file"
+                          style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 13, padding: '2px 4px', flexShrink: 0 }}
+                        >{uploadingFor === task.id ? '⏳' : '📎'}</button>
+                        <button
+                          onClick={e => { e.stopPropagation(); openLinkModal(task.project_id, null, task.id); }}
+                          title="Add link"
+                          style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 13, padding: '2px 4px', flexShrink: 0 }}
+                        >🔗</button>
+                        <button
+                          onClick={() => {
+                            if (pendingDelete) { handleDeleteAssignedTask(task.id); setConfirmDeleteTask(null); }
+                            else setConfirmDeleteTask(task.id);
+                          }}
+                          style={{
+                            background: pendingDelete ? '#fef2f2' : 'none',
+                            border: pendingDelete ? '1px solid #fecaca' : 'none',
+                            color: pendingDelete ? '#ef4444' : 'var(--text-faint)',
+                            cursor: 'pointer', fontSize: pendingDelete ? 11 : 13,
+                            padding: pendingDelete ? '2px 7px' : '2px 4px',
+                            borderRadius: 4, fontWeight: pendingDelete ? 700 : 400,
+                            flexShrink: 0, whiteSpace: 'nowrap', transition: 'all .15s',
+                          }}
+                        >{pendingDelete ? 'Delete?' : '✕'}</button>
+                      </div>
+                    )}
+                    {taskFiles.length > 0 && (
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, padding: '4px 16px 8px 41px' }}>
+                        {taskFiles.map(f => (
+                          <a key={f.id} href={f.url} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()}
+                            style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '3px 8px', borderRadius: 4, background: 'var(--bg)', border: '1px solid var(--border-light)', fontSize: 11, color: 'var(--accent)', textDecoration: 'none' }}>
+                            <span>{fileIcon(f.mime_type)}</span>
+                            <span style={{ maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</span>
+                            <button onClick={e => { e.preventDefault(); e.stopPropagation(); handleDeleteFile(f); }} style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: '0 0 0 2px', fontSize: 11 }}>✕</button>
+                          </a>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Shared modals (link modal + file input are rendered at component root) */}
+        <input ref={fileInputRef} type="file" accept="*/*" style={{ display: 'none' }} onChange={handleFileSelected} />
+        {showLinkModal && (
+          <div style={{ position: 'fixed', inset: 0, zIndex: 800, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.35)' }} onClick={() => setShowLinkModal(null)} />
+            <div style={{ position: 'relative', zIndex: 1, background: 'var(--bg)', borderRadius: 12, padding: 24, width: 420, maxWidth: '95vw', boxShadow: '0 16px 48px rgba(0,0,0,0.15)' }}>
+              <h3 style={{ fontSize: 15, fontWeight: 800, marginBottom: 16 }}>Add Link</h3>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                <div><Lbl>URL</Lbl><input type="url" value={linkUrl} onChange={e => setLinkUrl(e.target.value)} placeholder="https://…" autoFocus /></div>
+                <div><Lbl>Display name (optional)</Lbl><input type="text" value={linkName} onChange={e => setLinkName(e.target.value)} placeholder="Auto-detected from URL" /></div>
+                <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                  <button onClick={() => setShowLinkModal(null)} style={{ padding: '7px 14px', borderRadius: 6, border: '1px solid var(--border)', background: 'transparent', cursor: 'pointer', fontSize: 13 }}>Cancel</button>
+                  <button className="btn btn-primary" onClick={handleAddLink} disabled={!linkUrl.trim()}>Add Link</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+      </>
+    );
+  }
+
+  // ═════════════════════════════════════════════════════════════════════════
   // ── LIST VIEW ────────────────────────────────────────────────────────────
   // ═════════════════════════════════════════════════════════════════════════
   if (view === 'list') return (
@@ -906,6 +1166,10 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0 }) {
           <p>{activeCount} active · {projects.length} total</p>
         </div>
         <div className="page-header-actions">
+          <button
+            onClick={() => { setView('assigned'); loadAssigned(assignedOwner); }}
+            style={{ padding: '7px 14px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface)', cursor: 'pointer', fontSize: 13, fontWeight: 600, color: 'var(--text-muted)' }}
+          >👤 Team Tasks</button>
           <button className="btn btn-primary" onClick={() => setShowNewProject(true)}>+ New Project</button>
         </div>
       </div>
