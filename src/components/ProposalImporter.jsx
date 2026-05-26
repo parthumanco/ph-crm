@@ -5,8 +5,9 @@ const today = new Date().toISOString().slice(0, 10);
 
 export default function ProposalImporter({ projectId, projectStart, onImported, onClose }) {
   const [step, setStep]           = useState('paste');   // paste | parsing | preview | saving
-  const [inputMode, setInputMode] = useState('text');    // text | pdf
+  const [inputMode, setInputMode] = useState('text');    // text | pdf | gdoc
   const [text, setText]           = useState('');
+  const [gdocUrl, setGdocUrl]     = useState('');
   const [pdfFile, setPdfFile]     = useState(null);      // File object
   const [pdfBase64, setPdfBase64] = useState(null);      // base64 string
   const [startDate, setStartDate] = useState(projectStart || today);
@@ -30,15 +31,36 @@ export default function ProposalImporter({ projectId, projectStart, onImported, 
     reader.readAsDataURL(file);
   };
 
+  // Extract Google Doc ID from any share/edit/view URL
+  function gdocIdFromUrl(url) {
+    const m = url.match(/\/document\/d\/([a-zA-Z0-9_-]+)/);
+    return m ? m[1] : null;
+  }
+
+  // Fetch plain text from a publicly shared Google Doc
+  async function fetchGdocText(url) {
+    const id = gdocIdFromUrl(url);
+    if (!id) throw new Error('Could not read a Google Doc ID from that URL. Make sure you copied the full link.');
+    const exportUrl = `https://docs.google.com/document/d/${id}/export?format=txt`;
+    const res = await fetch(exportUrl);
+    if (!res.ok) throw new Error('Could not fetch the Google Doc. Make sure the doc is shared as "Anyone with the link can view".');
+    return res.text();
+  }
+
   // ── Step 1: parse ─────────────────────────────────────────────────────────
   const handleParse = async () => {
-    if (inputMode === 'text' && !text.trim()) { setError('Please paste your proposal text.'); return; }
-    if (inputMode === 'pdf'  && !pdfBase64)   { setError('Please select a PDF file.'); return; }
+    if (inputMode === 'text' && !text.trim())   { setError('Please paste your proposal text.'); return; }
+    if (inputMode === 'pdf'  && !pdfBase64)      { setError('Please select a PDF file.'); return; }
+    if (inputMode === 'gdoc' && !gdocUrl.trim()) { setError('Please enter a Google Doc link.'); return; }
     setError('');
     setStep('parsing');
     try {
+      let parseText = inputMode === 'text' ? text : '';
+      if (inputMode === 'gdoc') {
+        parseText = await fetchGdocText(gdocUrl);
+      }
       const result = await parseProposalWithAI(
-        inputMode === 'text' ? text : '',
+        parseText,
         startDate,
         inputMode === 'pdf' ? pdfBase64 : null,
       );
@@ -202,7 +224,7 @@ export default function ProposalImporter({ projectId, projectStart, onImported, 
 
               {/* Input mode toggle */}
               <div style={{ display: 'flex', gap: 3, background: 'var(--surface-2)', borderRadius: 8, padding: 3, alignSelf: 'flex-start' }}>
-                {[{ id: 'text', label: '✏️ Paste text' }, { id: 'pdf', label: '📄 Upload PDF' }].map(m => (
+                {[{ id: 'text', label: '✏️ Paste text' }, { id: 'pdf', label: '📄 Upload PDF' }, { id: 'gdoc', label: '🔗 Google Doc' }].map(m => (
                   <button
                     key={m.id}
                     onClick={() => { setInputMode(m.id); setError(''); }}
@@ -271,11 +293,29 @@ export default function ProposalImporter({ projectId, projectStart, onImported, 
                 </div>
               )}
 
+              {inputMode === 'gdoc' && (
+                <div>
+                  <label style={{ fontSize: 11, fontWeight: 800, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.05em', display: 'block', marginBottom: 6 }}>
+                    Google Doc link
+                  </label>
+                  <input
+                    type="url"
+                    value={gdocUrl}
+                    onChange={e => { setGdocUrl(e.target.value); setError(''); }}
+                    placeholder="https://docs.google.com/document/d/…"
+                    style={{ width: '100%', fontSize: 13, padding: '9px 12px' }}
+                  />
+                  <p style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 6 }}>
+                    The doc must be shared as <strong>"Anyone with the link can view"</strong>
+                  </p>
+                </div>
+              )}
+
               {error && <p style={{ fontSize: 13, color: '#ef4444', margin: 0 }}>{error}</p>}
               <button
                 className="btn btn-primary"
                 onClick={handleParse}
-                disabled={inputMode === 'text' ? !text.trim() : !pdfBase64}
+                disabled={inputMode === 'text' ? !text.trim() : inputMode === 'pdf' ? !pdfBase64 : !gdocUrl.trim()}
                 style={{ alignSelf: 'flex-start' }}
               >
                 Parse with AI →
