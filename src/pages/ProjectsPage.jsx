@@ -75,6 +75,14 @@ function titleWords(str) {
   return str.toLowerCase().split(/\W+/).filter(w => w.length > 2 && !STOP_WORDS.has(w));
 }
 
+// Build a search string for the Chrome PDF viewer's #search= parameter.
+// Uses the 4 most meaningful words from the task title so the viewer
+// highlights the relevant text on the target page.
+function pdfSearchParam(title) {
+  const words = titleWords(title);
+  return encodeURIComponent(words.slice(0, 4).join(' '));
+}
+
 // Find the best-matching key in pageHints for a given title using word overlap
 function findPageHint(pageHints, taskTitle, fallbackTitle = '') {
   if (!pageHints || !taskTitle) return null;
@@ -1630,6 +1638,8 @@ export default function ProjectsPage() {
           pageNum = hints[highlightIdx] || null;
         }
 
+        const searchParam = pdfSearchParam(proposalPanel.task.title);
+
         return (
           <>
             {/* Backdrop */}
@@ -1659,7 +1669,7 @@ export default function ProjectsPage() {
                   <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexShrink: 0 }}>
                     {isPdf && (
                       <a
-                        href={`${proposalPdfUrl}#page=${pageNum || 1}`}
+                        href={`${proposalPdfUrl}#page=${pageNum || 1}&search=${searchParam}`}
                         target="_blank"
                         rel="noopener noreferrer"
                         style={{ fontSize: 11, fontWeight: 700, color: 'var(--accent)', textDecoration: 'none', padding: '4px 10px', border: '1px solid var(--accent)', borderRadius: 5 }}
@@ -1691,7 +1701,7 @@ export default function ProjectsPage() {
                   {/* PDF embed — jumps to page if we have a hint */}
                   <embed
                     key={`${proposalPanel.task.id}-p${pageNum}`}
-                    src={`${proposalPdfUrl}#page=${pageNum || 1}&toolbar=1&navpanes=0`}
+                    src={`${proposalPdfUrl}#page=${pageNum || 1}&search=${searchParam}&toolbar=1&navpanes=0`}
                     type="application/pdf"
                     style={{ flex: paras.length ? '0 0 55%' : 1, width: '100%', border: 'none' }}
                   />
