@@ -735,3 +735,23 @@ label {
 .bill-fly-7       { animation: bill-fly-7 1.25s ease-out forwards; }
 .bill-fly-8       { animation: bill-fly-8 1.45s ease-out forwards; }
 .win-popup-anim   { animation: win-popup 1.75s ease-out forwards; }
+
+/* ── Make It Rain (Pipeline → Deal) ─────────────────────────────────────────── */
+
+/* Bill falls from top to bottom, spinning */
+@keyframes bill-rain {
+  0%   { transform: translateY(-60px) rotate(0deg)   scale(1);    opacity: 0.95; }
+  15%  { opacity: 1; }
+  80%  { opacity: 0.85; }
+  100% { transform: translateY(108vh) rotate(480deg) scale(0.8);  opacity: 0; }
+}
+
+/* Character coils up before throwing */
+@keyframes char-grip {
+  0%   { transform: translateY(0)    scaleX(1)    scaleY(1); }
+  30%  { transform: translateY(6px)  scaleX(1.04) scaleY(0.94); }
+  65%  { transform: translateY(-4px) scaleX(0.97) scaleY(1.03); }
+  100% { transform: translateY(0)    scaleX(1)    scaleY(1); }
+}
+
+.char-grip        { animation: char-grip 0.65s ease-in-out infinite; }

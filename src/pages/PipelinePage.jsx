@@ -34,7 +34,22 @@ function nextTouchDue(entryTouches) {
   return `In ${7 - days}d`;
 }
 
-export default function PipelinePage({ icp = {}, refreshKey = 0 }) {
+// Precomputed bill rain positions (outside component to stay stable)
+const RAIN_BILLS = [
+  { left:'4%',  delay:'0.00s', dur:'1.55s' }, { left:'11%', delay:'0.18s', dur:'1.90s' },
+  { left:'18%', delay:'0.45s', dur:'1.40s' }, { left:'25%', delay:'0.08s', dur:'2.00s' },
+  { left:'32%', delay:'0.35s', dur:'1.70s' }, { left:'39%', delay:'0.22s', dur:'1.50s' },
+  { left:'46%', delay:'0.60s', dur:'1.80s' }, { left:'53%', delay:'0.05s', dur:'1.30s' },
+  { left:'60%', delay:'0.50s', dur:'2.10s' }, { left:'67%', delay:'0.15s', dur:'1.65s' },
+  { left:'74%', delay:'0.40s', dur:'1.45s' }, { left:'81%', delay:'0.28s', dur:'1.85s' },
+  { left:'88%', delay:'0.55s', dur:'1.60s' }, { left:'95%', delay:'0.10s', dur:'1.95s' },
+  { left:'8%',  delay:'1.00s', dur:'1.55s' }, { left:'21%', delay:'0.90s', dur:'1.80s' },
+  { left:'35%', delay:'1.10s', dur:'1.50s' }, { left:'49%', delay:'0.80s', dur:'1.70s' },
+  { left:'63%', delay:'1.20s', dur:'1.60s' }, { left:'77%', delay:'0.95s', dur:'2.00s' },
+  { left:'91%', delay:'0.85s', dur:'1.40s' }, { left:'15%', delay:'1.30s', dur:'1.75s' },
+];
+
+export default function PipelinePage({ icp = {}, refreshKey = 0, onNavigate }) {
   const [entries, setEntries]     = useState([]);
   const [companies, setCompanies] = useState({});
   const [touches, setTouches]     = useState([]);
@@ -48,6 +63,7 @@ export default function PipelinePage({ icp = {}, refreshKey = 0 }) {
   const [notesEntry, setNotesEntry] = useState(null);
   const [contextMenu, setContextMenu] = useState(null);
   const [creatingDeal, setCreatingDeal] = useState({});
+  const [rainAnim, setRainAnim]         = useState(null); // null | { company, phase:'grip'|'rain' }
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -169,13 +185,18 @@ export default function PipelinePage({ icp = {}, refreshKey = 0 }) {
     try {
       const primaryContact = (company.contacts || [])[0] || {};
       await upsertDeal({
-        company_id:   company.id,
-        company_name: company.name,
-        contact_name: primaryContact.name || '',
+        company_id:    company.id,
+        company_name:  company.name,
+        contact_name:  primaryContact.name  || '',
         contact_email: primaryContact.email || '',
         stage: 'outreach',
       });
-      alert(`Deal created for ${company.name} — open Deals to continue.`);
+      // Phase 1: character grabs bills
+      setRainAnim({ company: company.name, phase: 'grip' });
+      // Phase 2: throw + rain
+      setTimeout(() => setRainAnim(r => r ? { ...r, phase: 'rain' } : r), 700);
+      // Done: navigate to Deals
+      setTimeout(() => { setRainAnim(null); onNavigate?.('deals'); }, 2800);
     } catch (e) {
       alert('Error creating deal: ' + e.message);
     } finally {
@@ -507,6 +528,113 @@ export default function PipelinePage({ icp = {}, refreshKey = 0 }) {
             </button>
           </div>
         </>
+      )}
+
+      {/* ── Make It Rain overlay ─────────────────────────────────────────── */}
+      {rainAnim && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 700,
+          background: 'rgba(2, 10, 30, 0.80)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          animation: 'win-overlay-in 0.2s ease-out',
+          pointerEvents: 'none',
+          overflow: 'hidden',
+        }}>
+          {/* Raining bills — only during rain phase */}
+          {rainAnim.phase === 'rain' && RAIN_BILLS.map((b, i) => (
+            <div key={i} style={{
+              position: 'absolute', left: b.left, top: -40,
+              fontSize: 22, zIndex: 1, pointerEvents: 'none',
+              animation: `bill-rain ${b.dur} ease-in ${b.delay} forwards`,
+            }}>💵</div>
+          ))}
+
+          <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', zIndex: 2 }}>
+
+            {/* Pixel-art character — both arms raised, holding bills */}
+            <div className={rainAnim.phase === 'rain' ? 'char-celebrate' : 'char-grip'} style={{ position: 'relative' }}>
+              <svg width="80" height="110" viewBox="0 0 80 110" style={{ imageRendering: 'pixelated', display: 'block', overflow: 'visible' }}>
+                {/* Hair */}
+                <rect x="16" y="4"  width="48" height="8"  rx="2" fill="#1c1917" />
+                {/* Head */}
+                <rect x="16" y="8"  width="48" height="32" rx="4" fill="#f5c8a0" />
+                {/* Eyes */}
+                <rect x="24" y="18" width="10" height="10" rx="1" fill="#fff" />
+                <rect x="46" y="18" width="10" height="10" rx="1" fill="#fff" />
+                <rect x="27" y="20" width="5"  height="6"  rx="1" fill="#1d4ed8" />
+                <rect x="49" y="20" width="5"  height="6"  rx="1" fill="#1d4ed8" />
+                <rect x="28" y="21" width="2"  height="2"  fill="#000" />
+                <rect x="50" y="21" width="2"  height="2"  fill="#000" />
+                {/* Smile */}
+                <rect x="28" y="32" width="24" height="4" rx="2" fill="#e07060" />
+                <rect x="30" y="33" width="20" height="2" rx="1" fill="#fff" />
+                {/* Body — sharp suit */}
+                <rect x="18" y="40" width="44" height="36" rx="2" fill="#1e3a5f" />
+                <rect x="18" y="40" width="44" height="8"  rx="1" fill="#254d7f" />
+                {/* Lapels */}
+                <polygon points="40,42 30,56 36,56" fill="#e8d5b0" />
+                <polygon points="40,42 50,56 44,56" fill="#e8d5b0" />
+                {/* Tie */}
+                <rect x="37" y="48" width="6" height="20" rx="1" fill="#dc2626" />
+                <polygon points="37,68 43,68 40,76" fill="#b91c1c" />
+                {/* Belt */}
+                <rect x="18" y="72" width="44" height="7" fill="#1c1917" />
+                <rect x="34" y="73" width="12" height="5" rx="1" fill="#78350f" />
+                <rect x="37" y="74" width="6"  height="3" rx="0" fill="#fbbf24" />
+                {/* Legs */}
+                <rect x="20" y="79" width="18" height="22" rx="2" fill="#1e3a5f" />
+                <rect x="42" y="79" width="18" height="22" rx="2" fill="#1e3a5f" />
+                {/* Shoes */}
+                <rect x="16" y="95" width="26" height="8" rx="3" fill="#0c0a09" />
+                <rect x="38" y="95" width="26" height="8" rx="3" fill="#0c0a09" />
+                {/* Left arm — raised high (grip phase: lower; rain phase: up) */}
+                <rect x="0"  y="26" width="18" height="24" rx="4" fill="#f5c8a0" />
+                <rect x="0"  y="24" width="18" height="10" rx="3" fill="#1e3a5f" />
+                {/* Right arm — raised high */}
+                <rect x="62" y="26" width="18" height="24" rx="4" fill="#f5c8a0" />
+                <rect x="62" y="24" width="18" height="10" rx="3" fill="#1e3a5f" />
+                {/* Wad of bills in left hand */}
+                <rect x="-4" y="14" width="20" height="12" rx="1" fill="#059669" />
+                <rect x="-2" y="12" width="20" height="12" rx="1" fill="#10b981" />
+                <rect x="0"  y="10" width="20" height="12" rx="1" fill="#34d399" />
+                <rect x="3"  y="13" width="5"  height="5"  rx="0" fill="#065f46" />
+                <text x="5" y="19" fontFamily="monospace" fontSize="7" fontWeight="900" fill="#fff">$</text>
+                {/* Wad of bills in right hand */}
+                <rect x="64" y="14" width="20" height="12" rx="1" fill="#059669" />
+                <rect x="62" y="12" width="20" height="12" rx="1" fill="#10b981" />
+                <rect x="60" y="10" width="20" height="12" rx="1" fill="#34d399" />
+                <rect x="67" y="13" width="5"  height="5"  rx="0" fill="#065f46" />
+                <text x="69" y="19" fontFamily="monospace" fontSize="7" fontWeight="900" fill="#fff">$</text>
+              </svg>
+            </div>
+
+            {/* Ground line */}
+            <div style={{ width: 180, height: 5, marginTop: 4, background: 'linear-gradient(90deg, transparent, #10b981 20%, #fbbf24 50%, #10b981 80%, transparent)', borderRadius: 3 }} />
+
+            {/* DEAL CREATED popup — rain phase only */}
+            {rainAnim.phase === 'rain' && (
+              <div className="win-popup-anim" style={{
+                marginTop: 18,
+                background: '#020d1f',
+                border: '3px solid #fbbf24',
+                borderRadius: 3,
+                padding: '14px 28px 16px',
+                textAlign: 'center',
+                boxShadow: '4px 4px 0 #78350f, 0 0 32px rgba(251,191,36,0.5), inset 0 0 0 1px #1e3a5f',
+              }}>
+                <div style={{ fontFamily: '"Press Start 2P", "Courier New", monospace', fontSize: 14, color: '#fde68a', textShadow: '0 0 14px rgba(251,191,36,0.9), 2px 2px 0 #78350f', letterSpacing: '0.04em', lineHeight: 1.7 }}>
+                  IT'S RAINING!
+                </div>
+                <div style={{ fontFamily: '"Press Start 2P", "Courier New", monospace', fontSize: 9, color: '#86efac', marginTop: 8, textShadow: '0 0 8px rgba(16,185,129,0.7)' }}>
+                  {rainAnim.company}
+                </div>
+                <div style={{ fontFamily: '"Press Start 2P", "Courier New", monospace', fontSize: 6, color: '#4b5563', marginTop: 8, letterSpacing: '0.06em' }}>
+                  DEAL CREATED → HEADING TO DEALS
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
       )}
     </>
   );
