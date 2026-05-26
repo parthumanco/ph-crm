@@ -4,6 +4,7 @@ import {
   fetchMilestones, upsertMilestone, deleteMilestone,
   fetchProjectTasks, upsertProjectTask, toggleTask, deleteProjectTask,
   fetchProjectFiles, uploadProjectFile, deleteProjectFile,
+  restoreProjectTask,
   bulkInsertMilestones, bulkInsertTasks,
   PROJECT_STATUSES, MILESTONE_STATUSES, OWNERS,
   projColor, projLabel, msColor, msLabel,
@@ -277,6 +278,8 @@ export default function ProjectsPage() {
   const [projError, setProjError]           = useState('');
   const [confirmDeleteProj, setConfirmDeleteProj] = useState(false);
   const [confirmDeleteTask, setConfirmDeleteTask] = useState(null); // taskId pending confirm
+  const [deletedTasks, setDeletedTasks]           = useState({});   // { milestoneId: Task[] }
+  const [showArchivedMs, setShowArchivedMs]       = useState({});   // { milestoneId: bool }
 
   // File state
   const [projectFiles, setProjectFiles]         = useState([]);
@@ -440,10 +443,29 @@ export default function ProjectsPage() {
   };
 
   const handleDeleteTask = async (id) => {
+    const task = tasks.find(t => t.id === id);
     await deleteProjectTask(id);
     const updated = tasks.filter(t => t.id !== id);
     setTasks(updated);
     setAllTasks(prev => ({ ...prev, [activeProject.id]: updated }));
+    // Stash for in-session restore
+    if (task) {
+      setDeletedTasks(prev => ({
+        ...prev,
+        [task.milestone_id]: [{ ...task, deleted_at: new Date().toISOString() }, ...(prev[task.milestone_id] || [])],
+      }));
+    }
+  };
+
+  const handleRestoreTask = async (task) => {
+    const restored = await restoreProjectTask(task.id);
+    const updated = [...tasks, restored].sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0));
+    setTasks(updated);
+    setAllTasks(prev => ({ ...prev, [activeProject.id]: updated }));
+    setDeletedTasks(prev => ({
+      ...prev,
+      [task.milestone_id]: (prev[task.milestone_id] || []).filter(t => t.id !== task.id),
+    }));
   };
 
   // ── Proposal import callback (works from card OR detail view) ────────────
@@ -1061,6 +1083,37 @@ export default function ProjectsPage() {
                       >
                         {uploadingFor === ms.id ? '⏳ Uploading…' : '📎 Attach file to milestone'}
                       </button>
+
+                      {/* Archived tasks toggle */}
+                      {(deletedTasks[ms.id] || []).length > 0 && (
+                        <div>
+                          <button
+                            onClick={() => setShowArchivedMs(p => ({ ...p, [ms.id]: !p[ms.id] }))}
+                            style={{ width: '100%', padding: '7px 16px 7px 48px', background: 'none', border: 'none', borderTop: '1px solid var(--border-light)', cursor: 'pointer', fontSize: 12, color: 'var(--text-faint)', textAlign: 'left', display: 'flex', alignItems: 'center', gap: 6 }}
+                          >
+                            <span>📦</span>
+                            <span>{(deletedTasks[ms.id] || []).length} archived task{(deletedTasks[ms.id] || []).length !== 1 ? 's' : ''}</span>
+                            <span style={{ marginLeft: 'auto' }}>{showArchivedMs[ms.id] ? '▲' : '▼'}</span>
+                          </button>
+                          {showArchivedMs[ms.id] && (
+                            <div style={{ background: 'var(--surface-2)', borderTop: '1px solid var(--border-light)' }}>
+                              {(deletedTasks[ms.id] || []).map(task => (
+                                <div key={task.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 16px 8px 48px', borderBottom: '1px solid var(--border-light)' }}>
+                                  <span style={{ fontSize: 13, color: 'var(--text-faint)', flex: 1, textDecoration: 'line-through', textDecorationColor: 'var(--text-faint)' }}>
+                                    {task.title}
+                                  </span>
+                                  <button
+                                    onClick={() => handleRestoreTask(task)}
+                                    style={{ fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 5, border: '1px solid var(--border)', background: 'var(--surface)', cursor: 'pointer', color: '#10b981', whiteSpace: 'nowrap' }}
+                                  >
+                                    ↩ Restore
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>

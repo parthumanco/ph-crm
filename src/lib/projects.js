@@ -102,6 +102,7 @@ export async function deleteMilestone(id) {
 export async function fetchProjectTasks(projectId) {
   const { data, error } = await supabase
     .from('project_tasks').select('*').eq('project_id', projectId)
+    .is('deleted_at', null)
     .order('order_index', { ascending: true });
   if (error) throw new Error(error.message);
   return data || [];
@@ -125,8 +126,17 @@ export async function toggleTask(id, completed) {
 }
 
 export async function deleteProjectTask(id) {
-  const { error } = await supabase.from('project_tasks').delete().eq('id', id);
+  // Soft delete — preserves the row for restore
+  const { error } = await supabase
+    .from('project_tasks').update({ deleted_at: new Date().toISOString() }).eq('id', id);
   if (error) throw new Error(error.message);
+}
+
+export async function restoreProjectTask(id) {
+  const { data, error } = await supabase
+    .from('project_tasks').update({ deleted_at: null }).eq('id', id).select().single();
+  if (error) throw new Error(error.message);
+  return data;
 }
 
 // Bulk insert for AI-generated timelines
