@@ -102,9 +102,31 @@ export async function deleteProject(id) {
 export async function fetchMilestones(projectId) {
   const { data, error } = await supabase
     .from('milestones').select('*').eq('project_id', projectId)
+    .is('archived_at', null)
     .order('order_index', { ascending: true });
   if (error) throw new Error(error.message);
   return data || [];
+}
+
+export async function fetchArchivedMilestones(projectId) {
+  const { data, error } = await supabase
+    .from('milestones').select('*').eq('project_id', projectId)
+    .not('archived_at', 'is', null)
+    .order('archived_at', { ascending: false });
+  if (error) throw new Error(error.message);
+  return data || [];
+}
+
+export async function archiveMilestone(id) {
+  const { error } = await supabase
+    .from('milestones').update({ archived_at: new Date().toISOString() }).eq('id', id);
+  if (error) throw new Error(error.message);
+}
+
+export async function restoreMilestone(id) {
+  const { error } = await supabase
+    .from('milestones').update({ archived_at: null }).eq('id', id);
+  if (error) throw new Error(error.message);
 }
 
 export async function upsertMilestone(m) {

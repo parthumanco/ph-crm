@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   fetchProjects, fetchArchivedProjects, upsertProject, archiveProject, restoreProject,
-  fetchMilestones, upsertMilestone, deleteMilestone,
+  fetchMilestones, fetchArchivedMilestones, upsertMilestone, archiveMilestone, restoreMilestone,
   fetchProjectTasks, upsertProjectTask, toggleTask, deleteProjectTask,
   fetchProjectFiles, uploadProjectFile, deleteProjectFile, addExternalLink,
   restoreProjectTask,
@@ -330,6 +330,8 @@ export default function ProjectsPage() {
   const [confirmDeleteTask, setConfirmDeleteTask] = useState(null);
   const [deletedTasks, setDeletedTasks]           = useState({});
   const [showArchivedMs, setShowArchivedMs]       = useState({});
+  const [archivedMilestones, setArchivedMilestones]   = useState([]);
+  const [showArchivedMilestones, setShowArchivedMilestones] = useState(false);
   const [showLinkModal, setShowLinkModal]         = useState(null); // { projectId, milestoneId, taskId }
   const [linkUrl, setLinkUrl]                     = useState('');
   const [linkName, setLinkName]                   = useState('');
@@ -387,6 +389,8 @@ export default function ProjectsPage() {
     setProposalPanel(null);
     setDeletedTasks({});
     setShowArchivedMs({});
+    setArchivedMilestones([]);
+    setShowArchivedMilestones(false);
     setMilestones([]);
     setTasks([]);
     setProjectFiles([]);
@@ -489,10 +493,19 @@ export default function ProjectsPage() {
     setEditingMs(null);
   };
 
-  const handleDeleteMilestone = async (id) => {
-    await deleteMilestone(id);
-    setMilestones(prev => prev.filter(m => m.id !== id));
-    setTasks(prev => prev.filter(t => t.milestone_id !== id));
+  const handleArchiveMilestone = async (ms) => {
+    await archiveMilestone(ms.id);
+    setMilestones(prev => prev.filter(m => m.id !== ms.id));
+    setArchivedMilestones(prev => [{ ...ms, archived_at: new Date().toISOString() }, ...prev]);
+    setShowArchivedMilestones(true);
+  };
+
+  const handleRestoreMilestone = async (ms) => {
+    await restoreMilestone(ms.id);
+    setArchivedMilestones(prev => prev.filter(m => m.id !== ms.id));
+    // Re-fetch milestones to restore correct order
+    const fresh = await fetchMilestones(activeProject.id);
+    setMilestones(fresh);
   };
 
   const handleAddMilestone = async () => {
@@ -1131,9 +1144,9 @@ export default function ProjectsPage() {
                         title="Edit milestone"
                       >✏️</button>
                       <button
-                        onClick={() => handleDeleteMilestone(ms.id)}
+                        onClick={() => handleArchiveMilestone(ms)}
                         style={{ background: 'none', border: 'none', fontSize: 14, cursor: 'pointer', color: 'var(--text-faint)', padding: '4px 6px', borderRadius: 4 }}
-                        title="Delete milestone"
+                        title="Archive milestone"
                       >🗑</button>
                       <span style={{ fontSize: 14, color: 'var(--text-faint)', userSelect: 'none' }}>{isOpen ? '▲' : '▼'}</span>
                     </div>
@@ -1429,6 +1442,49 @@ export default function ProjectsPage() {
                 </div>
               );
             })}
+
+            {/* Archived milestones */}
+            {(archivedMilestones.length > 0 || showArchivedMilestones) && (
+              <div style={{ border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden', background: 'var(--surface)' }}>
+                <button
+                  onClick={async () => {
+                    const next = !showArchivedMilestones;
+                    setShowArchivedMilestones(next);
+                    if (next && archivedMilestones.length === 0) {
+                      const data = await fetchArchivedMilestones(activeProject.id);
+                      setArchivedMilestones(data);
+                    }
+                  }}
+                  style={{ width: '100%', padding: '12px 16px', background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 600, color: 'var(--text-muted)', textAlign: 'left' }}
+                >
+                  <span>📦 Archived milestones</span>
+                  {archivedMilestones.length > 0 && <span style={{ fontSize: 11, color: 'var(--text-faint)', fontWeight: 400 }}>{archivedMilestones.length} milestone{archivedMilestones.length !== 1 ? 's' : ''}</span>}
+                  <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-faint)' }}>{showArchivedMilestones ? '▲' : '▼'}</span>
+                </button>
+                {showArchivedMilestones && (
+                  <div style={{ borderTop: '1px solid var(--border-light)' }}>
+                    {archivedMilestones.length === 0 ? (
+                      <p style={{ padding: '12px 16px', fontSize: 13, color: 'var(--text-faint)', margin: 0 }}>No archived milestones.</p>
+                    ) : archivedMilestones.map(ms => (
+                      <div key={ms.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '11px 16px', borderBottom: '1px solid var(--border-light)', opacity: 0.7 }}>
+                        <div style={{ width: 6, height: 32, borderRadius: 3, background: msColor(ms.status), flexShrink: 0 }} />
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontWeight: 700, fontSize: 13, textDecoration: 'line-through', color: 'var(--text-muted)' }}>{ms.title}</div>
+                          <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 2 }}>
+                            Archived {new Date(ms.archived_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                            {ms.due_date ? ` · Due ${fmtDate(ms.due_date)}` : ''}
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => handleRestoreMilestone(ms)}
+                          style={{ padding: '5px 12px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface-2)', cursor: 'pointer', fontSize: 12, fontWeight: 700, color: '#10b981', whiteSpace: 'nowrap', flexShrink: 0 }}
+                        >↩ Restore</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Add milestone footer */}
             <button
