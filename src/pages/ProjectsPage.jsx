@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import {
-  fetchProjects, fetchArchivedProjects, upsertProject, archiveProject, restoreProject,
-  fetchMilestones, fetchArchivedMilestones, upsertMilestone, archiveMilestone, restoreMilestone,
+  fetchProjects, fetchArchivedProjects, upsertProject, archiveProject, restoreProject, deleteProject,
+  fetchMilestones, fetchArchivedMilestones, upsertMilestone, archiveMilestone, restoreMilestone, deleteMilestone,
   fetchProjectTasks, upsertProjectTask, toggleTask, deleteProjectTask,
   fetchProjectFiles, uploadProjectFile, deleteProjectFile, addExternalLink,
   restoreProjectTask,
@@ -377,6 +377,7 @@ export default function ProjectsPage() {
   const [showArchivedMs, setShowArchivedMs]       = useState({});
   const [archivedMilestones, setArchivedMilestones]   = useState([]);
   const [showArchivedMilestones, setShowArchivedMilestones] = useState(false);
+  const [confirmHardDelete, setConfirmHardDelete]   = useState(null); // { type: 'task'|'milestone'|'project', item }
   const [showLinkModal, setShowLinkModal]         = useState(null); // { projectId, milestoneId, taskId }
   const [linkUrl, setLinkUrl]                     = useState('');
   const [linkName, setLinkName]                   = useState('');
@@ -551,6 +552,28 @@ export default function ProjectsPage() {
     // Re-fetch milestones to restore correct order
     const fresh = await fetchMilestones(activeProject.id);
     setMilestones(fresh);
+  };
+
+  // ── Hard delete (permanent) ───────────────────────────────────────────────
+  const handleHardDeleteTask = async (task) => {
+    await deleteProjectTask(task.id);
+    setDeletedTasks(prev => ({
+      ...prev,
+      [task.milestone_id]: (prev[task.milestone_id] || []).filter(t => t.id !== task.id),
+    }));
+    setConfirmHardDelete(null);
+  };
+
+  const handleHardDeleteMilestone = async (ms) => {
+    await deleteMilestone(ms.id);
+    setArchivedMilestones(prev => prev.filter(m => m.id !== ms.id));
+    setConfirmHardDelete(null);
+  };
+
+  const handleHardDeleteProject = async (project) => {
+    await deleteProject(project.id);
+    setArchivedProjects(prev => prev.filter(p => p.id !== project.id));
+    setConfirmHardDelete(null);
   };
 
   const handleAddMilestone = async () => {
@@ -890,7 +913,7 @@ export default function ProjectsPage() {
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                       {archivedProjects.map(p => (
                         <div key={p.id} style={{
-                          display: 'flex', alignItems: 'center', gap: 14,
+                          display: 'flex', alignItems: 'center', gap: 10,
                           padding: '12px 16px', borderRadius: 8,
                           border: '1px solid var(--border)', background: 'var(--surface)',
                           opacity: 0.75,
@@ -904,10 +927,23 @@ export default function ProjectsPage() {
                           </div>
                           <button
                             onClick={() => handleRestoreProject(p)}
-                            style={{ padding: '6px 14px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface-2)', cursor: 'pointer', fontSize: 12, fontWeight: 700, color: '#10b981', whiteSpace: 'nowrap' }}
+                            style={{ padding: '6px 14px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface-2)', cursor: 'pointer', fontSize: 12, fontWeight: 700, color: '#10b981', whiteSpace: 'nowrap', flexShrink: 0 }}
                           >
                             ↩ Restore
                           </button>
+                          {confirmHardDelete?.item?.id === p.id ? (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+                              <span style={{ fontSize: 11, color: '#ef4444', whiteSpace: 'nowrap' }}>Delete?</span>
+                              <button onClick={() => handleHardDeleteProject(p)} style={{ fontSize: 12, fontWeight: 700, padding: '4px 10px', borderRadius: 5, border: '1px solid #ef4444', background: '#ef444418', cursor: 'pointer', color: '#ef4444' }}>Yes</button>
+                              <button onClick={() => setConfirmHardDelete(null)} style={{ fontSize: 12, fontWeight: 700, padding: '4px 10px', borderRadius: 5, border: '1px solid var(--border)', background: 'var(--surface)', cursor: 'pointer', color: 'var(--text-muted)' }}>No</button>
+                            </div>
+                          ) : (
+                            <button
+                              onClick={() => setConfirmHardDelete({ type: 'project', item: p })}
+                              style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface-2)', cursor: 'pointer', fontSize: 14, color: '#ef4444', flexShrink: 0 }}
+                              title="Permanently delete"
+                            >🗑</button>
+                          )}
                         </div>
                       ))}
                     </div>
@@ -1466,7 +1502,7 @@ export default function ProjectsPage() {
                           {showArchivedMs[ms.id] && (
                             <div style={{ background: 'var(--surface-2)', borderTop: '1px solid var(--border-light)' }}>
                               {(deletedTasks[ms.id] || []).map(task => (
-                                <div key={task.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 16px 8px 48px', borderBottom: '1px solid var(--border-light)' }}>
+                                <div key={task.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 16px 8px 48px', borderBottom: '1px solid var(--border-light)' }}>
                                   <span style={{ fontSize: 13, color: 'var(--text-faint)', flex: 1, textDecoration: 'line-through', textDecorationColor: 'var(--text-faint)' }}>
                                     {task.title}
                                   </span>
@@ -1476,6 +1512,19 @@ export default function ProjectsPage() {
                                   >
                                     ↩ Restore
                                   </button>
+                                  {confirmHardDelete?.item?.id === task.id ? (
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                                      <span style={{ fontSize: 11, color: '#ef4444', whiteSpace: 'nowrap' }}>Delete?</span>
+                                      <button onClick={() => handleHardDeleteTask(task)} style={{ fontSize: 11, fontWeight: 700, padding: '3px 8px', borderRadius: 5, border: '1px solid #ef4444', background: '#ef444418', cursor: 'pointer', color: '#ef4444' }}>Yes</button>
+                                      <button onClick={() => setConfirmHardDelete(null)} style={{ fontSize: 11, fontWeight: 700, padding: '3px 8px', borderRadius: 5, border: '1px solid var(--border)', background: 'var(--surface)', cursor: 'pointer', color: 'var(--text-muted)' }}>No</button>
+                                    </div>
+                                  ) : (
+                                    <button
+                                      onClick={() => setConfirmHardDelete({ type: 'task', item: task })}
+                                      style={{ fontSize: 11, fontWeight: 700, padding: '3px 8px', borderRadius: 5, border: '1px solid var(--border)', background: 'var(--surface)', cursor: 'pointer', color: '#ef4444' }}
+                                      title="Permanently delete"
+                                    >🗑</button>
+                                  )}
                                 </div>
                               ))}
                             </div>
@@ -1511,7 +1560,7 @@ export default function ProjectsPage() {
                     {archivedMilestones.length === 0 ? (
                       <p style={{ padding: '12px 16px', fontSize: 13, color: 'var(--text-faint)', margin: 0 }}>No archived milestones.</p>
                     ) : archivedMilestones.map(ms => (
-                      <div key={ms.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '11px 16px', borderBottom: '1px solid var(--border-light)', opacity: 0.7 }}>
+                      <div key={ms.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '11px 16px', borderBottom: '1px solid var(--border-light)', opacity: 0.7 }}>
                         <div style={{ width: 6, height: 32, borderRadius: 3, background: msColor(ms.status), flexShrink: 0 }} />
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <div style={{ fontWeight: 700, fontSize: 13, textDecoration: 'line-through', color: 'var(--text-muted)' }}>{ms.title}</div>
@@ -1524,6 +1573,19 @@ export default function ProjectsPage() {
                           onClick={() => handleRestoreMilestone(ms)}
                           style={{ padding: '5px 12px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface-2)', cursor: 'pointer', fontSize: 12, fontWeight: 700, color: '#10b981', whiteSpace: 'nowrap', flexShrink: 0 }}
                         >↩ Restore</button>
+                        {confirmHardDelete?.item?.id === ms.id ? (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+                            <span style={{ fontSize: 11, color: '#ef4444', whiteSpace: 'nowrap' }}>Delete?</span>
+                            <button onClick={() => handleHardDeleteMilestone(ms)} style={{ fontSize: 11, fontWeight: 700, padding: '3px 8px', borderRadius: 5, border: '1px solid #ef4444', background: '#ef444418', cursor: 'pointer', color: '#ef4444' }}>Yes</button>
+                            <button onClick={() => setConfirmHardDelete(null)} style={{ fontSize: 11, fontWeight: 700, padding: '3px 8px', borderRadius: 5, border: '1px solid var(--border)', background: 'var(--surface)', cursor: 'pointer', color: 'var(--text-muted)' }}>No</button>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => setConfirmHardDelete({ type: 'milestone', item: ms })}
+                            style={{ padding: '5px 9px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface-2)', cursor: 'pointer', fontSize: 13, color: '#ef4444', flexShrink: 0 }}
+                            title="Permanently delete"
+                          >🗑</button>
+                        )}
                       </div>
                     ))}
                   </div>
