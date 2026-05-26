@@ -1487,12 +1487,12 @@ export default function ProjectsPage() {
                   <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexShrink: 0 }}>
                     {isPdf && (
                       <a
-                        href={proposalPdfUrl}
+                        href={`${proposalPdfUrl}#page=${pageNum || 1}`}
                         target="_blank"
                         rel="noopener noreferrer"
                         style={{ fontSize: 11, fontWeight: 700, color: 'var(--accent)', textDecoration: 'none', padding: '4px 10px', border: '1px solid var(--accent)', borderRadius: 5 }}
                       >
-                        ↗ Open PDF
+                        ↗ Open PDF{pageNum ? ` (p.${pageNum})` : ''}
                       </a>
                     )}
                     <button
