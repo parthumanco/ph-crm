@@ -71,7 +71,7 @@ function fmtFileSize(bytes) {
 
 const LABEL_W = 190;
 
-function GanttChart({ milestones, projectStart, projectEnd }) {
+function GanttChart({ milestones, projectStart, projectEnd, onMilestoneClick }) {
   if (!projectStart || !projectEnd || !milestones.length) return null;
   const totalDays = daysBetween(projectStart, projectEnd);
   if (totalDays <= 0) return null;
@@ -131,15 +131,28 @@ function GanttChart({ milestones, projectStart, projectEnd }) {
             const lPct = daysBetween(projectStart, m.start_date) / totalDays * 100;
             const wPct = daysBetween(m.start_date, m.due_date)   / totalDays * 100;
             const color = msColor(m.status);
+            const clickable = !!onMilestoneClick;
 
             return (
-              <div key={m.id} style={{ display: 'flex', alignItems: 'center', marginBottom: 8, height: 30 }}>
+              <div
+                key={m.id}
+                onClick={() => onMilestoneClick?.(m.id)}
+                style={{
+                  display: 'flex', alignItems: 'center', marginBottom: 8, height: 30,
+                  cursor: clickable ? 'pointer' : 'default',
+                  borderRadius: 4,
+                  transition: 'background .12s',
+                }}
+                onMouseEnter={e => { if (clickable) e.currentTarget.style.background = 'var(--accent-light)'; }}
+                onMouseLeave={e => { if (clickable) e.currentTarget.style.background = 'transparent'; }}
+                title={clickable ? `Jump to ${m.title}` : m.title}
+              >
                 {/* Label */}
                 <div style={{
                   width: LABEL_W, flexShrink: 0, paddingRight: 12,
                   fontSize: 12, fontWeight: 600, color: 'var(--text-muted)',
                   overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                }} title={m.title}>{m.title}</div>
+                }}>{m.title}</div>
 
                 {/* Track */}
                 <div style={{ flex: 1, height: '100%', background: 'var(--surface-2)', borderRadius: 6, position: 'relative' }}>
@@ -889,6 +902,13 @@ export default function ProjectsPage() {
                 milestones={milestones}
                 projectStart={activeProject.start_date}
                 projectEnd={activeProject.end_date}
+                onMilestoneClick={id => {
+                  // Expand the milestone and scroll to it
+                  setExpanded(prev => ({ ...prev, [id]: true }));
+                  setTimeout(() => {
+                    document.getElementById(`ms-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                  }, 50);
+                }}
               />
             </div>
           )}
@@ -920,7 +940,7 @@ export default function ProjectsPage() {
               const color     = msColor(ms.status);
 
               return (
-                <div key={ms.id} style={{ border: `1px solid var(--border)`, borderRadius: 10, overflow: 'hidden', background: 'var(--surface)' }}>
+                <div key={ms.id} id={`ms-${ms.id}`} style={{ border: `1px solid var(--border)`, borderRadius: 10, overflow: 'hidden', background: 'var(--surface)' }}>
 
                   {/* Milestone header */}
                   <div
