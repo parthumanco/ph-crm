@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import {
-  fetchProjects, upsertProject, deleteProject,
+  fetchProjects, fetchArchivedProjects, upsertProject, archiveProject, restoreProject,
   fetchMilestones, upsertMilestone, deleteMilestone,
   fetchProjectTasks, upsertProjectTask, toggleTask, deleteProjectTask,
   fetchProjectFiles, uploadProjectFile, deleteProjectFile, addExternalLink,
@@ -308,6 +308,9 @@ export default function ProjectsPage() {
   const [allTasks, setAllTasks]     = useState({});       // { projectId: tasks[] }
   const [loading, setLoading]       = useState(true);
   const [wonDeals, setWonDeals]     = useState([]);
+  const [archivedProjects, setArchivedProjects] = useState([]);
+  const [showArchived, setShowArchived]         = useState(false);
+  const [loadingArchived, setLoadingArchived]   = useState(false);
 
   // Detail state
   const [activeProject, setActiveProject]   = useState(null);
@@ -441,12 +444,29 @@ export default function ProjectsPage() {
     setProjects(prev => prev.map(p => p.id === saved.id ? saved : p));
   };
 
-  // ── Delete project ────────────────────────────────────────────────────────
-  const handleDeleteProject = async () => {
+  // ── Archive / restore project ─────────────────────────────────────────────
+  const handleArchiveProject = async () => {
     if (!confirmDeleteProj) { setConfirmDeleteProj(true); return; }
-    await deleteProject(activeProject.id);
+    await archiveProject(activeProject.id);
     setProjects(prev => prev.filter(p => p.id !== activeProject.id));
     setView('list');
+    setConfirmDeleteProj(false);
+  };
+
+  const handleLoadArchived = async () => {
+    setLoadingArchived(true);
+    try {
+      const data = await fetchArchivedProjects();
+      setArchivedProjects(data);
+    } finally {
+      setLoadingArchived(false);
+    }
+  };
+
+  const handleRestoreProject = async (project) => {
+    await restoreProject(project.id);
+    setArchivedProjects(prev => prev.filter(p => p.id !== project.id));
+    await loadAll();
   };
 
   // ── Milestone edits ───────────────────────────────────────────────────────
@@ -767,6 +787,58 @@ export default function ProjectsPage() {
                 />
               ))}
             </div>
+
+            {/* Archived projects */}
+            <div style={{ marginTop: 32, borderTop: '1px solid var(--border-light)', paddingTop: 20 }}>
+              <button
+                onClick={() => {
+                  const next = !showArchived;
+                  setShowArchived(next);
+                  if (next && archivedProjects.length === 0) handleLoadArchived();
+                }}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 600, color: 'var(--text-muted)', padding: 0 }}
+              >
+                <span>📦 Archived projects</span>
+                <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>{showArchived ? '▲' : '▼'}</span>
+              </button>
+
+              {showArchived && (
+                <div style={{ marginTop: 14 }}>
+                  {loadingArchived ? (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-faint)', fontSize: 13 }}>
+                      <div className="spinner" style={{ width: 16, height: 16, borderWidth: 2 }} /> Loading…
+                    </div>
+                  ) : archivedProjects.length === 0 ? (
+                    <p style={{ fontSize: 13, color: 'var(--text-faint)' }}>No archived projects.</p>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      {archivedProjects.map(p => (
+                        <div key={p.id} style={{
+                          display: 'flex', alignItems: 'center', gap: 14,
+                          padding: '12px 16px', borderRadius: 8,
+                          border: '1px solid var(--border)', background: 'var(--surface)',
+                          opacity: 0.75,
+                        }}>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontWeight: 700, fontSize: 14 }}>{p.name}</div>
+                            {p.client_name && <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>{p.client_name}</div>}
+                            <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 2 }}>
+                              Archived {new Date(p.archived_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => handleRestoreProject(p)}
+                            style={{ padding: '6px 14px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface-2)', cursor: 'pointer', fontSize: 12, fontWeight: 700, color: '#10b981', whiteSpace: 'nowrap' }}
+                          >
+                            ↩ Restore
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           </>
         )}
       </div>
@@ -916,10 +988,10 @@ export default function ProjectsPage() {
             </div>
 
             <button
-              onClick={handleDeleteProject}
-              style={{ marginLeft: 'auto', padding: '5px 12px', borderRadius: 6, border: 'none', background: confirmDeleteProj ? '#ef4444' : 'var(--surface-2)', color: confirmDeleteProj ? '#fff' : '#ef4444', fontWeight: 700, fontSize: 11, cursor: 'pointer', transition: 'all .15s' }}
+              onClick={handleArchiveProject}
+              style={{ marginLeft: 'auto', padding: '5px 12px', borderRadius: 6, border: `1px solid ${confirmDeleteProj ? '#ef4444' : 'var(--border)'}`, background: confirmDeleteProj ? '#fef2f2' : 'transparent', color: confirmDeleteProj ? '#ef4444' : 'var(--text-muted)', fontWeight: 700, fontSize: 11, cursor: 'pointer', transition: 'all .15s' }}
             >
-              {confirmDeleteProj ? 'Confirm delete' : 'Delete project'}
+              {confirmDeleteProj ? '⚠️ Confirm archive' : '📦 Archive project'}
             </button>
           </div>
         </div>

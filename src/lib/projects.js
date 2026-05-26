@@ -46,9 +46,32 @@ export function fmtDate(str) {
 
 export async function fetchProjects() {
   const { data, error } = await supabase
-    .from('projects').select('*').order('created_at', { ascending: false });
+    .from('projects').select('*')
+    .is('archived_at', null)
+    .order('created_at', { ascending: false });
   if (error) throw new Error(error.message);
   return data || [];
+}
+
+export async function fetchArchivedProjects() {
+  const { data, error } = await supabase
+    .from('projects').select('*')
+    .not('archived_at', 'is', null)
+    .order('archived_at', { ascending: false });
+  if (error) throw new Error(error.message);
+  return data || [];
+}
+
+export async function archiveProject(id) {
+  const { error } = await supabase
+    .from('projects').update({ archived_at: new Date().toISOString() }).eq('id', id);
+  if (error) throw new Error(error.message);
+}
+
+export async function restoreProject(id) {
+  const { error } = await supabase
+    .from('projects').update({ archived_at: null }).eq('id', id);
+  if (error) throw new Error(error.message);
 }
 
 export async function upsertProject(p) {
