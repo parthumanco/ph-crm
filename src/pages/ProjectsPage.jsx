@@ -1406,15 +1406,26 @@ export default function ProjectsPage() {
 
               {/* Body */}
               {isPdf ? (
-                /* PDF embed — fills the remaining height */
-                <embed
-                  src={`${proposalPdfUrl}#toolbar=1&navpanes=0`}
-                  type="application/pdf"
-                  style={{ flex: 1, width: '100%', border: 'none' }}
-                />
+                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+                  {/* Search hint for PDF */}
+                  {(() => {
+                    const STOP = new Set(['a','an','the','and','or','to','of','in','for','with','on','at','by','from','is','are','be','that','this','it','as','will','we','our','your','their','its','any','all','can','not','have','has','had']);
+                    const keywords = proposalPanel.task.title.split(/\W+/).filter(w => w.length > 3 && !STOP.has(w.toLowerCase())).slice(0, 4);
+                    return keywords.length > 0 ? (
+                      <div style={{ padding: '8px 16px', background: '#fef9c3', borderBottom: '1px solid #fde68a', fontSize: 11, color: '#92400e', fontWeight: 600, flexShrink: 0 }}>
+                        🔍 Try Ctrl+F (or ⌘F) and search: <em>{keywords.join(', ')}</em>
+                      </div>
+                    ) : null;
+                  })()}
+                  <embed
+                    src={`${proposalPdfUrl}#toolbar=1&navpanes=0`}
+                    type="application/pdf"
+                    style={{ flex: 1, width: '100%', border: 'none' }}
+                  />
+                </div>
               ) : (
-                /* Scrollable text with highlighted paragraph */
-                <div style={{ flex: 1, overflowY: 'auto', padding: '16px 20px' }}>
+                /* Scrollable text — keyed on task id so it remounts (and re-scrolls) when task changes */
+                <div key={proposalPanel.task.id} style={{ flex: 1, overflowY: 'auto', padding: '16px 20px' }}>
                   {paras.length === 0 ? (
                     <p style={{ color: 'var(--text-faint)', fontSize: 13 }}>No proposal text available.</p>
                   ) : (
