@@ -338,12 +338,12 @@ export default function DealsPage({ refreshKey = 0 }) {
       )}
 
       <div className="page-header">
-        <div className="page-header-left" />
-        <div className="page-header-actions">
+        <div className="page-header-left">
           <button className="btn btn-primary" onClick={() => { setSelectedDeal(null); setShowNewDeal(true); }}>
             + New Deal
           </button>
         </div>
+        <div className="page-header-actions" />
       </div>
 
       <div className="page-body">
