@@ -197,6 +197,55 @@ export async function bulkInsertTasks(rows) {
   if (error) throw new Error(error.message);
 }
 
+// ── PDF Text + Page Extraction ───────────────────────────────────────────────
+
+export async function extractPdfTextAndPages(pdfBase64, taskTitles = []) {
+  const key = import.meta.env.VITE_ANTHROPIC_API_KEY;
+  if (!key) return { text: '', pages: {} };
+
+  const taskList = taskTitles.length
+    ? `\n\nAlso, for each of these task titles, return the best matching page number where it is discussed:\n${taskTitles.map((t, i) => `${i + 1}. ${t}`).join('\n')}`
+    : '';
+
+  const prompt = `Extract the complete text content of this PDF. Preserve paragraph breaks using double newlines.${taskList}
+
+Return ONLY valid JSON:
+{
+  "text": "full document text here...",
+  "pages": { "task title": 2, "another task": 4 }
+}`;
+
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': key,
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true',
+    },
+    body: JSON.stringify({
+      model: 'claude-haiku-4-5',
+      max_tokens: 8000,
+      messages: [{ role: 'user', content: [
+        { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: pdfBase64 } },
+        { type: 'text', text: prompt },
+      ]}],
+    }),
+  });
+
+  if (!res.ok) return { text: '', pages: {} };
+  const json = await res.json();
+  const raw  = json.content[0].text.trim();
+  const match = raw.match(/\{[\s\S]*\}/);
+  if (!match) return { text: raw, pages: {} };
+  try {
+    const parsed = JSON.parse(match[0]);
+    return { text: parsed.text || '', pages: parsed.pages || {} };
+  } catch {
+    return { text: raw, pages: {} };
+  }
+}
+
 // ── AI Proposal Parsing ───────────────────────────────────────────────────────
 
 export async function parseProposalWithAI(proposalText, startDate, pdfBase64 = null) {

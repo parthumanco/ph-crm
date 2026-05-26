@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react';
-import { parseProposalWithAI, addDays, OWNERS } from '../lib/projects';
+import { parseProposalWithAI, extractPdfTextAndPages, addDays, OWNERS } from '../lib/projects';
 
 const today = new Date().toISOString().slice(0, 10);
 
@@ -112,14 +112,30 @@ export default function ProposalImporter({ projectId, projectStart, onImported, 
   };
 
   // ── Step 3: confirm → pass back to parent ────────────────────────────────
-  const handleConfirm = () => {
+  const handleConfirm = async () => {
     setStep('saving');
+    let proposalText    = inputMode === 'text' ? text : null;
+    let proposalPageHints = null;
+
+    // For PDFs: extract full text + page hints in parallel with the save
+    if (inputMode === 'pdf' && pdfBase64) {
+      try {
+        const allTaskTitles = preview.flatMap(m => m.tasks.map(t => t.title));
+        const { text: extracted, pages } = await extractPdfTextAndPages(pdfBase64, allTaskTitles);
+        proposalText      = extracted || null;
+        proposalPageHints = Object.keys(pages).length ? pages : null;
+      } catch (e) {
+        console.warn('PDF text extraction failed:', e.message);
+      }
+    }
+
     onImported({
       startDate,
       projectName: parsed.project_name || '',
-      milestones: preview,
-      proposalText:    inputMode === 'text' ? text     : null,
-      proposalPdfFile: inputMode === 'pdf'  ? pdfFile  : null,
+      milestones:  preview,
+      proposalText,
+      proposalPdfFile:  inputMode === 'pdf' ? pdfFile : null,
+      proposalPageHints,
     });
   };
 
@@ -145,7 +161,7 @@ export default function ProposalImporter({ projectId, projectStart, onImported, 
               {step === 'paste'   && '📋 Import Proposal'}
               {step === 'parsing' && '🤖 Reading proposal…'}
               {step === 'preview' && '✏️ Review & Edit Timeline'}
-              {step === 'saving'  && '💾 Creating timeline…'}
+              {step === 'saving'  && (inputMode === 'pdf' ? '🔍 Extracting text & building timeline…' : '💾 Creating timeline…')}
             </h3>
             <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 3 }}>
               {step === 'paste'   && 'Paste your proposal and Claude will build the project timeline'}

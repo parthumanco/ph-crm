@@ -590,7 +590,7 @@ export default function ProjectsPage() {
   };
 
   // ── Proposal import callback (works from card OR detail view) ────────────
-  const handleImported = async ({ startDate, projectName, milestones: msParsed, proposalText, proposalPdfFile }, fromProjectId) => {
+  const handleImported = async ({ startDate, projectName, milestones: msParsed, proposalText, proposalPdfFile, proposalPageHints }, fromProjectId) => {
     const projectId = fromProjectId || activeProject?.id;
     const baseProj  = projects.find(p => p.id === projectId) || activeProject;
     const fromCard  = !!fromProjectId;
@@ -651,12 +651,13 @@ export default function ProjectsPage() {
       //    haven't been added to the DB yet ──────────────────────────────────
       try {
         const proposalUpdate = { id: savedProj.id };
-        if (proposalText) proposalUpdate.proposal_text = proposalText;
+        if (proposalText)      proposalUpdate.proposal_text       = proposalText;
+        if (proposalPageHints) proposalUpdate.proposal_page_hints = proposalPageHints;
         if (proposalPdfFile) {
           const fileRecord = await uploadProjectFile(projectId, proposalPdfFile);
           proposalUpdate.proposal_pdf_url = fileRecord.url;
         }
-        if (proposalText || proposalPdfFile) {
+        if (proposalText || proposalPdfFile || proposalPageHints) {
           await upsertProject({ ...savedProj, ...proposalUpdate });
         }
       } catch (proposalErr) {
@@ -1447,11 +1448,15 @@ export default function ProjectsPage() {
 
       {/* Proposal side drawer */}
       {proposalPanel && (() => {
-        const proposalText  = activeProject.proposal_text    || '';
-        const proposalPdfUrl = activeProject.proposal_pdf_url || '';
-        const isPdf  = !!proposalPdfUrl;
-        const paras  = !isPdf ? proposalText.split(/\n\s*\n/).map(p => p.trim()).filter(Boolean) : [];
-        const highlightIdx = !isPdf ? findRelevantParaIndex(proposalText, proposalPanel.task.title) : -1;
+        const proposalText   = activeProject.proposal_text       || '';
+        const proposalPdfUrl = activeProject.proposal_pdf_url    || '';
+        const pageHints      = activeProject.proposal_page_hints || {};
+        const isPdf          = !!proposalPdfUrl;
+        const paras          = proposalText.split(/\n\s*\n/).map(p => p.trim()).filter(Boolean);
+        const highlightIdx   = findRelevantParaIndex(proposalText, proposalPanel.task.title);
+        // Page jump: look up by task title, fall back to milestone title
+        const taskMs         = milestones.find(m => tasks.find(t => t.id === proposalPanel.task.id && t.milestone_id === m.id));
+        const pageNum        = pageHints[proposalPanel.task.title] || (taskMs && pageHints[taskMs.title]) || null;
 
         return (
           <>
@@ -1496,6 +1501,11 @@ export default function ProjectsPage() {
                     >✕</button>
                   </div>
                 </div>
+                {isPdf && pageNum && (
+                  <div style={{ marginTop: 10, padding: '7px 10px', background: '#fef9c3', border: '1px solid #fde68a', borderRadius: 6, fontSize: 11, color: '#92400e', fontWeight: 600 }}>
+                    📄 Jumping to page {pageNum}
+                  </div>
+                )}
                 {!isPdf && highlightIdx >= 0 && (
                   <div style={{ marginTop: 10, padding: '7px 10px', background: '#fef9c3', border: '1px solid #fde68a', borderRadius: 6, fontSize: 11, color: '#92400e', fontWeight: 600 }}>
                     ✨ Most relevant section highlighted below
@@ -1506,21 +1516,35 @@ export default function ProjectsPage() {
               {/* Body */}
               {isPdf ? (
                 <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-                  {/* Search hint for PDF */}
-                  {(() => {
-                    const STOP = new Set(['a','an','the','and','or','to','of','in','for','with','on','at','by','from','is','are','be','that','this','it','as','will','we','our','your','their','its','any','all','can','not','have','has','had']);
-                    const keywords = proposalPanel.task.title.split(/\W+/).filter(w => w.length > 3 && !STOP.has(w.toLowerCase())).slice(0, 4);
-                    return keywords.length > 0 ? (
-                      <div style={{ padding: '8px 16px', background: '#fef9c3', borderBottom: '1px solid #fde68a', fontSize: 11, color: '#92400e', fontWeight: 600, flexShrink: 0 }}>
-                        🔍 Try Ctrl+F (or ⌘F) and search: <em>{keywords.join(', ')}</em>
-                      </div>
-                    ) : null;
-                  })()}
+                  {/* PDF embed — jumps to page if we have a hint */}
                   <embed
-                    src={`${proposalPdfUrl}#toolbar=1&navpanes=0`}
+                    key={`${proposalPanel.task.id}-${pageNum}`}
+                    src={`${proposalPdfUrl}#page=${pageNum || 1}&toolbar=1&navpanes=0`}
                     type="application/pdf"
-                    style={{ flex: 1, width: '100%', border: 'none' }}
+                    style={{ flex: paras.length ? '0 0 55%' : 1, width: '100%', border: 'none' }}
                   />
+                  {/* Text excerpt below PDF when extracted text is available */}
+                  {paras.length > 0 && highlightIdx >= 0 && (
+                    <div style={{ borderTop: '2px solid #fde68a', background: '#fffbeb', flexShrink: 0, maxHeight: '45%', overflowY: 'auto', padding: '10px 16px' }}>
+                      <div style={{ fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.05em', color: '#92400e', marginBottom: 8 }}>
+                        ✨ Most relevant excerpt
+                      </div>
+                      {[
+                        highlightIdx > 0   && paras[highlightIdx - 1],
+                        paras[highlightIdx],
+                        highlightIdx < paras.length - 1 && paras[highlightIdx + 1],
+                      ].filter(Boolean).map((para, i) => (
+                        <p key={i} style={{
+                          fontSize: 12, lineHeight: 1.65, marginBottom: 8,
+                          padding: i === 1 || (highlightIdx === 0 && i === 0) ? '8px 10px' : '0',
+                          borderRadius: 5,
+                          background: (i === 1 || (highlightIdx === 0 && i === 0)) ? '#fef9c3' : 'transparent',
+                          border: (i === 1 || (highlightIdx === 0 && i === 0)) ? '1px solid #fde68a' : 'none',
+                          whiteSpace: 'pre-wrap', color: 'var(--text)',
+                        }}>{para}</p>
+                      ))}
+                    </div>
+                  )}
                 </div>
               ) : (
                 /* Scrollable text — keyed on task id so it remounts (and re-scrolls) when task changes */
