@@ -553,7 +553,7 @@ export default function ProjectsPage() {
   };
 
   // ── Proposal import callback (works from card OR detail view) ────────────
-  const handleImported = async ({ startDate, projectName, milestones: msParsed, proposalText }, fromProjectId) => {
+  const handleImported = async ({ startDate, projectName, milestones: msParsed, proposalText, proposalPdfFile }, fromProjectId) => {
     const projectId = fromProjectId || activeProject?.id;
     const baseProj  = projects.find(p => p.id === projectId) || activeProject;
     const fromCard  = !!fromProjectId;
@@ -604,7 +604,11 @@ export default function ProjectsPage() {
       });
 
       updatedProj.end_date = cursor;
-      if (proposalText) updatedProj.proposal_text = proposalText;
+      if (proposalText)    updatedProj.proposal_text    = proposalText;
+      if (proposalPdfFile) {
+        const fileRecord = await uploadProjectFile(projectId, proposalPdfFile);
+        updatedProj.proposal_pdf_url = fileRecord.url;
+      }
       const savedProj = await upsertProject(updatedProj);
       await bulkInsertMilestones(msRows);
       await bulkInsertTasks(tRows);
@@ -1150,7 +1154,7 @@ export default function ProjectsPage() {
                                   style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 13, padding: '2px 4px', flexShrink: 0 }}
                                 >✏️</button>
                                 {/* See in proposal */}
-                                {activeProject.proposal_text && (
+                                {(activeProject.proposal_text || activeProject.proposal_pdf_url) && (
                                   <button
                                     onClick={() => setProposalPanel({ task })}
                                     title="See in proposal"
@@ -1327,9 +1331,12 @@ export default function ProjectsPage() {
 
       {/* Proposal side drawer */}
       {proposalPanel && (() => {
-        const proposalText = activeProject.proposal_text || '';
-        const paras = proposalText.split(/\n\s*\n/).map(p => p.trim()).filter(Boolean);
-        const highlightIdx = findRelevantParaIndex(proposalText, proposalPanel.task.title);
+        const proposalText  = activeProject.proposal_text    || '';
+        const proposalPdfUrl = activeProject.proposal_pdf_url || '';
+        const isPdf  = !!proposalPdfUrl;
+        const paras  = !isPdf ? proposalText.split(/\n\s*\n/).map(p => p.trim()).filter(Boolean) : [];
+        const highlightIdx = !isPdf ? findRelevantParaIndex(proposalText, proposalPanel.task.title) : -1;
+
         return (
           <>
             {/* Backdrop */}
@@ -1340,57 +1347,80 @@ export default function ProjectsPage() {
             {/* Drawer */}
             <div style={{
               position: 'fixed', top: 0, right: 0, bottom: 0, zIndex: 860,
-              width: 440, maxWidth: '92vw',
+              width: isPdf ? 600 : 440, maxWidth: '92vw',
               background: 'var(--bg)',
               boxShadow: '-8px 0 40px rgba(0,0,0,0.18)',
               display: 'flex', flexDirection: 'column',
               borderLeft: '1px solid var(--border)',
+              transition: 'width .25s',
             }}>
               {/* Header */}
               <div style={{ padding: '18px 20px 14px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>
                   <div>
-                    <div style={{ fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--text-faint)', marginBottom: 4 }}>Proposal Reference</div>
+                    <div style={{ fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--text-faint)', marginBottom: 4 }}>
+                      Proposal Reference {isPdf && '· PDF'}
+                    </div>
                     <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', lineHeight: 1.4 }}>{proposalPanel.task.title}</div>
                   </div>
-                  <button
-                    onClick={() => setProposalPanel(null)}
-                    style={{ background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: 'var(--text-muted)', flexShrink: 0, padding: '2px 4px', lineHeight: 1 }}
-                  >✕</button>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexShrink: 0 }}>
+                    {isPdf && (
+                      <a
+                        href={proposalPdfUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{ fontSize: 11, fontWeight: 700, color: 'var(--accent)', textDecoration: 'none', padding: '4px 10px', border: '1px solid var(--accent)', borderRadius: 5 }}
+                      >
+                        ↗ Open PDF
+                      </a>
+                    )}
+                    <button
+                      onClick={() => setProposalPanel(null)}
+                      style={{ background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: 'var(--text-muted)', padding: '2px 4px', lineHeight: 1 }}
+                    >✕</button>
+                  </div>
                 </div>
-                {highlightIdx >= 0 && (
+                {!isPdf && highlightIdx >= 0 && (
                   <div style={{ marginTop: 10, padding: '7px 10px', background: '#fef9c3', border: '1px solid #fde68a', borderRadius: 6, fontSize: 11, color: '#92400e', fontWeight: 600 }}>
                     ✨ Most relevant section highlighted below
                   </div>
                 )}
               </div>
 
-              {/* Body — scrollable proposal text */}
-              <div style={{ flex: 1, overflowY: 'auto', padding: '16px 20px' }}>
-                {paras.length === 0 ? (
-                  <p style={{ color: 'var(--text-faint)', fontSize: 13 }}>No proposal text available.</p>
-                ) : (
-                  paras.map((para, i) => (
-                    <p
-                      key={i}
-                      id={i === highlightIdx ? 'proposal-highlight' : undefined}
-                      ref={i === highlightIdx ? el => el?.scrollIntoView({ behavior: 'smooth', block: 'center' }) : undefined}
-                      style={{
-                        fontSize: 13, lineHeight: 1.7, marginBottom: 14,
-                        padding: i === highlightIdx ? '10px 12px' : '0',
-                        borderRadius: i === highlightIdx ? 6 : 0,
-                        background: i === highlightIdx ? '#fef9c3' : 'transparent',
-                        border: i === highlightIdx ? '1px solid #fde68a' : 'none',
-                        color: 'var(--text)',
-                        whiteSpace: 'pre-wrap',
-                        transition: 'background .2s',
-                      }}
-                    >
-                      {para}
-                    </p>
-                  ))
-                )}
-              </div>
+              {/* Body */}
+              {isPdf ? (
+                /* PDF embed — fills the remaining height */
+                <embed
+                  src={`${proposalPdfUrl}#toolbar=1&navpanes=0`}
+                  type="application/pdf"
+                  style={{ flex: 1, width: '100%', border: 'none' }}
+                />
+              ) : (
+                /* Scrollable text with highlighted paragraph */
+                <div style={{ flex: 1, overflowY: 'auto', padding: '16px 20px' }}>
+                  {paras.length === 0 ? (
+                    <p style={{ color: 'var(--text-faint)', fontSize: 13 }}>No proposal text available.</p>
+                  ) : (
+                    paras.map((para, i) => (
+                      <p
+                        key={i}
+                        ref={i === highlightIdx ? el => el?.scrollIntoView({ behavior: 'smooth', block: 'center' }) : undefined}
+                        style={{
+                          fontSize: 13, lineHeight: 1.7, marginBottom: 14,
+                          padding: i === highlightIdx ? '10px 12px' : '0',
+                          borderRadius: i === highlightIdx ? 6 : 0,
+                          background: i === highlightIdx ? '#fef9c3' : 'transparent',
+                          border: i === highlightIdx ? '1px solid #fde68a' : 'none',
+                          color: 'var(--text)',
+                          whiteSpace: 'pre-wrap',
+                        }}
+                      >
+                        {para}
+                      </p>
+                    ))
+                  )}
+                </div>
+              )}
             </div>
           </>
         );

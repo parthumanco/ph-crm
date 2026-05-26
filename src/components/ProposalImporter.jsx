@@ -118,7 +118,8 @@ export default function ProposalImporter({ projectId, projectStart, onImported, 
       startDate,
       projectName: parsed.project_name || '',
       milestones: preview,
-      proposalText: inputMode === 'text' ? text : null,
+      proposalText:    inputMode === 'text' ? text     : null,
+      proposalPdfFile: inputMode === 'pdf'  ? pdfFile  : null,
     });
   };
 
