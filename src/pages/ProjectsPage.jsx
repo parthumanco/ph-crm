@@ -800,6 +800,8 @@ export default function ProjectsPage() {
         if (proposalText || proposalPdfFile || proposalPageHints) {
           await upsertProject({ ...savedProj, ...proposalUpdate });
         }
+        // Merge proposal fields into the project we'll put in state
+        Object.assign(savedProj, proposalUpdate);
       } catch (proposalErr) {
         console.warn('Proposal reference not saved (run DB migrations):', proposalErr.message);
       }
@@ -811,6 +813,8 @@ export default function ProjectsPage() {
         const ts = await fetchProjectTasks(projectId);
         setAllTasks(prev => ({ ...prev, [projectId]: ts }));
         setShowImporterForProject(null);
+        // Also update the card's project data so proposal fields are available
+        setProjects(prev => prev.map(p => p.id === savedProj.id ? savedProj : p));
       } else {
         // Re-fetch project so we get proposal_text / proposal_pdf_url fields
         const freshProjects = await fetchProjects();
