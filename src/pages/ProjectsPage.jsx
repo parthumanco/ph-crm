@@ -585,7 +585,9 @@ export default function ProjectsPage() {
         (tasks.filter(t => t.milestone_id === ms.id)).map(t => t.title)
       );
 
+      console.log('[Re-index] task titles sent:', allTaskTitles);
       const pageIndex = await indexTaskPages(base64, allTaskTitles);
+      console.log('[Re-index] page index returned:', pageIndex);
       if (!Object.keys(pageIndex).length) throw new Error('No pages returned');
 
       // Save directly to DB + update local state
@@ -1672,8 +1674,12 @@ export default function ProjectsPage() {
           pageNum = hints[proposalPanel.task.title]
             ?? findPageHint(hints, proposalPanel.task.title)
             ?? null;
+          console.log('[Proposal] hints format=indexed, task=', proposalPanel.task.title, 'pageNum=', pageNum, 'hints=', hints);
         } else if (Array.isArray(hints) && highlightIdx >= 0) {
           pageNum = hints[highlightIdx] || null;
+          console.log('[Proposal] hints format=legacy-array, highlightIdx=', highlightIdx, 'pageNum=', pageNum);
+        } else {
+          console.log('[Proposal] no hints stored. hints=', hints);
         }
 
         const searchParam = pdfSearchParam(proposalPanel.task.title);
@@ -1705,7 +1711,7 @@ export default function ProjectsPage() {
                     <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', lineHeight: 1.4 }}>{proposalPanel.task.title}</div>
                   </div>
                   <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexShrink: 0 }}>
-                    {isPdf && !hintsAreIndexed && (
+                    {isPdf && (
                       <button
                         onClick={handleReindexPages}
                         disabled={reindexing}
