@@ -14,7 +14,7 @@ export const MILESTONE_STATUSES = [
   { id: 'blocked',     label: 'Blocked',      color: '#ef4444' },
 ];
 
-export const OWNERS = ['Mike', 'Pete'];
+export const OWNERS = ['Mike', 'Pete', 'Jill'];
 
 export const projColor = id => PROJECT_STATUSES.find(s => s.id === id)?.color   || '#6b7280';
 export const projLabel = id => PROJECT_STATUSES.find(s => s.id === id)?.label   || id;
