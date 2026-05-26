@@ -117,7 +117,7 @@ body {
   padding: 9px 10px;
   border-radius: var(--radius-sm);
   color: var(--sidebar-muted);
-  font-size: 13px;
+  font-size: 17px;
   font-weight: 500;
   cursor: pointer;
   transition: all .15s;
@@ -139,7 +139,7 @@ body {
   border-left-color: var(--accent);
 }
 
-.nav-item .nav-icon { font-size: 16px; width: 20px; text-align: center; }
+.nav-item .nav-icon { font-size: 21px; width: 26px; text-align: center; }
 
 .nav-badge {
   margin-left: auto;
