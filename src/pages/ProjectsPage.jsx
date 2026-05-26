@@ -296,6 +296,8 @@ export default function ProjectsPage() {
   const [showLinkModal, setShowLinkModal]         = useState(null); // { projectId, milestoneId, taskId }
   const [linkUrl, setLinkUrl]                     = useState('');
   const [linkName, setLinkName]                   = useState('');
+  const [editingTask, setEditingTask]             = useState(null); // task id
+  const [editTaskDraft, setEditTaskDraft]         = useState({});   // { title, due_date, assigned_to }
 
   // File state
   const [projectFiles, setProjectFiles]         = useState([]);
@@ -494,6 +496,25 @@ export default function ProjectsPage() {
       ...prev,
       [task.milestone_id]: (prev[task.milestone_id] || []).filter(t => t.id !== task.id),
     }));
+  };
+
+  const startEditTask = (task) => {
+    setEditingTask(task.id);
+    setEditTaskDraft({ title: task.title, due_date: task.due_date || '', assigned_to: task.assigned_to || '' });
+  };
+
+  const handleSaveTaskEdit = async (task) => {
+    if (!editTaskDraft.title?.trim()) { setEditingTask(null); return; }
+    const updated = {
+      ...task,
+      title:       editTaskDraft.title.trim(),
+      due_date:    editTaskDraft.due_date   || null,
+      assigned_to: editTaskDraft.assigned_to || '',
+    };
+    await upsertProjectTask(updated);
+    setTasks(prev => prev.map(t => t.id === updated.id ? updated : t));
+    setAllTasks(prev => ({ ...prev, [activeProject.id]: prev[activeProject.id]?.map(t => t.id === updated.id ? updated : t) || [] }));
+    setEditingTask(null);
   };
 
   // ── Proposal import callback (works from card OR detail view) ────────────
@@ -1000,84 +1021,132 @@ export default function ProjectsPage() {
 
                       {/* Tasks */}
                       {msTasks.map(task => {
-                        const taskFiles      = projectFiles.filter(f => f.task_id === task.id);
-                        const pendingDelete  = confirmDeleteTask === task.id;
+                        const taskFiles     = projectFiles.filter(f => f.task_id === task.id);
+                        const pendingDelete = confirmDeleteTask === task.id;
+                        const isEditingThis = editingTask === task.id;
+
                         return (
                           <div key={task.id} style={{ borderBottom: '1px solid var(--border-light)', background: 'var(--surface)' }}>
-                            {/* Main row */}
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 16px 9px 48px' }}>
-                              <input
-                                type="checkbox"
-                                checked={task.completed}
-                                onChange={() => handleToggleTask(task)}
-                                style={{ width: 15, height: 15, accentColor: color, cursor: 'pointer', flexShrink: 0 }}
-                              />
-                              <div style={{ flex: 1, minWidth: 0 }}>
-                                <span style={{
-                                  fontSize: 13,
-                                  color: 'var(--text)',
-                                  textDecoration: task.completed ? 'line-through' : 'none',
-                                  textDecorationColor: '#ef4444',
-                                }}>
-                                  {task.title}
-                                </span>
-                                {task.completed && task.completed_at && (
-                                  <div style={{ fontSize: 10, color: 'var(--text-faint)', marginTop: 2 }}>
-                                    ✓ Completed {fmtDate(task.completed_at)}
-                                  </div>
-                                )}
+
+                            {isEditingThis ? (
+                              /* ── Edit mode ───────────────────────────────── */
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, padding: '10px 16px 10px 48px', alignItems: 'center', background: 'var(--bg)', borderLeft: '3px solid var(--accent)' }}>
+                                <input
+                                  type="text"
+                                  autoFocus
+                                  value={editTaskDraft.title}
+                                  onChange={e => setEditTaskDraft(d => ({ ...d, title: e.target.value }))}
+                                  onKeyDown={e => { if (e.key === 'Enter') handleSaveTaskEdit(task); if (e.key === 'Escape') setEditingTask(null); }}
+                                  style={{ flex: '1 1 180px', fontSize: 13, padding: '5px 10px', fontWeight: 600 }}
+                                  placeholder="Task title"
+                                />
+                                <div>
+                                  <Lbl>Due date</Lbl>
+                                  <input
+                                    type="date"
+                                    value={editTaskDraft.due_date}
+                                    onChange={e => setEditTaskDraft(d => ({ ...d, due_date: e.target.value }))}
+                                    style={{ fontSize: 12, padding: '4px 8px', width: 'auto' }}
+                                  />
+                                </div>
+                                <div>
+                                  <Lbl>Assigned to</Lbl>
+                                  <select
+                                    value={editTaskDraft.assigned_to}
+                                    onChange={e => setEditTaskDraft(d => ({ ...d, assigned_to: e.target.value }))}
+                                    style={{ fontSize: 12, padding: '4px 8px', width: 'auto' }}
+                                  >
+                                    <option value="">—</option>
+                                    {OWNERS.map(o => <option key={o} value={o}>{o}</option>)}
+                                  </select>
+                                </div>
+                                <div style={{ display: 'flex', gap: 6, marginLeft: 'auto' }}>
+                                  <button className="btn btn-primary" onClick={() => handleSaveTaskEdit(task)} style={{ fontSize: 12 }}>Save</button>
+                                  <button onClick={() => setEditingTask(null)} style={{ padding: '5px 10px', borderRadius: 5, border: '1px solid var(--border)', background: 'transparent', cursor: 'pointer', fontSize: 12 }}>Cancel</button>
+                                </div>
                               </div>
-                              <select
-                                value={task.assigned_to || ''}
-                                onChange={e => { const u = { ...task, assigned_to: e.target.value }; setTasks(p => p.map(t => t.id === task.id ? u : t)); upsertProjectTask(u); }}
-                                onClick={e => e.stopPropagation()}
-                                style={{ fontSize: 11, padding: '2px 6px', width: 'auto', color: 'var(--text-muted)', flexShrink: 0 }}
-                              >
-                                <option value="">—</option>
-                                {OWNERS.map(o => <option key={o} value={o}>{o}</option>)}
-                              </select>
-                              {task.due_date && (
-                                <span style={{ fontSize: 11, color: 'var(--text-faint)', whiteSpace: 'nowrap', flexShrink: 0 }}>{fmtDate(task.due_date)}</span>
-                              )}
-                              {/* Attach file to task */}
-                              <button
-                                onClick={e => { e.stopPropagation(); triggerFileUpload(activeProject.id, null, null, task.id); }}
-                                disabled={uploadingFor === task.id}
-                                title="Attach file"
-                                style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 13, padding: '2px 4px', flexShrink: 0 }}
-                              >
-                                {uploadingFor === task.id ? '⏳' : '📎'}
-                              </button>
-                              {/* Add link to task */}
-                              <button
-                                onClick={e => { e.stopPropagation(); openLinkModal(activeProject.id, null, task.id); }}
-                                title="Add link"
-                                style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 13, padding: '2px 4px', flexShrink: 0 }}
-                              >🔗</button>
-                              {/* Delete with confirmation */}
-                              <button
-                                onClick={() => {
-                                  if (pendingDelete) {
-                                    handleDeleteTask(task.id);
-                                    setConfirmDeleteTask(null);
-                                  } else {
-                                    setConfirmDeleteTask(task.id);
-                                  }
-                                }}
-                                style={{
-                                  background: pendingDelete ? '#fef2f2' : 'none',
-                                  border: pendingDelete ? '1px solid #fecaca' : 'none',
-                                  color: pendingDelete ? '#ef4444' : 'var(--text-faint)',
-                                  cursor: 'pointer', fontSize: pendingDelete ? 11 : 13,
-                                  padding: pendingDelete ? '2px 7px' : '2px 4px',
-                                  borderRadius: 4, fontWeight: pendingDelete ? 700 : 400,
-                                  flexShrink: 0, whiteSpace: 'nowrap',
-                                  transition: 'all .15s',
-                                }}
-                              >
-                                {pendingDelete ? 'Delete?' : '✕'}
-                              </button>
-                            </div>
+                            ) : (
+                              /* ── Normal view mode ────────────────────────── */
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 16px 9px 48px' }}>
+                                <input
+                                  type="checkbox"
+                                  checked={task.completed}
+                                  onChange={() => handleToggleTask(task)}
+                                  style={{ width: 15, height: 15, accentColor: color, cursor: 'pointer', flexShrink: 0 }}
+                                />
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                  <span
+                                    style={{
+                                      fontSize: 13,
+                                      color: 'var(--text)',
+                                      textDecoration: task.completed ? 'line-through' : 'none',
+                                      textDecorationColor: '#ef4444',
+                                      cursor: 'text',
+                                    }}
+                                    onDoubleClick={() => startEditTask(task)}
+                                    title="Double-click to edit"
+                                  >
+                                    {task.title}
+                                  </span>
+                                  {task.completed && task.completed_at && (
+                                    <div style={{ fontSize: 10, color: 'var(--text-faint)', marginTop: 2 }}>
+                                      ✓ Completed {fmtDate(task.completed_at)}
+                                    </div>
+                                  )}
+                                </div>
+                                {task.assigned_to && (
+                                  <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600, flexShrink: 0 }}>{task.assigned_to}</span>
+                                )}
+                                {task.due_date && (
+                                  <span style={{ fontSize: 11, color: 'var(--text-faint)', whiteSpace: 'nowrap', flexShrink: 0 }}>{fmtDate(task.due_date)}</span>
+                                )}
+                                {/* Edit task */}
+                                <button
+                                  onClick={() => startEditTask(task)}
+                                  title="Edit task"
+                                  style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 13, padding: '2px 4px', flexShrink: 0 }}
+                                >✏️</button>
+                                {/* Attach file to task */}
+                                <button
+                                  onClick={e => { e.stopPropagation(); triggerFileUpload(activeProject.id, null, null, task.id); }}
+                                  disabled={uploadingFor === task.id}
+                                  title="Attach file"
+                                  style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 13, padding: '2px 4px', flexShrink: 0 }}
+                                >
+                                  {uploadingFor === task.id ? '⏳' : '📎'}
+                                </button>
+                                {/* Add link to task */}
+                                <button
+                                  onClick={e => { e.stopPropagation(); openLinkModal(activeProject.id, null, task.id); }}
+                                  title="Add link"
+                                  style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 13, padding: '2px 4px', flexShrink: 0 }}
+                                >🔗</button>
+                                {/* Delete with confirmation */}
+                                <button
+                                  onClick={() => {
+                                    if (pendingDelete) {
+                                      handleDeleteTask(task.id);
+                                      setConfirmDeleteTask(null);
+                                    } else {
+                                      setConfirmDeleteTask(task.id);
+                                    }
+                                  }}
+                                  style={{
+                                    background: pendingDelete ? '#fef2f2' : 'none',
+                                    border: pendingDelete ? '1px solid #fecaca' : 'none',
+                                    color: pendingDelete ? '#ef4444' : 'var(--text-faint)',
+                                    cursor: 'pointer', fontSize: pendingDelete ? 11 : 13,
+                                    padding: pendingDelete ? '2px 7px' : '2px 4px',
+                                    borderRadius: 4, fontWeight: pendingDelete ? 700 : 400,
+                                    flexShrink: 0, whiteSpace: 'nowrap',
+                                    transition: 'all .15s',
+                                  }}
+                                >
+                                  {pendingDelete ? 'Delete?' : '✕'}
+                                </button>
+                              </div>
+                            )}
+
                             {/* Task-level attached files */}
                             {taskFiles.length > 0 && (
                               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, padding: '4px 16px 8px 64px' }}>
