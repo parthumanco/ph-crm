@@ -8,6 +8,7 @@ export default function ProposalImporter({ projectId, projectStart, onImported, 
   const [inputMode, setInputMode] = useState('text');    // text | pdf | gdoc
   const [text, setText]           = useState('');
   const [gdocUrl, setGdocUrl]     = useState('');
+  const [gdocName, setGdocName]   = useState('');
   const [pdfFile, setPdfFile]     = useState(null);      // File object
   const [pdfBase64, setPdfBase64] = useState(null);      // base64 string
   const [startDate, setStartDate] = useState(projectStart || today);
@@ -37,14 +38,27 @@ export default function ProposalImporter({ projectId, projectStart, onImported, 
     return m ? m[1] : null;
   }
 
-  // Fetch plain text from a publicly shared Google Doc
+  // Fetch plain text + title from a publicly shared Google Doc
   async function fetchGdocText(url) {
     const id = gdocIdFromUrl(url);
     if (!id) throw new Error('Could not read a Google Doc ID from that URL. Make sure you copied the full link.');
-    const exportUrl = `https://docs.google.com/document/d/${id}/export?format=txt`;
-    const res = await fetch(exportUrl);
-    if (!res.ok) throw new Error('Could not fetch the Google Doc. Make sure the doc is shared as "Anyone with the link can view".');
-    return res.text();
+
+    const [textRes, htmlRes] = await Promise.all([
+      fetch(`https://docs.google.com/document/d/${id}/export?format=txt`),
+      fetch(`https://docs.google.com/document/d/${id}/export?format=html`),
+    ]);
+    if (!textRes.ok) throw new Error('Could not fetch the Google Doc. Make sure the doc is shared as "Anyone with the link can view".');
+
+    const text = await textRes.text();
+
+    let title = 'Google Doc';
+    if (htmlRes.ok) {
+      const html = await htmlRes.text();
+      const m = html.match(/<title[^>]*>([^<]+)<\/title>/i);
+      if (m) title = m[1].replace(/ - Google Docs$/i, '').trim();
+    }
+
+    return { text, title };
   }
 
   // ── Step 1: parse ─────────────────────────────────────────────────────────
@@ -57,7 +71,9 @@ export default function ProposalImporter({ projectId, projectStart, onImported, 
     try {
       let parseText = inputMode === 'text' ? text : '';
       if (inputMode === 'gdoc') {
-        parseText = await fetchGdocText(gdocUrl);
+        const { text: fetched, title } = await fetchGdocText(gdocUrl);
+        parseText = fetched;
+        setGdocName(title);
       }
       const result = await parseProposalWithAI(
         parseText,
@@ -163,11 +179,13 @@ export default function ProposalImporter({ projectId, projectStart, onImported, 
 
     onImported({
       startDate,
-      projectName: parsed.project_name || '',
-      milestones:  preview,
+      projectName:     parsed.project_name || '',
+      milestones:      preview,
       proposalText,
-      proposalPdfFile:  inputMode === 'pdf' ? pdfFile : null,
+      proposalPdfFile: inputMode === 'pdf' ? pdfFile : null,
       proposalPageHints,
+      gdocUrl:         inputMode === 'gdoc' ? gdocUrl : null,
+      gdocName:        inputMode === 'gdoc' ? (gdocName || 'Google Doc') : null,
     });
   };
 

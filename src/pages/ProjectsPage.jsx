@@ -51,9 +51,17 @@ function fileIcon(mime) {
 function parseLinkName(url) {
   try {
     const u = new URL(url);
+    // Google Docs / Sheets / Slides — skip uninformative path segments
+    if (u.hostname === 'docs.google.com') {
+      const type = u.pathname.startsWith('/spreadsheets') ? 'Google Sheet'
+                 : u.pathname.startsWith('/presentation') ? 'Google Slides'
+                 : 'Google Doc';
+      return type;
+    }
+    const SKIP = new Set(['edit', 'view', 'preview', 'pub', 'copy', '']);
     const parts = u.pathname.split('/').filter(Boolean);
     const last = decodeURIComponent(parts[parts.length - 1] || '');
-    if (last && last.length > 2) return last;
+    if (last && !SKIP.has(last.toLowerCase()) && last.length > 2) return last;
     return u.hostname.replace('www.', '');
   } catch {
     return url;
@@ -719,7 +727,7 @@ export default function ProjectsPage() {
   };
 
   // ── Proposal import callback (works from card OR detail view) ────────────
-  const handleImported = async ({ startDate, projectName, milestones: msParsed, proposalText, proposalPdfFile, proposalPageHints }, fromProjectId) => {
+  const handleImported = async ({ startDate, projectName, milestones: msParsed, proposalText, proposalPdfFile, proposalPageHints, gdocUrl, gdocName }, fromProjectId) => {
     const projectId = fromProjectId || activeProject?.id;
     const baseProj  = projects.find(p => p.id === projectId) || activeProject;
     const fromCard  = !!fromProjectId;
@@ -785,6 +793,9 @@ export default function ProjectsPage() {
         if (proposalPdfFile) {
           const fileRecord = await uploadProjectFile(projectId, proposalPdfFile);
           proposalUpdate.proposal_pdf_url = fileRecord.url;
+        }
+        if (gdocUrl) {
+          await addExternalLink(projectId, gdocUrl, gdocName || 'Google Doc');
         }
         if (proposalText || proposalPdfFile || proposalPageHints) {
           await upsertProject({ ...savedProj, ...proposalUpdate });
