@@ -4,6 +4,7 @@ import {
   ACTIVE_STAGES, CLOSED_STAGES,
   stageColor, stageLabel, dealValue, fmt$, daysSince,
 } from '../lib/deals';
+import { upsertProject } from '../lib/projects';
 import DealDetailModal from '../components/DealDetailModal';
 
 const OWNER_COLORS = {
@@ -132,6 +133,7 @@ export default function DealsPage() {
   const [lostAnim, setLostAnim]       = useState(null); // null | {dealId, phase:'fly'|'impact'}
   const [wonAnim,  setWonAnim]        = useState(null); // null | {dealId, phase:'plant'|'celebrate'}
   const [showLostPanel, setShowLostPanel] = useState(false);
+  const [wonToast, setWonToast]         = useState(null); // project name string
   const dragDealId = useRef(null);
 
   const load = useCallback(async () => {
@@ -196,6 +198,25 @@ export default function DealsPage() {
   }
 
   // ── Drag and drop ──────────────────────────────────────────────────────────
+  // ── Auto-create project when a deal is won ────────────────────────────────
+  const createProjectFromDeal = async (deal) => {
+    try {
+      const today = new Date().toISOString().slice(0, 10);
+      const proj = await upsertProject({
+        name:         deal.company_name || 'New Project',
+        client_name:  deal.company_name || '',
+        contact_name: deal.contact_name || '',
+        status:       'active',
+        start_date:   today,
+        description:  deal.description || '',
+      });
+      setWonToast(proj.name || deal.company_name);
+      setTimeout(() => setWonToast(null), 4000);
+    } catch (e) {
+      console.error('Auto-create project failed:', e.message);
+    }
+  };
+
   const handleDrop = async (e, stageId) => {
     e.preventDefault();
     setDragOver(null);
@@ -216,6 +237,7 @@ export default function DealsPage() {
           ? { ...d, stage: 'won', stage_entered_at: new Date().toISOString(), won_date: new Date().toISOString().slice(0, 10) }
           : d));
         try { await moveStage(dealId, 'won'); } catch { load(); }
+        createProjectFromDeal(deal);
       }, 2750);
       return;
     }
@@ -282,12 +304,17 @@ export default function DealsPage() {
   // ── Modal handlers ─────────────────────────────────────────────────────────
   const handleSaved = (saved) => {
     if (!saved) {
-      // deleted
       setDeals(prev => prev.filter(d => d.id !== selectedDeal?.id));
-    } else if (deals.find(d => d.id === saved.id)) {
-      setDeals(prev => prev.map(d => d.id === saved.id ? saved : d));
     } else {
-      setDeals(prev => [saved, ...prev]);
+      const prev = deals.find(d => d.id === saved.id);
+      if (saved.stage === 'won' && prev?.stage !== 'won') {
+        createProjectFromDeal(saved);
+      }
+      if (prev) {
+        setDeals(ds => ds.map(d => d.id === saved.id ? saved : d));
+      } else {
+        setDeals(ds => [saved, ...ds]);
+      }
     }
     setSelectedDeal(saved);
   };
@@ -296,6 +323,20 @@ export default function DealsPage() {
 
   return (
     <>
+      {/* Won → Project toast */}
+      {wonToast && (
+        <div style={{
+          position: 'fixed', bottom: 28, left: '50%', transform: 'translateX(-50%)',
+          zIndex: 999, background: '#10b981', color: '#fff',
+          padding: '12px 22px', borderRadius: 10,
+          boxShadow: '0 4px 20px rgba(16,185,129,0.4)',
+          fontSize: 14, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 10,
+          animation: 'fadeInUp .3s ease',
+        }}>
+          🗂️ Project created for <span style={{ fontWeight: 800 }}>{wonToast}</span>
+        </div>
+      )}
+
       <div className="page-header">
         <div className="page-header-left">
           <h2>💼 Deals</h2>
