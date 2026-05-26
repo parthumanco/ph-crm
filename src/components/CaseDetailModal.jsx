@@ -61,6 +61,7 @@ export default function CaseDetailModal({ case_, onClose, onSaved }) {
     try {
       const saved = await upsertCase(form);
       onSaved(saved);
+      onClose();
     } catch (e) {
       console.error(e);
     } finally {

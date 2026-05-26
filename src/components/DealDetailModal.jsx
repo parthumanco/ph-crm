@@ -39,7 +39,7 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved })
     try {
       const saved = await upsertDeal(deal);
       onSaved(saved);
-      if (isNew) onClose();
+      onClose();
     } catch (e) {
       alert('Error saving deal: ' + e.message);
     } finally {
