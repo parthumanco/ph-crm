@@ -106,17 +106,28 @@ function findPageHint(pageHints, taskTitle, fallbackTitle = '') {
   return null;
 }
 
-// Split proposal text into paragraphs and find the one most relevant to a task title
+// Split proposal text into paragraphs and find the one most relevant to a task title.
+// Prefers longer, substantive paragraphs (≥20 words) over short list items.
 function findRelevantParaIndex(proposalText, taskTitle) {
   if (!proposalText || !taskTitle) return -1;
   const paras = proposalText.split(/\n\s*\n/).map(p => p.trim()).filter(Boolean);
   if (!paras.length) return -1;
 
   const words = titleWords(taskTitle);
-  let bestIdx = 0, bestScore = -1;
+  if (!words.length) return -1;
+
+  // Score each paragraph: word-overlap * length bonus (log of word count, floored at 1).
+  // Paragraphs under 20 words are still considered but penalised (multiplier 0.3).
+  let bestIdx = -1, bestScore = -1;
   paras.forEach((p, i) => {
     const lower = p.toLowerCase();
-    const score = words.reduce((s, w) => s + (lower.includes(w) ? 1 : 0), 0);
+    const paraWordCount = p.split(/\s+/).filter(Boolean).length;
+    const overlap = words.reduce((s, w) => s + (lower.includes(w) ? 1 : 0), 0);
+    if (overlap === 0) return;
+    const lengthFactor = paraWordCount >= 20
+      ? Math.log2(paraWordCount)   // ≥20 words: full bonus
+      : 0.3;                        // <20 words: heavily penalised
+    const score = overlap * lengthFactor;
     if (score > bestScore) { bestScore = score; bestIdx = i; }
   });
   return bestIdx;
