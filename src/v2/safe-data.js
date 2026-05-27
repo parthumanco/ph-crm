@@ -70,3 +70,60 @@ export {
     fetchCases,
     fetchMessages as fetchCaseMessages,
 } from '../lib/support.js';
+
+// ── Companies (Signal Watch) ─────────────────────────────
+import { supabase } from '../lib/supabase.js';
+
+const ANDOVER = { lat: 42.6583, lng: -71.1373 };
+
+/** Haversine distance in miles */
+export function distanceMiles(lat, lng) {
+    if (lat == null || lng == null) return null;
+    const R = 3958.8;
+    const dLat = ((lat - ANDOVER.lat) * Math.PI) / 180;
+    const dLng = ((lng - ANDOVER.lng) * Math.PI) / 180;
+    const a =
+        Math.sin(dLat / 2) ** 2 +
+        Math.cos((ANDOVER.lat * Math.PI) / 180) *
+            Math.cos((lat * Math.PI) / 180) *
+            Math.sin(dLng / 2) ** 2;
+    return Math.round(2 * R * Math.asin(Math.sqrt(a)));
+}
+
+/** Read-only fetch of companies, ordered by icp_score desc. */
+export async function fetchCompanies({ limit = 300 } = {}) {
+    const { data, error } = await supabase
+        .from('companies')
+        .select('*')
+        .order('icp_score', { ascending: false, nullsFirst: false })
+        .order('scan_date',  { ascending: false, nullsFirst: false })
+        .limit(limit);
+    if (error) throw new Error(error.message);
+    return data || [];
+}
+
+/** Read-only fetch of pipeline entries — returns Set of company ids. */
+export async function fetchPipelineCompanyIds() {
+    const { data, error } = await supabase
+        .from('pipeline_entries')
+        .select('company_id');
+    if (error) throw new Error(error.message);
+    return new Set((data || []).map((r) => r.company_id));
+}
+
+/** Trigger category metadata — colors come from v2 tokens, not raw hex. */
+export const TRIGGER_CATEGORIES = {
+    leadership: { label: 'Leadership',  accent: 'var(--v2-orange)' },
+    funding:    { label: 'Funding',     accent: 'var(--v2-teal)' },
+    expansion:  { label: 'Expansion',   accent: 'var(--v2-blue)' },
+    product:    { label: 'Product',     accent: 'var(--v2-purple)' },
+    pain:       { label: 'Pain point',  accent: '#c2451a' },
+    hiring:     { label: 'Hiring',      accent: '#1e90ad' },
+    social:     { label: 'Social',      accent: '#cc3366' },
+};
+
+export const URGENCY_META = {
+    high:   { label: 'High',   color: '#c2451a' },
+    medium: { label: 'Medium', color: '#c08850' },
+    low:    { label: 'Low',    color: 'var(--crm-text-3)' },
+};

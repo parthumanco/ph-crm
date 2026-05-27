@@ -5,6 +5,7 @@ import V2DealsPage from './V2DealsPage.jsx';
 import V2AccountsPage from './V2AccountsPage.jsx';
 import V2AccountPage from './V2AccountPage.jsx';
 import V2SupportPage from './V2SupportPage.jsx';
+import V2SignalsPage from './V2SignalsPage.jsx';
 import './v2.css';
 
 /* ============================================
@@ -67,7 +68,7 @@ const PAGE_META = {
     settings:        { breadcrumb: 'ICP Settings' },
 };
 
-const PORTED = new Set(['projects', 'project-detail', 'deals', 'accounts', 'account-detail', 'support']);
+const PORTED = new Set(['projects', 'project-detail', 'deals', 'accounts', 'account-detail', 'support', 'signals']);
 
 function Icon({ name }) {
     const stroke = { stroke: 'currentColor', fill: 'none', strokeWidth: 1.75, strokeLinecap: 'round', strokeLinejoin: 'round' };
@@ -207,6 +208,7 @@ export default function V2App() {
                         />
                     )}
                     {view.page === 'support' && <V2SupportPage />}
+                    {view.page === 'signals' && <V2SignalsPage />}
                     {!PORTED.has(view.page) && <V2Placeholder pageKey={view.page} />}
                 </div>
 
