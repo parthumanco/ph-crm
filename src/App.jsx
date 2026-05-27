@@ -46,7 +46,7 @@ function PageSlot({ active, children }) {
 }
 
 export default function App() {
-  const [page, setPage]         = useState('projects');
+  const [page, setPage]         = useState(() => localStorage.getItem('ph_current_page') || 'projects');
   const [pageKeys, setPageKeys] = useState({});
   const [icp, setIcp]           = useState(DEFAULT_ICP);
   const projectsGoHome          = useRef(null); // ProjectsPage registers its goHome fn here
@@ -60,6 +60,7 @@ export default function App() {
   function handleSetPage(newPage) {
     setPageKeys(prev => ({ ...prev, [newPage]: (prev[newPage] || 0) + 1 }));
     setPage(newPage);
+    localStorage.setItem('ph_current_page', newPage);
   }
 
   const pt = PAGE_TITLES[page] || {};
