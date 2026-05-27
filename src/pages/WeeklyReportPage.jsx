@@ -398,7 +398,6 @@ export default function WeeklyReportPage({ icp = DEFAULT_ICP, refreshKey = 0 }) 
             <div style={{ fontSize: 13, marginBottom: 10, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               <span style={{ background: 'var(--accent)', color: '#fff', borderRadius: '50%', width: 22, height: 22, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 800, flexShrink: 0 }}>1</span>
               <span style={{ fontWeight: 800, color: 'var(--text)' }}>New Outreach — Touch 1 Initial Emails</span>
-              <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>{newOutreach.length} email{newOutreach.length !== 1 ? 's' : ''} due —</span>
               <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>Touch 1 is about earning the right to a conversation, not pitching. One sharp, specific insight about their business. Show them you did the work.</span>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -442,8 +441,7 @@ export default function WeeklyReportPage({ icp = DEFAULT_ICP, refreshKey = 0 }) 
                       <span style={{ color: 'var(--text-muted)', fontWeight: 600 }}>{meta.prefix}</span>
                       {meta.name}
                     </span>
-                    <span style={{ color: 'var(--text-muted)', fontWeight: 400, marginLeft: 8 }}>{group.length} email{group.length !== 1 ? 's' : ''} due —</span>
-                    <span style={{ color: 'var(--text-muted)', fontWeight: 400, marginLeft: 6 }}>{meta.reminder}</span>
+                    <span style={{ color: 'var(--text-muted)', fontWeight: 400, marginLeft: 8 }}>{meta.reminder}</span>
                   </div>
 
                   {/* ── Company cards ── */}
