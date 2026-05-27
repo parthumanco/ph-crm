@@ -432,28 +432,37 @@ export default function WeeklyReportPage({ icp = DEFAULT_ICP, refreshKey = 0 }) 
               if (!group.length) return null;
               const meta = TOUCH_GROUP_META[tn];
               return (
-                <div key={tn} style={{ marginBottom: 20 }}>
-                  {/* Touch group header */}
-                  <div style={{
-                    display: 'flex', alignItems: 'flex-start', gap: 12,
-                    padding: '10px 14px', borderRadius: 8,
-                    background: meta.headerBg, borderLeft: `4px solid ${meta.color}`,
-                    marginBottom: 10,
-                  }}>
-                    <div style={{ flex: 1 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                        <span style={{ background: meta.color, color: '#fff', borderRadius: 4, padding: '2px 9px', fontSize: 11, fontWeight: 700, fontFamily: 'monospace' }}>
-                          {meta.label}
-                        </span>
-                        <span style={{ fontSize: 12, fontWeight: 600, color: meta.color }}>{group.length} email{group.length !== 1 ? 's' : ''} due</span>
-                      </div>
-                      <div style={{ fontSize: 12, color: '#4b5563', lineHeight: 1.5 }}>
-                        <span style={{ fontWeight: 700, color: meta.color }}>Tactical reminder: </span>{meta.reminder}
-                      </div>
-                    </div>
+                <div key={tn} style={{ marginBottom: 28 }}>
+
+                  {/* ── Section heading ── */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+                    <span style={{
+                      background: meta.color, color: '#fff',
+                      borderRadius: 6, padding: '4px 12px',
+                      fontSize: 12, fontWeight: 800, fontFamily: 'monospace',
+                      letterSpacing: '.02em', whiteSpace: 'nowrap',
+                    }}>
+                      {meta.label}
+                    </span>
+                    <span style={{ fontSize: 11, fontWeight: 600, color: meta.color, opacity: .8 }}>
+                      {group.length} email{group.length !== 1 ? 's' : ''} due
+                    </span>
+                    <div style={{ flex: 1, height: 1, background: meta.color, opacity: .2 }} />
                   </div>
-                  {/* Cards */}
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8, paddingLeft: 4 }}>
+
+                  {/* ── Tactical reminder ── */}
+                  <div style={{
+                    fontSize: 12, color: '#6b7280', lineHeight: 1.55,
+                    padding: '6px 12px', marginBottom: 10,
+                    borderLeft: `3px solid ${meta.color}`,
+                    background: meta.headerBg,
+                    borderRadius: '0 6px 6px 0',
+                  }}>
+                    <span style={{ fontWeight: 700, color: meta.color }}>Tactical: </span>{meta.reminder}
+                  </div>
+
+                  {/* ── Company cards ── */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8, paddingLeft: 12, borderLeft: `2px solid ${meta.color}22` }}>
                     {group.map(({ entry, company, touchNumber, daysSince: days }) => {
                       const key = `${entry.id}-${touchNumber}`;
                       return (
