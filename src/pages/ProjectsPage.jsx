@@ -1064,20 +1064,30 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0 }) {
               <h3>No tasks {assignedOwner === '__unassigned__' ? 'without an owner' : `assigned to ${assignedOwner}`}</h3>
               <p>{assignedOwner === '__unassigned__' ? 'Unassigned tasks will appear here sorted by due date.' : `Tasks assigned to ${assignedOwner} will appear here sorted by due date.`}</p>
             </div>
-          ) : (
+          ) : (() => {
+            const activeTasks    = assignedTasks.filter(t => !t.completed);
+            const completedTasks = assignedTasks.filter(t => t.completed);
+            const allSorted      = [...activeTasks, ...completedTasks];
+            return (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 0, border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
-              {assignedTasks.map((task, idx) => {
-                const isEditingThis = editingTask === task.id;
-                const pendingDelete = confirmDeleteTask === task.id;
-                const taskFiles     = assignedFiles[task.id] || [];
-                const isOverdue     = !task.completed && task.due_date && task.due_date < today;
-                const msColor2      = task._milestone ? msColor(task._milestone.status) : 'var(--border)';
+              {allSorted.map((task, idx) => {
+                const isEditingThis  = editingTask === task.id;
+                const pendingDelete  = confirmDeleteTask === task.id;
+                const taskFiles      = assignedFiles[task.id] || [];
+                const isOverdue      = !task.completed && task.due_date && task.due_date < today;
+                const msColor2       = task._milestone ? msColor(task._milestone.status) : 'var(--border)';
+                const isFirstDone    = task.completed && (idx === 0 || !allSorted[idx - 1].completed);
 
                 return (
+                  <div key={task.id}>
+                  {isFirstDone && activeTasks.length > 0 && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 16px', background: 'var(--surface)', borderTop: '1px solid var(--border-light)', borderBottom: '1px solid var(--border-light)' }}>
+                      <span style={{ fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.06em', color: 'var(--text-faint)' }}>Completed · {completedTasks.length}</span>
+                    </div>
+                  )}
                   <div
-                    key={task.id}
                     style={{
-                      borderBottom: idx < assignedTasks.length - 1 ? '1px solid var(--border-light)' : 'none',
+                      borderBottom: idx < allSorted.length - 1 && !(allSorted[idx + 1]?.completed && !task.completed) ? '1px solid var(--border-light)' : 'none',
                       background: task.completed ? 'var(--surface)' : 'var(--bg)',
                     }}
                   >
@@ -1191,10 +1201,12 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0 }) {
                       </div>
                     )}
                   </div>
+                  </div>
                 );
               })}
             </div>
-          )}
+            );
+          })()}
         </div>
 
         {/* Shared modals (link modal + file input are rendered at component root) */}
