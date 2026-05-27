@@ -664,12 +664,29 @@ ${newCompanies.map(c => `- ${c.name}: ${c.recommended_angle || c.summary || 'No 
 FOLLOW-UPS DUE:
 ${followups.map(f => `- ${f.companyName} (Touch ${f.touchNumber}, ${f.contactName || 'primary contact'})`).join('\n') || 'None'}
 
-Write a brief, motivating weekly briefing for Mike and Pete. Include:
-1. A 2-sentence overview of this week's pipeline health
-2. The top 2-3 companies to prioritize and why
-3. One tactical reminder based on the Dan Allard 5-touch cadence
+Write a brief, motivating weekly briefing for Mike and Pete using this exact structure:
 
-Keep it under 200 words. Direct and human. No bullet-point overload. Never use em dashes.`;
+**Part Human | Weekly Outreach Briefing**
+
+**[First name greeting],**
+
+[1-2 sentence overview of this week's pipeline health and energy.]
+
+**Top Priorities**
+
+- **[Company name]** — [1 sentence: what makes them the top pick this week and why now]
+- **[Company name]** — [1 sentence: specific angle or timing signal]
+- **[Company name]** — [1 sentence: why this one is worth the swing] (only if a strong third exists)
+
+[1 sentence on any companies to skip or deprioritize, if relevant.]
+
+**Tactical Reminder**
+
+[One sharp, specific reminder tied to the Dan Allard 5-touch cadence.]
+
+Good hunting this week.
+
+Keep it tight and direct. Never use em dashes.`;
 
   const data = await withTimeout(
     callClaude({
