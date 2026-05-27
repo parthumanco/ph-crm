@@ -135,12 +135,19 @@ export default function WeeklyReportPage({ icp = DEFAULT_ICP, refreshKey = 0 }) 
       if (completedTouches === 0) {
         newOutreach.push({ entry, company });
       } else {
-        // For daysSince, prefer the actual last sent date; fall back to entry's last_touch_date
         const lastSent = sentTouches[0];
-        const lastDateStr = lastSent?.sent_date || entry.last_touch_date;
+        const lastDateStr = lastSent?.sent_date;
         const days = daysSince(lastDateStr);
         const nextTouch = completedTouches + 1;
-        if (nextTouch <= 5 && days >= 7) {
+
+        // Retroactive-logging detection: if touches were all logged today but the
+        // pipeline entry is older than 7 days, the sent dates are back-filled.
+        // In that case bypass the 7-day gate so follow-ups surface correctly.
+        const todayStr = new Date().toISOString().slice(0, 10);
+        const entryAgeDays = daysSince(entry.created_at);
+        const retroactive = lastDateStr === todayStr && entryAgeDays >= 7;
+
+        if (nextTouch <= 5 && (days >= 7 || retroactive)) {
           followupsDue.push({ entry, company, touchNumber: nextTouch, daysSince: days, lastTouch: completedTouches });
         }
       }
