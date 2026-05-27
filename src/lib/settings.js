@@ -96,6 +96,21 @@ export async function markWeeklyScanViewed() {
   }
 }
 
+export async function loadTeamEmails() {
+  try {
+    const { data } = await supabase.from('app_settings').select('value').eq('key', 'team_emails').single();
+    return data?.value || {};
+  } catch { return {}; }
+}
+
+export async function saveTeamEmails(emails) {
+  const { error } = await supabase.from('app_settings').upsert(
+    { key: 'team_emails', value: emails, updated_at: new Date().toISOString() },
+    { onConflict: 'key' }
+  );
+  if (error) throw new Error(error.message);
+}
+
 // Returns true if a weekly rescan is due (last one > 6 days ago or never run)
 export function isWeeklyScanDue(lastScan) {
   if (!lastScan?.timestamp) return true;
