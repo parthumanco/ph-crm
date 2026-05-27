@@ -361,7 +361,7 @@ export default function WeeklyReportPage({ icp = DEFAULT_ICP, refreshKey = 0 }) 
               <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>Generated {new Date(report.generated).toLocaleTimeString()}</span>
             </div>
             <div className="card-body">
-              <p style={{ fontSize: 13, lineHeight: 1.7, whiteSpace: 'pre-wrap' }}>{report.briefing}</p>
+              <MarkdownBriefing text={report.briefing} />
             </div>
           </div>
         )}
@@ -483,7 +483,7 @@ export default function WeeklyReportPage({ icp = DEFAULT_ICP, refreshKey = 0 }) 
                         {plan.briefing && (
                           <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border-light)', background: 'var(--bg)' }}>
                             <div style={{ fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--text-faint)', marginBottom: 8 }}>AI Briefing</div>
-                            <p style={{ fontSize: 13, lineHeight: 1.7, whiteSpace: 'pre-wrap', color: 'var(--text)', margin: 0 }}>{plan.briefing}</p>
+                            <MarkdownBriefing text={plan.briefing} />
                           </div>
                         )}
 
@@ -572,6 +572,99 @@ export default function WeeklyReportPage({ icp = DEFAULT_ICP, refreshKey = 0 }) 
       </div>
     </>
   );
+}
+
+// ── Markdown briefing renderer ────────────────────────────────────────────────
+
+function renderInline(str) {
+  const parts = str.split(/\*\*([^*]+)\*\*/g);
+  return parts.map((part, i) =>
+    i % 2 === 1 ? <strong key={i} style={{ fontWeight: 700, color: 'var(--text)' }}>{part}</strong> : part
+  );
+}
+
+function MarkdownBriefing({ text }) {
+  if (!text) return null;
+
+  const lines = text.split('\n');
+  const elements = [];
+  let listBuffer = [];
+  let listType = null;
+
+  function flushList(idx) {
+    if (!listBuffer.length) return;
+    const items = listBuffer.map((item, j) => (
+      <li key={j} style={{ fontSize: 13, lineHeight: 1.65, color: 'var(--text)', paddingLeft: 2 }}>
+        {renderInline(item)}
+      </li>
+    ));
+    const style = { margin: '6px 0 6px 0', paddingLeft: 20, display: 'flex', flexDirection: 'column', gap: 3 };
+    elements.push(
+      listType === 'ol'
+        ? <ol key={`list-${idx}`} style={style}>{items}</ol>
+        : <ul key={`list-${idx}`} style={style}>{items}</ul>
+    );
+    listBuffer = [];
+    listType = null;
+  }
+
+  lines.forEach((line, i) => {
+    const t = line.trim();
+
+    if (!t) { flushList(i); return; }
+
+    // Full-line bold → section heading
+    const headingMatch = t.match(/^\*\*(.+?)\*\*:?\s*$/);
+    if (headingMatch) {
+      flushList(i);
+      const txt = headingMatch[1];
+      // First occurrence of "Part Human" title → render as a prominent title line
+      const isTitle = txt.includes('Part Human') || txt.includes('Briefing');
+      elements.push(
+        <p key={i} style={{
+          fontSize: isTitle ? 15 : 13,
+          fontWeight: 800,
+          color: isTitle ? 'var(--accent)' : 'var(--text)',
+          margin: isTitle ? '0 0 12px' : '18px 0 4px',
+          letterSpacing: isTitle ? '-.01em' : '.01em',
+          textTransform: isTitle ? 'none' : 'uppercase',
+          borderBottom: isTitle ? '2px solid var(--accent)' : 'none',
+          paddingBottom: isTitle ? 8 : 0,
+        }}>
+          {txt}
+        </p>
+      );
+      return;
+    }
+
+    // Bullet list
+    const bullet = t.match(/^[-•*]\s+(.+)/);
+    if (bullet) {
+      if (listType !== 'ul') { flushList(i); listType = 'ul'; }
+      listBuffer.push(bullet[1]);
+      return;
+    }
+
+    // Numbered list
+    const num = t.match(/^\d+\.\s+(.+)/);
+    if (num) {
+      if (listType !== 'ol') { flushList(i); listType = 'ol'; }
+      listBuffer.push(num[1]);
+      return;
+    }
+
+    // Regular paragraph
+    flushList(i);
+    elements.push(
+      <p key={i} style={{ fontSize: 13, lineHeight: 1.75, margin: '4px 0', color: 'var(--text)' }}>
+        {renderInline(t)}
+      </p>
+    );
+  });
+
+  flushList(lines.length);
+
+  return <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>{elements}</div>;
 }
 
 // ── Shared sub-components ─────────────────────────────────────────────────────
