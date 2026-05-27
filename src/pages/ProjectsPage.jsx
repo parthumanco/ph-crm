@@ -794,18 +794,18 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0 }) {
     }
   };
 
-  const handleSaveTaskEdit = async (task) => {
-    if (!editTaskDraft.title?.trim()) { setEditingTask(null); return; }
+  const handleSaveTaskEdit = async (task, overrides = {}) => {
+    const draft = { ...editTaskDraft, ...overrides };
+    if (!draft.title?.trim()) { setEditingTask(null); return; }
     const updated = {
       ...task,
-      title:       editTaskDraft.title.trim(),
-      due_date:    editTaskDraft.due_date   || null,
-      assigned_to: editTaskDraft.assigned_to || '',
+      title:       draft.title.trim(),
+      due_date:    draft.due_date   || null,
+      assigned_to: draft.assigned_to || '',
     };
     await upsertProjectTask(updated);
     setTasks(prev => prev.map(t => t.id === updated.id ? updated : t));
     setAllTasks(prev => ({ ...prev, [activeProject.id]: prev[activeProject.id]?.map(t => t.id === updated.id ? updated : t) || [] }));
-    setEditingTask(null);
     await syncMilestoneDates(updated);
   };
 
@@ -822,18 +822,19 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0 }) {
     }
   };
 
-  const handleSaveAssignedTaskEdit = async (task) => {
-    if (!editTaskDraft.title?.trim()) { setEditingTask(null); return; }
-    const updated = { ...task, title: editTaskDraft.title.trim(), due_date: editTaskDraft.due_date || null, assigned_to: editTaskDraft.assigned_to || '' };
+  const handleSaveAssignedTaskEdit = async (task, overrides = {}) => {
+    const draft = { ...editTaskDraft, ...overrides };
+    if (!draft.title?.trim()) { setEditingTask(null); return; }
+    const updated = { ...task, title: draft.title.trim(), due_date: draft.due_date || null, assigned_to: draft.assigned_to || '' };
     await upsertProjectTask(updated);
     setAssignedTasks(prev => prev.map(t =>
       t.id === updated.id ? { ...updated, _project: t._project, _milestone: t._milestone } : t
     ));
-    setEditingTask(null);
     await syncMilestoneDates(updated);
     // If owner changed away from current filter, remove from list
     if (updated.assigned_to !== assignedOwner) {
       setAssignedTasks(prev => prev.filter(t => t.id !== updated.id));
+      setEditingTask(null);
     }
   };
 
@@ -1081,24 +1082,32 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0 }) {
                           autoFocus
                           value={editTaskDraft.title}
                           onChange={e => setEditTaskDraft(d => ({ ...d, title: e.target.value }))}
-                          onKeyDown={e => { if (e.key === 'Enter') handleSaveAssignedTaskEdit(task); if (e.key === 'Escape') setEditingTask(null); }}
+                          onKeyDown={e => { if (e.key === 'Enter') { handleSaveAssignedTaskEdit(task); setEditingTask(null); } if (e.key === 'Escape') setEditingTask(null); }}
+                          onBlur={() => handleSaveAssignedTaskEdit(task)}
                           style={{ flex: '1 1 180px', fontSize: 13, padding: '5px 10px', fontWeight: 600 }}
                           placeholder="Task title"
                         />
                         <div>
                           <Lbl>Due date</Lbl>
-                          <input type="date" value={editTaskDraft.due_date} onChange={e => setEditTaskDraft(d => ({ ...d, due_date: e.target.value }))} style={{ fontSize: 12, padding: '4px 8px', width: 'auto' }} />
+                          <input type="date" value={editTaskDraft.due_date} onChange={e => {
+                            const val = e.target.value;
+                            setEditTaskDraft(d => ({ ...d, due_date: val }));
+                            handleSaveAssignedTaskEdit(task, { due_date: val });
+                          }} style={{ fontSize: 12, padding: '4px 8px', width: 'auto' }} />
                         </div>
                         <div>
                           <Lbl>Assigned to</Lbl>
-                          <select value={editTaskDraft.assigned_to} onChange={e => setEditTaskDraft(d => ({ ...d, assigned_to: e.target.value }))} style={{ fontSize: 12, padding: '4px 8px', width: 'auto' }}>
+                          <select value={editTaskDraft.assigned_to} onChange={e => {
+                            const val = e.target.value;
+                            setEditTaskDraft(d => ({ ...d, assigned_to: val }));
+                            handleSaveAssignedTaskEdit(task, { assigned_to: val });
+                          }} style={{ fontSize: 12, padding: '4px 8px', width: 'auto' }}>
                             <option value="">—</option>
                             {OWNERS.map(o => <option key={o} value={o}>{o}</option>)}
                           </select>
                         </div>
-                        <div style={{ display: 'flex', gap: 6, marginLeft: 'auto' }}>
-                          <button className="btn btn-primary" onClick={() => handleSaveAssignedTaskEdit(task)} style={{ fontSize: 12 }}>Save</button>
-                          <button onClick={() => setEditingTask(null)} style={{ padding: '5px 10px', borderRadius: 5, border: '1px solid var(--border)', background: 'transparent', cursor: 'pointer', fontSize: 12 }}>Cancel</button>
+                        <div style={{ marginLeft: 'auto' }}>
+                          <button onClick={() => setEditingTask(null)} style={{ padding: '5px 10px', borderRadius: 5, border: '1px solid var(--border)', background: 'transparent', cursor: 'pointer', fontSize: 12 }}>Done</button>
                         </div>
                       </div>
                     ) : (
@@ -1689,7 +1698,8 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0 }) {
                                   autoFocus
                                   value={editTaskDraft.title}
                                   onChange={e => setEditTaskDraft(d => ({ ...d, title: e.target.value }))}
-                                  onKeyDown={e => { if (e.key === 'Enter') handleSaveTaskEdit(task); if (e.key === 'Escape') setEditingTask(null); }}
+                                  onKeyDown={e => { if (e.key === 'Enter') { handleSaveTaskEdit(task); setEditingTask(null); } if (e.key === 'Escape') setEditingTask(null); }}
+                                  onBlur={() => handleSaveTaskEdit(task)}
                                   style={{ flex: '1 1 180px', fontSize: 13, padding: '5px 10px', fontWeight: 600 }}
                                   placeholder="Task title"
                                 />
@@ -1698,7 +1708,11 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0 }) {
                                   <input
                                     type="date"
                                     value={editTaskDraft.due_date}
-                                    onChange={e => setEditTaskDraft(d => ({ ...d, due_date: e.target.value }))}
+                                    onChange={e => {
+                                      const val = e.target.value;
+                                      setEditTaskDraft(d => ({ ...d, due_date: val }));
+                                      handleSaveTaskEdit(task, { due_date: val });
+                                    }}
                                     style={{ fontSize: 12, padding: '4px 8px', width: 'auto' }}
                                   />
                                 </div>
@@ -1706,16 +1720,19 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0 }) {
                                   <Lbl>Assigned to</Lbl>
                                   <select
                                     value={editTaskDraft.assigned_to}
-                                    onChange={e => setEditTaskDraft(d => ({ ...d, assigned_to: e.target.value }))}
+                                    onChange={e => {
+                                      const val = e.target.value;
+                                      setEditTaskDraft(d => ({ ...d, assigned_to: val }));
+                                      handleSaveTaskEdit(task, { assigned_to: val });
+                                    }}
                                     style={{ fontSize: 12, padding: '4px 8px', width: 'auto' }}
                                   >
                                     <option value="">—</option>
                                     {OWNERS.map(o => <option key={o} value={o}>{o}</option>)}
                                   </select>
                                 </div>
-                                <div style={{ display: 'flex', gap: 6, marginLeft: 'auto' }}>
-                                  <button className="btn btn-primary" onClick={() => handleSaveTaskEdit(task)} style={{ fontSize: 12 }}>Save</button>
-                                  <button onClick={() => setEditingTask(null)} style={{ padding: '5px 10px', borderRadius: 5, border: '1px solid var(--border)', background: 'transparent', cursor: 'pointer', fontSize: 12 }}>Cancel</button>
+                                <div style={{ marginLeft: 'auto' }}>
+                                  <button onClick={() => setEditingTask(null)} style={{ padding: '5px 10px', borderRadius: 5, border: '1px solid var(--border)', background: 'transparent', cursor: 'pointer', fontSize: 12 }}>Done</button>
                                 </div>
                               </div>
                             ) : (
