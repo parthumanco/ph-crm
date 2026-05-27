@@ -1784,10 +1784,10 @@ function CompanyCard({ company, distMiles, status, isScanning, scanningAll, week
           </button>
           {hasResult && (
             isAddedToPipeline ? (
-              <button className="btn btn-ghost btn-sm" onClick={e => { e.stopPropagation(); onNavigatePipeline(); }}>✅ In Active Prospects →</button>
+              <button className="btn btn-ghost btn-sm" onClick={e => { e.stopPropagation(); onNavigatePipeline(); }}>✅ In Prospects →</button>
             ) : (
               <button className="btn btn-green btn-sm" onClick={e => { e.stopPropagation(); onAddToPipeline(); }} disabled={isAddingToPipeline}>
-                {isAddingToPipeline ? <><span className="spinner" /> Adding…</> : '+ Add to Active Prospects'}
+                {isAddingToPipeline ? <><span className="spinner" /> Adding…</> : '+ Add to Prospects'}
               </button>
             )
           )}
