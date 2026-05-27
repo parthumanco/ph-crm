@@ -30,20 +30,6 @@ const TIER_FILTERS = [
     { id: 'T3',  label: 'Tier 3' },
 ];
 
-const SCORE_FILTERS = [
-    { id: 'all', label: 'Any score' },
-    { id: '7',   label: '7 +' },
-    { id: '5',   label: '5 +' },
-    { id: '3',   label: '3 +' },
-];
-
-const DISTANCE_FILTERS = [
-    { id: 'all', label: 'Any distance' },
-    { id: '50',  label: '< 50 mi' },
-    { id: '100', label: '< 100 mi' },
-    { id: '250', label: '< 250 mi' },
-];
-
 const STATUS_FILTERS = [
     { id: 'all',      label: 'All' },
     { id: 'scanned',  label: 'Deep-scanned' },
@@ -51,12 +37,71 @@ const STATUS_FILTERS = [
     { id: 'pipeline', label: 'In pipeline' },
 ];
 
-const SIG_FILTERS = [
-    { id: 'all', label: 'Any' },
-    { id: '7',   label: '7 +' },
-    { id: '5',   label: '5 +' },
-    { id: '3',   label: '3 +' },
-];
+/* Slider config — each filter has its own scale, step, and "any" state.
+   Single-threshold sliders: when the thumb is at the "any" end, the
+   filter is off; anywhere else it gates the result set. */
+const ICP_SLIDER  = { min: 0, max: 10,   step: 1,  any: 0,   axis: 'min' };
+const SIG_SLIDER  = { min: 0, max: 10,   step: 1,  any: 0,   axis: 'min' };
+const DIST_SLIDER = { min: 25, max: 500, step: 25, any: 500, axis: 'max' };
+const EMP_SLIDER  = { min: 0, max: 1000, step: 25, any: 0,   axis: 'min' };
+
+/* Reusable filter slider — single thumb, with a current-value badge
+   that flips to "Any" at the rest position. The colored fill on the
+   track visualizes how restrictive the threshold is. */
+function FilterSlider({
+    label,        // small italic eyebrow
+    value,        // current value (number)
+    onChange,     // (newValue) => void
+    min, max, step, any,
+    axis = 'min', // 'min' (filter >= value) or 'max' (filter <= value)
+    formatValue,  // optional (n) => string for the badge
+    accent = 'var(--v2-blue)',
+}) {
+    const isAny = value === any;
+    const pct = ((value - min) / (max - min)) * 100;
+    // For min-axis sliders the fill grows leftward; for max-axis it
+    // visualizes "everything up to this value."
+    const fillStart = axis === 'min' ? '0%'    : '0%';
+    const fillEnd   = axis === 'min' ? `${pct}%` : `${pct}%`;
+    return (
+        <div className="v2-filter-group">
+            <div className="v2-filter-group__label-row">
+                <div className="v2-filter-group__label">{label}</div>
+                <div className={`v2-slider-badge ${isAny ? 'is-any' : ''}`}>
+                    {isAny
+                        ? 'Any'
+                        : axis === 'max'
+                            ? `≤ ${formatValue ? formatValue(value) : value}`
+                            : `≥ ${formatValue ? formatValue(value) : value}`}
+                </div>
+            </div>
+            <div className="v2-slider">
+                <div
+                    className="v2-slider__fill"
+                    style={{
+                        left: fillStart,
+                        width: fillEnd,
+                        background: isAny ? 'var(--crm-border-strong)' : accent,
+                    }}
+                />
+                <input
+                    type="range"
+                    className="v2-slider__input"
+                    min={min}
+                    max={max}
+                    step={step}
+                    value={value}
+                    onChange={(e) => onChange(Number(e.target.value))}
+                    aria-label={label}
+                />
+            </div>
+            <div className="v2-slider__scale">
+                <span>{formatValue ? formatValue(min) : min}</span>
+                <span>{formatValue ? formatValue(max) : max}</span>
+            </div>
+        </div>
+    );
+}
 
 const FUNDING_FILTERS = [
     { id: 'all',     label: 'Any',     match: () => true },
@@ -266,18 +311,21 @@ export default function V2SignalsPage() {
     const [expanded, setExpanded] = useState(null);
 
     const [tierF,   setTierF]   = useState('all');
-    const [scoreF,  setScoreF]  = useState('all');
-    const [sigF,    setSigF]    = useState('all');
-    const [distF,   setDistF]   = useState('all');
+    const [icpMin,  setIcpMin]  = useState(ICP_SLIDER.any);   // 0 = any
+    const [sigMin,  setSigMin]  = useState(SIG_SLIDER.any);   // 0 = any
+    const [distMax, setDistMax] = useState(DIST_SLIDER.any);  // 500 = any
+    const [empMin,  setEmpMin]  = useState(EMP_SLIDER.any);   // 0 = any
     const [statusF, setStatusF] = useState('all');
     const [fundF,   setFundF]   = useState('all');
-    const [empF,    setEmpF]    = useState('all');
     const [indF,    setIndF]    = useState('all');
     const [search,  setSearch]  = useState('');
 
     const clearAll = () => {
-        setTierF('all'); setScoreF('all'); setSigF('all'); setDistF('all');
-        setStatusF('all'); setFundF('all'); setEmpF('all'); setIndF('all');
+        setTierF('all'); setStatusF('all'); setFundF('all'); setIndF('all');
+        setIcpMin(ICP_SLIDER.any);
+        setSigMin(SIG_SLIDER.any);
+        setDistMax(DIST_SLIDER.any);
+        setEmpMin(EMP_SLIDER.any);
         setSearch('');
     };
 
@@ -319,30 +367,22 @@ export default function V2SignalsPage() {
 
     const filtered = useMemo(() => {
         const fundMatch = FUNDING_FILTERS.find((f) => f.id === fundF)?.match || (() => true);
-        const empMatch  = EMPLOYEE_FILTERS.find((f) => f.id === empF)?.match  || (() => true);
         return companies.filter((c) => {
             if (tierF !== 'all' && c.icp_tier !== tierF) return false;
-            if (scoreF !== 'all') {
-                const min = parseInt(scoreF, 10);
-                if ((c.icp_score ?? 0) < min) return false;
-            }
-            if (sigF !== 'all') {
-                const min = parseInt(sigF, 10);
-                if ((c.overall_score ?? 0) < min) return false;
-            }
-            if (distF !== 'all') {
-                const max = parseInt(distF, 10);
+            if (icpMin > ICP_SLIDER.any && (c.icp_score ?? 0) < icpMin) return false;
+            if (sigMin > SIG_SLIDER.any && (c.overall_score ?? 0) < sigMin) return false;
+            if (distMax < DIST_SLIDER.any) {
                 const d = distanceMiles(c.lat, c.lng);
-                if (d === null || d > max) return false;
+                if (d === null || d > distMax) return false;
+            }
+            if (empMin > EMP_SLIDER.any) {
+                const n = parseEmployees(c.employee_count);
+                if (n === null || n < empMin) return false;
             }
             if (statusF === 'scanned'  && !c.deep_scanned) return false;
             if (statusF === 'pending'  &&  c.deep_scanned) return false;
             if (statusF === 'pipeline' && !pipeline.has(c.id)) return false;
             if (fundF !== 'all' && !fundMatch(c.funding_stage)) return false;
-            if (empF !== 'all') {
-                const n = parseEmployees(c.employee_count);
-                if (!empMatch(n)) return false;
-            }
             if (indF !== 'all' && (c.industry || '').trim() !== indF) return false;
             if (search) {
                 const q = search.toLowerCase();
@@ -351,7 +391,7 @@ export default function V2SignalsPage() {
             }
             return true;
         });
-    }, [companies, tierF, scoreF, sigF, distF, statusF, fundF, empF, indF, search, pipeline]);
+    }, [companies, tierF, icpMin, sigMin, distMax, empMin, statusF, fundF, indF, search, pipeline]);
 
     const stats = useMemo(() => {
         const total = companies.length;
@@ -363,12 +403,12 @@ export default function V2SignalsPage() {
 
     const activeFilterCount =
         (tierF !== 'all' ? 1 : 0) +
-        (scoreF !== 'all' ? 1 : 0) +
-        (sigF !== 'all' ? 1 : 0) +
-        (distF !== 'all' ? 1 : 0) +
+        (icpMin > ICP_SLIDER.any ? 1 : 0) +
+        (sigMin > SIG_SLIDER.any ? 1 : 0) +
+        (distMax < DIST_SLIDER.any ? 1 : 0) +
+        (empMin > EMP_SLIDER.any ? 1 : 0) +
         (statusF !== 'all' ? 1 : 0) +
         (fundF !== 'all' ? 1 : 0) +
-        (empF !== 'all' ? 1 : 0) +
         (indF !== 'all' ? 1 : 0) +
         (search ? 1 : 0);
 
@@ -459,36 +499,28 @@ export default function V2SignalsPage() {
                             ))}
                         </div>
                     </div>
-                    <div className="v2-filter-group">
-                        <div className="v2-filter-group__label">ICP score</div>
-                        <div className="v2-segmented">
-                            {SCORE_FILTERS.map((f) => (
-                                <button key={f.id} type="button"
-                                    className={`v2-segmented__item ${scoreF === f.id ? 'is-active' : ''}`}
-                                    onClick={() => setScoreF(f.id)}>{f.label}</button>
-                            ))}
-                        </div>
-                    </div>
-                    <div className="v2-filter-group">
-                        <div className="v2-filter-group__label">signal score</div>
-                        <div className="v2-segmented">
-                            {SIG_FILTERS.map((f) => (
-                                <button key={f.id} type="button"
-                                    className={`v2-segmented__item ${sigF === f.id ? 'is-active' : ''}`}
-                                    onClick={() => setSigF(f.id)}>{f.label}</button>
-                            ))}
-                        </div>
-                    </div>
-                    <div className="v2-filter-group">
-                        <div className="v2-filter-group__label">distance</div>
-                        <div className="v2-segmented">
-                            {DISTANCE_FILTERS.map((f) => (
-                                <button key={f.id} type="button"
-                                    className={`v2-segmented__item ${distF === f.id ? 'is-active' : ''}`}
-                                    onClick={() => setDistF(f.id)}>{f.label}</button>
-                            ))}
-                        </div>
-                    </div>
+                    <FilterSlider
+                        label="ICP score"
+                        value={icpMin}
+                        onChange={setIcpMin}
+                        {...ICP_SLIDER}
+                        accent="var(--v2-orange)"
+                    />
+                    <FilterSlider
+                        label="signal score"
+                        value={sigMin}
+                        onChange={setSigMin}
+                        {...SIG_SLIDER}
+                        accent="var(--v2-teal)"
+                    />
+                    <FilterSlider
+                        label="distance"
+                        value={distMax}
+                        onChange={setDistMax}
+                        {...DIST_SLIDER}
+                        accent="var(--v2-blue)"
+                        formatValue={(n) => n === DIST_SLIDER.any ? `${n}+` : `${n}mi`}
+                    />
 
                     {/* Row 2 — Company shape & status */}
                     <div className="v2-filter-group">
@@ -515,16 +547,14 @@ export default function V2SignalsPage() {
                             ))}
                         </div>
                     </div>
-                    <div className="v2-filter-group">
-                        <div className="v2-filter-group__label">employees</div>
-                        <div className="v2-segmented">
-                            {EMPLOYEE_FILTERS.map((f) => (
-                                <button key={f.id} type="button"
-                                    className={`v2-segmented__item ${empF === f.id ? 'is-active' : ''}`}
-                                    onClick={() => setEmpF(f.id)}>{f.label}</button>
-                            ))}
-                        </div>
-                    </div>
+                    <FilterSlider
+                        label="employees"
+                        value={empMin}
+                        onChange={setEmpMin}
+                        {...EMP_SLIDER}
+                        accent="var(--v2-purple)"
+                        formatValue={(n) => n >= EMP_SLIDER.max ? `${n}+` : String(n)}
+                    />
                     <div className="v2-filter-group">
                         <div className="v2-filter-group__label">status</div>
                         <div className="v2-segmented">
