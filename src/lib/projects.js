@@ -190,21 +190,67 @@ export async function deleteProjectTask(id) {
   }
 }
 
+// Effective owner = task.assigned_to OR (if blank) the milestone's assigned_to.
+// This function returns all tasks where the effective owner matches `owner`.
 export async function fetchAllTasksByOwner(owner) {
-  // '__unassigned__' → fetch tasks with no assigned_to
   const isUnassigned = owner === '__unassigned__';
-  try {
-    let q = supabase.from('project_tasks').select('*').is('deleted_at', null).order('due_date', { ascending: true, nullsFirst: false });
-    q = isUnassigned ? q.or('assigned_to.is.null,assigned_to.eq.') : q.eq('assigned_to', owner);
-    const { data, error } = await q;
-    if (!error) return data || [];
-  } catch {}
-  // fallback (no deleted_at column)
-  let q2 = supabase.from('project_tasks').select('*').order('due_date', { ascending: true, nullsFirst: false });
-  q2 = isUnassigned ? q2.or('assigned_to.is.null,assigned_to.eq.') : q2.eq('assigned_to', owner);
-  const { data: d2, error: e2 } = await q2;
-  if (e2) throw new Error(e2.message);
-  return d2 || [];
+
+  // Helper: run a tasks query with optional soft-delete filter
+  async function queryTasks(filter) {
+    try {
+      const { data, error } = await filter(
+        supabase.from('project_tasks').select('*').is('deleted_at', null)
+      );
+      if (!error) return data || [];
+    } catch {}
+    // fallback — no deleted_at column
+    const { data, error } = await filter(supabase.from('project_tasks').select('*'));
+    if (error) throw new Error(error.message);
+    return data || [];
+  }
+
+  // 1. Tasks directly assigned to owner (or unassigned for the __unassigned__ case)
+  const directTasks = await queryTasks(q =>
+    isUnassigned
+      ? q.or('assigned_to.is.null,assigned_to.eq.').order('due_date', { ascending: true, nullsFirst: false })
+      : q.eq('assigned_to', owner).order('due_date', { ascending: true, nullsFirst: false })
+  );
+
+  // 2. Find milestones owned by this person, then pull their unassigned tasks
+  //    (tasks with no assigned_to fall back to the milestone owner)
+  let inheritedTasks = [];
+  if (!isUnassigned) {
+    const { data: ownerMs } = await supabase
+      .from('milestones').select('id').eq('assigned_to', owner);
+    const msIds = (ownerMs || []).map(m => m.id);
+    if (msIds.length > 0) {
+      inheritedTasks = await queryTasks(q =>
+        q.in('milestone_id', msIds)
+         .or('assigned_to.is.null,assigned_to.eq.')
+         .order('due_date', { ascending: true, nullsFirst: false })
+      );
+    }
+  }
+
+  // For __unassigned__: exclude tasks whose milestone IS assigned to someone
+  if (isUnassigned) {
+    const { data: assignedMs } = await supabase
+      .from('milestones').select('id').not('assigned_to', 'is', null).neq('assigned_to', '');
+    const assignedMsIds = new Set((assignedMs || []).map(m => m.id));
+    const truly = directTasks.filter(t => !t.milestone_id || !assignedMsIds.has(t.milestone_id));
+    return truly;
+  }
+
+  // Merge direct + inherited, dedupe by id, sort by due_date
+  const seen = new Set();
+  return [...directTasks, ...inheritedTasks]
+    .filter(t => { if (seen.has(t.id)) return false; seen.add(t.id); return true; })
+    .sort((a, b) => {
+      if (!a.due_date && !b.due_date) return 0;
+      if (!a.due_date) return 1;
+      if (!b.due_date) return -1;
+      return a.due_date.localeCompare(b.due_date);
+    });
 }
 
 export async function restoreProjectTask(id, taskData = null) {

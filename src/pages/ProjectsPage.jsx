@@ -467,11 +467,16 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0 }) {
           fileMap[f.task_id].push(f);
         });
       }));
-      setAssignedTasks(rawTasks.map(t => ({
-        ...t,
-        _project:   projects.find(p => p.id === t.project_id) || { name: 'Unknown', id: t.project_id },
-        _milestone: t.milestone_id ? milestoneMap[t.milestone_id] : null,
-      })));
+      setAssignedTasks(rawTasks.map(t => {
+        const ms = t.milestone_id ? milestoneMap[t.milestone_id] : null;
+        return {
+          ...t,
+          _project:   projects.find(p => p.id === t.project_id) || { name: 'Unknown', id: t.project_id },
+          _milestone: ms,
+          // _inherited: task has no direct assigned_to — ownership comes from the milestone
+          _inherited: !t.assigned_to && !!ms?.assigned_to,
+        };
+      }));
       setAssignedFiles(fileMap);
     } catch (e) {
       console.error('loadAssigned error:', e);
@@ -833,13 +838,22 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0 }) {
       t.id === updated.id ? { ...updated, _project: t._project, _milestone: t._milestone } : t
     ));
     await syncMilestoneDates(updated);
-    // If owner no longer matches the current filter, remove from list
-    const noLongerMatches =
-      (assignedOwner === '__unassigned__' && updated.assigned_to) ||
-      (assignedOwner !== '__unassigned__' && updated.assigned_to !== assignedOwner);
-    if (noLongerMatches) {
+    // Keep in list if still directly assigned OR still inherited via milestone
+    const milestoneOwner = task._milestone?.assigned_to || '';
+    const stillMatches =
+      assignedOwner === '__unassigned__'
+        ? (!updated.assigned_to && !milestoneOwner)
+        : (updated.assigned_to === assignedOwner || (!updated.assigned_to && milestoneOwner === assignedOwner));
+    if (!stillMatches) {
       setAssignedTasks(prev => prev.filter(t => t.id !== updated.id));
       setEditingTask(null);
+    } else {
+      // Re-compute _inherited flag after edit
+      setAssignedTasks(prev => prev.map(t =>
+        t.id === updated.id
+          ? { ...t, ...updated, _inherited: !updated.assigned_to && !!milestoneOwner }
+          : t
+      ));
     }
   };
 
@@ -1151,6 +1165,11 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0 }) {
                                 <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>›</span>
                                 <span style={{ fontSize: 11, color: msColor2, fontWeight: 600 }}>{task._milestone.title}</span>
                               </>
+                            )}
+                            {task._inherited && (
+                              <span style={{ fontSize: 10, color: 'var(--text-faint)', background: 'var(--surface)', border: '1px dashed var(--border)', padding: '1px 6px', borderRadius: 8, whiteSpace: 'nowrap' }}>
+                                via milestone
+                              </span>
                             )}
                           </div>
                         </div>
@@ -1714,8 +1733,10 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0 }) {
                       {/* Tasks */}
                       {msTasks.filter(task => {
                         if (!projectOwnerFilter) return true;
-                        if (projectOwnerFilter === '__unassigned__') return !task.assigned_to;
-                        return task.assigned_to === projectOwnerFilter;
+                        // Effective owner: task's own assigned_to, falling back to the milestone owner
+                        const effective = task.assigned_to || ms.assigned_to || '';
+                        if (projectOwnerFilter === '__unassigned__') return !effective;
+                        return effective === projectOwnerFilter;
                       }).map(task => {
                         const taskFiles     = projectFiles.filter(f => f.task_id === task.id);
                         const pendingDelete = confirmDeleteTask === task.id;
