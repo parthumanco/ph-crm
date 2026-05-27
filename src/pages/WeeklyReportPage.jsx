@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from '../lib/supabase';
-import { generateWeeklyPlan, generateEmailDraft } from '../lib/anthropic';
+import { generateWeeklyPlan, generateEmailDraft, scanForNewTriggers } from '../lib/anthropic';
 import { DEFAULT_ICP } from '../lib/settings';
 
 function getMonday(d = new Date()) {
@@ -25,6 +25,12 @@ function fmtShort(isoStr) {
   if (!isoStr) return '';
   return new Date(isoStr).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
+
+const URGENCY_STYLES = {
+  high:   { bg: '#fef2f2', border: '#fecaca', badge: '#ef4444', label: '🔴 HIGH PRIORITY SIGNAL' },
+  medium: { bg: '#fffbeb', border: '#fde68a', badge: '#f59e0b', label: '🟡 NEW SIGNAL' },
+  low:    { bg: '#f0fdf4', border: '#bbf7d0', badge: '#22c55e', label: '🟢 NEW SIGNAL' },
+};
 
 // ── Persistence helpers ───────────────────────────────────────────────────────
 
@@ -56,13 +62,20 @@ export default function WeeklyReportPage({ icp = DEFAULT_ICP, refreshKey = 0 }) 
   const [touches, setTouches]       = useState([]);
   const [report, setReport]         = useState(null);
   const [generating, setGenerating] = useState(false);
-  const [generatingEmails, setGeneratingEmails] = useState(false);
-  const [emailDrafts, setEmailDrafts] = useState({});
+  const [emailDrafts, setEmailDrafts]     = useState({});
+  const [triggerFindings, setTriggerFindings] = useState({});
   const [expandedEmail, setExpandedEmail] = useState(null);
   const [error, setError]           = useState(null);
   const [history, setHistory]       = useState([]);
   const [expandedHistory, setExpandedHistory] = useState({});
   const [expandedHistoryEmail, setExpandedHistoryEmail] = useState({});
+
+  // Progress for the background scan+draft pipeline
+  // { phase: 'scanning'|'drafting'|'done', current, total, currentName }
+  const [autoProgress, setAutoProgress] = useState(null);
+
+  // Ref so scanAndDraft always sees the latest plan data even after re-renders
+  const planRef = useRef({ newOutreach: [], followupsDue: [] });
 
   const weekStart  = getMonday();
   const weekKey    = weekStart.toISOString().slice(0, 10);
@@ -93,28 +106,25 @@ export default function WeeklyReportPage({ icp = DEFAULT_ICP, refreshKey = 0 }) 
   useEffect(() => {
     load();
     loadPlanHistory().then(h => {
-      // Restore current week's saved plan if it exists
       const thisWeek = h.find(p => p.weekKey === weekKey);
       if (thisWeek) {
         setReport({ briefing: thisWeek.briefing, generated: thisWeek.generatedAt });
         setEmailDrafts(thisWeek.emailDrafts || {});
+        setTriggerFindings(thisWeek.triggerFindings || {});
       }
-      // Everything else goes into history
       setHistory(h.filter(p => p.weekKey !== weekKey));
     });
   }, [load]);
 
-  // Determine what's due this week
+  // Compute what's due this week
   const computePlan = useCallback(() => {
     const newOutreach  = [];
     const followupsDue = [];
-
     entries.forEach(entry => {
       const company = companies[entry.company_id];
       if (!company) return;
       const entryTouches = touches.filter(t => t.pipeline_entry_id === entry.id);
       const sentTouches  = entryTouches.filter(t => t.status === 'sent').sort((a, b) => new Date(b.sent_date) - new Date(a.sent_date));
-
       if (sentTouches.length === 0) {
         newOutreach.push({ entry, company });
       } else {
@@ -127,26 +137,29 @@ export default function WeeklyReportPage({ icp = DEFAULT_ICP, refreshKey = 0 }) 
         }
       }
     });
-
     return { newOutreach, followupsDue };
   }, [entries, companies, touches]);
 
   const { newOutreach, followupsDue } = computePlan();
 
-  // Build a serialisable snapshot of the current plan for history storage
-  const buildSnapshot = useCallback((briefing, drafts) => ({
+  // Keep ref in sync so scanAndDraft can read the latest plan
+  useEffect(() => {
+    planRef.current = { newOutreach, followupsDue };
+  }, [newOutreach, followupsDue]);
+
+  const buildSnapshot = (briefing, drafts, triggers) => ({
     weekKey,
     weekLabel,
     briefing,
     generatedAt: new Date().toISOString(),
-    newOutreach: newOutreach.map(({ entry, company }) => ({
+    newOutreach: planRef.current.newOutreach.map(({ entry, company }) => ({
       key: `${entry.id}-1`,
       companyName: company.name,
       contactName: (company.contacts || [])[0]?.name || '',
       contactTitle: (company.contacts || [])[0]?.title || '',
       touchNumber: 1,
     })),
-    followupsDue: followupsDue.map(({ entry, company, touchNumber, daysSince: days }) => ({
+    followupsDue: planRef.current.followupsDue.map(({ entry, company, touchNumber, daysSince: days }) => ({
       key: `${entry.id}-${touchNumber}`,
       companyName: company.name,
       contactName: (company.contacts || [])[0]?.name || '',
@@ -155,12 +168,77 @@ export default function WeeklyReportPage({ icp = DEFAULT_ICP, refreshKey = 0 }) 
       daysSince: days,
     })),
     emailDrafts: drafts || {},
-  }), [weekKey, weekLabel, newOutreach, followupsDue]);
+    triggerFindings: triggers || {},
+  });
+
+  // ── Background scan + draft pipeline ─────────────────────────────────────────
+  const scanAndDraft = async (briefing) => {
+    const { newOutreach: no, followupsDue: fd } = planRef.current;
+    const allItems = [
+      ...no.map(({ entry, company }) => ({
+        entry, company, touchNumber: 1,
+        key: `${entry.id}-1`,
+        daysSince: 14, // no previous touch — scan last 14 days
+      })),
+      ...fd.map(({ entry, company, touchNumber, daysSince: days }) => ({
+        entry, company, touchNumber,
+        key: `${entry.id}-${touchNumber}`,
+        daysSince: days,
+      })),
+    ];
+
+    if (allItems.length === 0) return;
+
+    const accTriggers = {};
+    const accDrafts   = {};
+
+    // ── Phase 1: Scan each company for new triggers ───────────────────────────
+    for (let i = 0; i < allItems.length; i++) {
+      const item = allItems[i];
+      setAutoProgress({ phase: 'scanning', current: i + 1, total: allItems.length, currentName: item.company.name });
+      try {
+        const result = await scanForNewTriggers(item.company, item.daysSince);
+        if (result.found && result.newTriggers?.length > 0) {
+          accTriggers[item.key] = result.newTriggers;
+          setTriggerFindings(t => ({ ...t, [item.key]: result.newTriggers }));
+        }
+      } catch (e) {
+        console.warn(`Trigger scan failed for ${item.company.name}:`, e);
+      }
+    }
+
+    // ── Phase 2: Draft emails ─────────────────────────────────────────────────
+    for (let i = 0; i < allItems.length; i++) {
+      const item = allItems[i];
+      setAutoProgress({ phase: 'drafting', current: i + 1, total: allItems.length, currentName: item.company.name });
+      const contact = (item.company.contacts || [])[0] || { name: 'the decision-maker', title: '' };
+      try {
+        let result;
+        if (item.touchNumber === 3) {
+          const { generateLinkedInDrafts } = await import('../lib/anthropic');
+          result = { type: 'linkedin', ...(await generateLinkedInDrafts(item.company, contact, null, item.company.engagement_type || 'Sprint')), contact };
+        } else {
+          result = { type: 'email', ...(await generateEmailDraft(item.touchNumber, item.company, contact, item.company.recommended_angle, icp, null, item.company.engagement_type || 'Sprint')), contact };
+        }
+        accDrafts[item.key] = result;
+      } catch (e) {
+        accDrafts[item.key] = { error: e.message };
+      }
+      setEmailDrafts(d => ({ ...d, [item.key]: accDrafts[item.key] }));
+      await new Promise(r => setTimeout(r, 300));
+    }
+
+    setAutoProgress({ phase: 'done', current: allItems.length, total: allItems.length, currentName: '' });
+    await savePlanToHistory(weekKey, buildSnapshot(briefing, accDrafts, accTriggers));
+    setTimeout(() => setAutoProgress(null), 3000);
+  };
 
   const generate = async () => {
     setGenerating(true);
     setError(null);
     setEmailDrafts({});
+    setTriggerFindings({});
+    setAutoProgress(null);
     try {
       const briefing = await generateWeeklyPlan(
         newOutreach.map(({ company }) => ({ name: company.name, recommended_angle: company.recommended_angle, summary: company.summary })),
@@ -168,48 +246,13 @@ export default function WeeklyReportPage({ icp = DEFAULT_ICP, refreshKey = 0 }) 
         icp
       );
       setReport({ briefing, generated: new Date().toISOString() });
-      // Auto-save plan (no emails yet)
-      await savePlanToHistory(weekKey, buildSnapshot(briefing, {}));
+      await savePlanToHistory(weekKey, buildSnapshot(briefing, {}, {}));
+      // Fire-and-forget the scan+draft pipeline
+      scanAndDraft(briefing);
     } catch (e) {
       setError(e.message);
     } finally {
       setGenerating(false);
-    }
-  };
-
-  const generateAllEmails = async () => {
-    setGeneratingEmails(true);
-    const allItems = [
-      ...newOutreach.map(({ entry, company }) => ({ entry, company, touchNumber: 1, key: `${entry.id}-1` })),
-      ...followupsDue.map(({ entry, company, touchNumber }) => ({ entry, company, touchNumber, key: `${entry.id}-${touchNumber}` })),
-    ];
-
-    const newDrafts = { ...emailDrafts };
-    try {
-      for (const item of allItems) {
-        const contact = (item.company.contacts || [])[0] || { name: 'the decision-maker', title: '' };
-        try {
-          if (item.touchNumber === 3) {
-            const { generateLinkedInDrafts } = await import('../lib/anthropic');
-            const result = await generateLinkedInDrafts(item.company, contact, null, item.company.engagement_type || 'Sprint');
-            newDrafts[item.key] = { type: 'linkedin', ...result, contact };
-          } else {
-            const result = await generateEmailDraft(item.touchNumber, item.company, contact, item.company.recommended_angle, icp, null, item.company.engagement_type || 'Sprint');
-            newDrafts[item.key] = { type: 'email', ...result, contact };
-          }
-          setEmailDrafts({ ...newDrafts });
-        } catch (e) {
-          newDrafts[item.key] = { error: e.message };
-          setEmailDrafts({ ...newDrafts });
-        }
-        await new Promise(r => setTimeout(r, 500));
-      }
-    } finally {
-      setGeneratingEmails(false);
-      // Update saved plan with email drafts
-      if (report) {
-        await savePlanToHistory(weekKey, buildSnapshot(report.briefing, newDrafts));
-      }
     }
   };
 
@@ -223,21 +266,17 @@ export default function WeeklyReportPage({ icp = DEFAULT_ICP, refreshKey = 0 }) 
   };
 
   const totalActions = newOutreach.length + followupsDue.length;
+  const progressPct  = autoProgress ? Math.round((autoProgress.current / autoProgress.total) * 100) : 0;
 
   return (
     <>
       <div className="page-header">
         <div className="page-header-left">
-          <h2>📋 Weekly Report</h2>
+          <h2>📋 Weekly Outreach</h2>
           <p>{weekLabel} · {totalActions} action{totalActions !== 1 ? 's' : ''} due</p>
         </div>
         <div className="page-header-actions">
-          {report && (
-            <button className="btn btn-secondary" onClick={generateAllEmails} disabled={generatingEmails}>
-              {generatingEmails ? <><span className="spinner" /> Drafting Emails…</> : '✉️ Draft All Emails'}
-            </button>
-          )}
-          <button className="btn btn-primary" onClick={generate} disabled={generating}>
+          <button className="btn btn-primary" onClick={generate} disabled={generating || !!autoProgress}>
             {generating ? <><span className="spinner" /> Generating…</> : '🚀 Generate This Week\'s Plan'}
           </button>
         </div>
@@ -245,6 +284,51 @@ export default function WeeklyReportPage({ icp = DEFAULT_ICP, refreshKey = 0 }) 
 
       <div className="page-body">
         {error && <div className="alert alert-error">⚠️ {error}</div>}
+
+        {/* Scan + draft progress bar */}
+        {autoProgress && autoProgress.phase !== 'done' && (
+          <div style={{ marginBottom: 20, padding: '14px 18px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span className="spinner" />
+                <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>
+                  {autoProgress.phase === 'scanning'
+                    ? `🔍 Scanning ${autoProgress.currentName} for new signals…`
+                    : `✍️ Drafting email for ${autoProgress.currentName}…`}
+                </span>
+              </div>
+              <span style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 600 }}>
+                {autoProgress.current}/{autoProgress.total}
+              </span>
+            </div>
+            <div style={{ height: 6, background: 'var(--border)', borderRadius: 3, overflow: 'hidden' }}>
+              <div style={{
+                height: '100%',
+                width: `${progressPct}%`,
+                background: autoProgress.phase === 'scanning' ? '#f59e0b' : 'var(--accent)',
+                borderRadius: 3,
+                transition: 'width .4s ease',
+              }} />
+            </div>
+            <div style={{ display: 'flex', gap: 16, marginTop: 8 }}>
+              {[
+                { label: 'Scanning for signals', done: autoProgress.phase === 'drafting' || autoProgress.phase === 'done', active: autoProgress.phase === 'scanning' },
+                { label: 'Drafting emails', done: autoProgress.phase === 'done', active: autoProgress.phase === 'drafting' },
+              ].map(step => (
+                <span key={step.label} style={{ fontSize: 11, color: step.done ? '#16a34a' : step.active ? 'var(--accent)' : 'var(--text-faint)', fontWeight: step.active ? 700 : 400 }}>
+                  {step.done ? '✓ ' : step.active ? '● ' : '○ '}{step.label}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {autoProgress?.phase === 'done' && (
+          <div className="alert" style={{ marginBottom: 20, background: '#f0fdf4', border: '1px solid #bbf7d0', color: '#15803d' }}>
+            <span>✅</span>
+            <span>Scan complete — all emails drafted and saved.</span>
+          </div>
+        )}
 
         {/* Stats */}
         <div className="stats-row cols-3" style={{ marginBottom: 20 }}>
@@ -298,16 +382,15 @@ export default function WeeklyReportPage({ icp = DEFAULT_ICP, refreshKey = 0 }) 
             </h3>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               {newOutreach.map(({ entry, company }) => {
-                const contact = (company.contacts || [])[0];
                 const key = `${entry.id}-1`;
-                const draft = emailDrafts[key];
                 return (
                   <OutreachCard
                     key={entry.id}
                     company={company}
-                    contact={contact}
+                    contact={(company.contacts || [])[0]}
                     touchNumber={1}
-                    draft={draft}
+                    draft={emailDrafts[key]}
+                    triggers={triggerFindings[key]}
                     expanded={expandedEmail === key}
                     onExpand={() => setExpandedEmail(expandedEmail === key ? null : key)}
                     onCopy={() => copyDraft(key)}
@@ -327,17 +410,16 @@ export default function WeeklyReportPage({ icp = DEFAULT_ICP, refreshKey = 0 }) 
             </h3>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               {followupsDue.map(({ entry, company, touchNumber, daysSince: days }) => {
-                const contact = (company.contacts || [])[0];
                 const key = `${entry.id}-${touchNumber}`;
-                const draft = emailDrafts[key];
                 return (
                   <OutreachCard
                     key={`${entry.id}-${touchNumber}`}
                     company={company}
-                    contact={contact}
+                    contact={(company.contacts || [])[0]}
                     touchNumber={touchNumber}
                     daysSince={days}
-                    draft={draft}
+                    draft={emailDrafts[key]}
+                    triggers={triggerFindings[key]}
                     expanded={expandedEmail === key}
                     onExpand={() => setExpandedEmail(expandedEmail === key ? null : key)}
                     onCopy={() => copyDraft(key)}
@@ -369,14 +451,13 @@ export default function WeeklyReportPage({ icp = DEFAULT_ICP, refreshKey = 0 }) 
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               {history.map(plan => {
-                const isOpen = !!expandedHistory[plan._key];
+                const isOpen   = !!expandedHistory[plan._key];
                 const allItems = [...(plan.newOutreach || []), ...(plan.followupsDue || [])];
                 const emailCount = Object.keys(plan.emailDrafts || {}).filter(k => !plan.emailDrafts[k].error).length;
+                const triggerCount = Object.values(plan.triggerFindings || {}).flat().length;
 
                 return (
                   <div key={plan._key} style={{ border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden', background: 'var(--surface)' }}>
-
-                    {/* Plan header — click to expand */}
                     <div
                       onClick={() => setExpandedHistory(prev => ({ ...prev, [plan._key]: !prev[plan._key] }))}
                       style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 18px', cursor: 'pointer', userSelect: 'none' }}
@@ -384,9 +465,10 @@ export default function WeeklyReportPage({ icp = DEFAULT_ICP, refreshKey = 0 }) 
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontWeight: 700, fontSize: 14 }}>{plan.weekLabel}</div>
                         <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
-                          {allItems.length} outreach action{allItems.length !== 1 ? 's' : ''}
-                          {emailCount > 0 && ` · ${emailCount} email draft${emailCount !== 1 ? 's' : ''} saved`}
-                          {plan._savedAt && <span style={{ color: 'var(--text-faint)' }}> · Saved {fmtShort(plan._savedAt)}</span>}
+                          {allItems.length} action{allItems.length !== 1 ? 's' : ''}
+                          {emailCount > 0 && ` · ${emailCount} email${emailCount !== 1 ? 's' : ''} saved`}
+                          {triggerCount > 0 && <span style={{ color: '#f59e0b', fontWeight: 600 }}> · {triggerCount} signal{triggerCount !== 1 ? 's' : ''} found</span>}
+                          {plan._savedAt && <span style={{ color: 'var(--text-faint)' }}> · {fmtShort(plan._savedAt)}</span>}
                         </div>
                       </div>
                       <span style={{ fontSize: 13, color: 'var(--text-faint)' }}>{isOpen ? '▲' : '▼'}</span>
@@ -394,8 +476,6 @@ export default function WeeklyReportPage({ icp = DEFAULT_ICP, refreshKey = 0 }) 
 
                     {isOpen && (
                       <div style={{ borderTop: '1px solid var(--border-light)' }}>
-
-                        {/* Briefing */}
                         {plan.briefing && (
                           <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border-light)', background: 'var(--bg)' }}>
                             <div style={{ fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--text-faint)', marginBottom: 8 }}>AI Briefing</div>
@@ -403,14 +483,14 @@ export default function WeeklyReportPage({ icp = DEFAULT_ICP, refreshKey = 0 }) 
                           </div>
                         )}
 
-                        {/* Outreach items */}
                         {allItems.length > 0 && (
                           <div style={{ padding: '14px 20px' }}>
                             <div style={{ fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--text-faint)', marginBottom: 10 }}>Outreach</div>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                               {allItems.map(item => {
-                                const emailKey = `${plan._key}__${item.key}`;
-                                const draft = (plan.emailDrafts || {})[item.key];
+                                const emailKey  = `${plan._key}__${item.key}`;
+                                const draft     = (plan.emailDrafts || {})[item.key];
+                                const triggers  = (plan.triggerFindings || {})[item.key];
                                 const isEmailOpen = !!expandedHistoryEmail[emailKey];
 
                                 return (
@@ -419,24 +499,22 @@ export default function WeeklyReportPage({ icp = DEFAULT_ICP, refreshKey = 0 }) 
                                       style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', cursor: draft && !draft.error ? 'pointer' : 'default' }}
                                       onClick={() => draft && !draft.error && setExpandedHistoryEmail(prev => ({ ...prev, [emailKey]: !prev[emailKey] }))}
                                     >
-                                      <span style={{
-                                        background: item.touchNumber === 1 ? 'var(--accent)' : 'var(--amber)',
-                                        color: '#fff', borderRadius: 4, padding: '2px 7px',
-                                        fontSize: 10, fontWeight: 700, fontFamily: 'monospace', flexShrink: 0,
-                                      }}>
+                                      <span style={{ background: item.touchNumber === 1 ? 'var(--accent)' : 'var(--amber)', color: '#fff', borderRadius: 4, padding: '2px 7px', fontSize: 10, fontWeight: 700, fontFamily: 'monospace', flexShrink: 0 }}>
                                         {TOUCH_LABELS[item.touchNumber]}
                                       </span>
                                       <span style={{ fontWeight: 700, fontSize: 13 }}>{item.companyName}</span>
                                       {item.contactName && (
                                         <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>→ {item.contactName}{item.contactTitle ? `, ${item.contactTitle}` : ''}</span>
                                       )}
+                                      {triggers?.length > 0 && (
+                                        <span style={{ fontSize: 10, fontWeight: 700, background: '#fef3c7', color: '#92400e', padding: '2px 7px', borderRadius: 8, border: '1px solid #fde68a', flexShrink: 0 }}>
+                                          ⚡ {triggers.length} signal{triggers.length !== 1 ? 's' : ''}
+                                        </span>
+                                      )}
                                       <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
                                         {draft && !draft.error ? (
                                           <>
-                                            <button
-                                              className="btn btn-ghost btn-xs"
-                                              onClick={e => { e.stopPropagation(); copyDraft(item.key, plan.emailDrafts); }}
-                                            >📋 Copy</button>
+                                            <button className="btn btn-ghost btn-xs" onClick={e => { e.stopPropagation(); copyDraft(item.key, plan.emailDrafts); }}>📋 Copy</button>
                                             <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>{isEmailOpen ? '▲' : '▼'}</span>
                                           </>
                                         ) : (
@@ -445,26 +523,31 @@ export default function WeeklyReportPage({ icp = DEFAULT_ICP, refreshKey = 0 }) 
                                       </div>
                                     </div>
 
-                                    {isEmailOpen && draft && !draft.error && (
-                                      <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border-light)', background: 'var(--bg)' }}>
-                                        {draft.type === 'linkedin' ? (
-                                          <>
-                                            <div style={{ marginBottom: 10 }}>
-                                              <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', marginBottom: 4 }}>Connection Request Note</div>
-                                              <div className="email-draft" style={{ minHeight: 'unset' }}>{draft.connection_note}</div>
-                                            </div>
-                                            <div>
-                                              <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', marginBottom: 4 }}>Post-Acceptance DM</div>
-                                              <div className="email-draft">{draft.acceptance_dm}</div>
-                                            </div>
-                                          </>
-                                        ) : (
-                                          <>
-                                            <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)', marginBottom: 6 }}>
-                                              Subject: <span style={{ color: 'var(--text)', fontWeight: 600 }}>{draft.subject}</span>
-                                            </div>
-                                            <div className="email-draft">{draft.body}</div>
-                                          </>
+                                    {isEmailOpen && (
+                                      <div style={{ borderTop: '1px solid var(--border-light)' }}>
+                                        {triggers?.length > 0 && <TriggerCallout triggers={triggers} />}
+                                        {draft && !draft.error && (
+                                          <div style={{ padding: '12px 16px', background: 'var(--bg)' }}>
+                                            {draft.type === 'linkedin' ? (
+                                              <>
+                                                <div style={{ marginBottom: 10 }}>
+                                                  <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', marginBottom: 4 }}>Connection Request Note</div>
+                                                  <div className="email-draft" style={{ minHeight: 'unset' }}>{draft.connection_note}</div>
+                                                </div>
+                                                <div>
+                                                  <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', marginBottom: 4 }}>Post-Acceptance DM</div>
+                                                  <div className="email-draft">{draft.acceptance_dm}</div>
+                                                </div>
+                                              </>
+                                            ) : (
+                                              <>
+                                                <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)', marginBottom: 6 }}>
+                                                  Subject: <span style={{ color: 'var(--text)', fontWeight: 600 }}>{draft.subject}</span>
+                                                </div>
+                                                <div className="email-draft">{draft.body}</div>
+                                              </>
+                                            )}
+                                          </div>
                                         )}
                                       </div>
                                     )}
@@ -487,6 +570,8 @@ export default function WeeklyReportPage({ icp = DEFAULT_ICP, refreshKey = 0 }) 
   );
 }
 
+// ── Shared sub-components ─────────────────────────────────────────────────────
+
 const TOUCH_LABELS = {
   1: 'T1 · Initial Email',
   2: 'T2 · Follow-Up Email',
@@ -495,7 +580,37 @@ const TOUCH_LABELS = {
   5: 'T5 · Close the Loop',
 };
 
-function OutreachCard({ company, contact, touchNumber, daysSince, draft, expanded, onExpand, onCopy }) {
+function TriggerCallout({ triggers = [] }) {
+  if (!triggers.length) return null;
+  const topUrgency = triggers.some(t => t.urgency === 'high') ? 'high'
+                   : triggers.some(t => t.urgency === 'medium') ? 'medium' : 'low';
+  const s = URGENCY_STYLES[topUrgency] || URGENCY_STYLES.medium;
+
+  return (
+    <div style={{ margin: '0', padding: '12px 16px', background: s.bg, borderBottom: `1px solid ${s.border}` }}>
+      <div style={{ fontSize: 11, fontWeight: 800, color: s.badge, letterSpacing: '.04em', marginBottom: 6 }}>
+        {s.label}
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {triggers.map((t, i) => {
+          const ts = URGENCY_STYLES[t.urgency] || URGENCY_STYLES.medium;
+          return (
+            <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+              <span style={{ fontSize: 10, fontWeight: 800, background: ts.badge, color: '#fff', padding: '2px 6px', borderRadius: 4, flexShrink: 0, marginTop: 1 }}>{t.urgency?.toUpperCase()}</span>
+              <div>
+                <span style={{ fontSize: 13, fontWeight: 600, color: '#1a1a1a' }}>{t.headline}</span>
+                {t.date && <span style={{ fontSize: 11, color: '#6b7280', marginLeft: 6 }}>{t.date}</span>}
+                {t.detail && <div style={{ fontSize: 12, color: '#4b5563', marginTop: 2, lineHeight: 1.5 }}>{t.detail}</div>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function OutreachCard({ company, contact, touchNumber, daysSince, draft, triggers, expanded, onExpand, onCopy }) {
   const [copiedLocal, setCopiedLocal] = useState(false);
   const doCopy = async () => {
     await onCopy();
@@ -503,17 +618,26 @@ function OutreachCard({ company, contact, touchNumber, daysSince, draft, expande
     setTimeout(() => setCopiedLocal(false), 2000);
   };
 
+  const hasTriggers = triggers?.length > 0;
+
   return (
     <div className="card">
-      <div className="card-header" style={{ cursor: draft ? 'pointer' : 'default' }} onClick={() => draft && onExpand()}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1 }}>
+      <div
+        className="card-header"
+        style={{ cursor: draft ? 'pointer' : 'default' }}
+        onClick={() => draft && onExpand()}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, flexWrap: 'wrap' }}>
           <span style={{ background: touchNumber === 1 ? 'var(--accent)' : 'var(--amber)', color: '#fff', borderRadius: 4, padding: '2px 8px', fontSize: 11, fontWeight: 700, fontFamily: 'monospace' }}>
             {TOUCH_LABELS[touchNumber]}
           </span>
           <span style={{ fontWeight: 700 }}>{company.name}</span>
           {contact && <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>→ {contact.name}{contact.title ? `, ${contact.title}` : ''}</span>}
-          {daysSince !== undefined && (
-            <span style={{ fontSize: 11, color: 'var(--red)', fontWeight: 600 }}>{daysSince}d overdue</span>
+          {daysSince !== undefined && <span style={{ fontSize: 11, color: 'var(--red)', fontWeight: 600 }}>{daysSince}d overdue</span>}
+          {hasTriggers && (
+            <span style={{ fontSize: 10, fontWeight: 700, background: '#fef3c7', color: '#92400e', padding: '2px 8px', borderRadius: 8, border: '1px solid #fde68a' }}>
+              ⚡ {triggers.length} new signal{triggers.length !== 1 ? 's' : ''}
+            </span>
           )}
         </div>
         <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
@@ -523,33 +647,38 @@ function OutreachCard({ company, contact, touchNumber, daysSince, draft, expande
             </button>
           )}
           {draft?.error && <span style={{ fontSize: 11, color: 'var(--red)' }}>⚠️ Error</span>}
-          {!draft && <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>Click "Draft All Emails" to generate</span>}
+          {!draft && <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>Generating…</span>}
         </div>
       </div>
 
-      {expanded && draft && !draft.error && (
-        <div className="card-body">
-          {draft.type === 'linkedin' ? (
-            <>
-              <div style={{ marginBottom: 12 }}>
-                <label>Connection Request Note</label>
-                <div className="email-draft" style={{ minHeight: 60 }}>{draft.connection_note}</div>
-                <p style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>{(draft.connection_note || '').length} / 300 characters</p>
-              </div>
-              <div>
-                <label>Post-Acceptance DM</label>
-                <div className="email-draft">{draft.acceptance_dm}</div>
-              </div>
-            </>
-          ) : (
-            <>
-              <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)', marginBottom: 6 }}>
-                Subject: <span style={{ color: 'var(--text)', fontWeight: 600 }}>{draft.subject}</span>
-              </div>
-              <div className="email-draft">{draft.body}</div>
-            </>
+      {expanded && (
+        <>
+          {hasTriggers && <TriggerCallout triggers={triggers} />}
+          {draft && !draft.error && (
+            <div className="card-body">
+              {draft.type === 'linkedin' ? (
+                <>
+                  <div style={{ marginBottom: 12 }}>
+                    <label>Connection Request Note</label>
+                    <div className="email-draft" style={{ minHeight: 60 }}>{draft.connection_note}</div>
+                    <p style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>{(draft.connection_note || '').length} / 300 characters</p>
+                  </div>
+                  <div>
+                    <label>Post-Acceptance DM</label>
+                    <div className="email-draft">{draft.acceptance_dm}</div>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)', marginBottom: 6 }}>
+                    Subject: <span style={{ color: 'var(--text)', fontWeight: 600 }}>{draft.subject}</span>
+                  </div>
+                  <div className="email-draft">{draft.body}</div>
+                </>
+              )}
+            </div>
           )}
-        </div>
+        </>
       )}
     </div>
   );

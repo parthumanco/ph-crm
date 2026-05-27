@@ -17,7 +17,7 @@ const NAV = [
   { divider: true },
   { id: 'discover', label: 'Find New Companies', icon: '🧭' },
   { id: 'signals',  label: 'Rate & Review',      icon: '🌡️' },
-  { id: 'report',   label: 'Weekly Report',      icon: '📋' },
+  { id: 'report',   label: 'Weekly Outreach',     icon: '📋' },
   { id: 'chat',     label: 'Little Stevie',      icon: '💬' },
   { divider: true },
   { id: 'settings', label: 'ICP Settings',       icon: '⚙️'  },
@@ -31,7 +31,7 @@ const PAGE_TITLES = {
   support:  { title: 'Support',             sub: 'Case management & client communication' },
   projects: { title: 'Projects',            sub: 'Timelines, milestones & deliverables' },
   discover: { title: 'Find New Companies',  sub: 'Find new companies to add to your watch list' },
-  report:   { title: 'Weekly Report',       sub: 'AI briefing & draft outreach' },
+  report:   { title: 'Weekly Outreach',      sub: 'AI briefing & draft outreach' },
   chat:     { title: 'Little Stevie',       sub: 'Ask anything about your pipeline' },
   settings: { title: 'ICP Settings',        sub: 'Ideal customer profile & outreach voice' },
 };

@@ -803,3 +803,44 @@ export async function analyzeResponse(company, contact, touchNumber, responseTex
     return { error: 'Could not parse AI response', raw: cleaned };
   }
 }
+
+// ── New trigger scan — what's changed since last outreach ─────────────────────
+// Returns { newTriggers: [{headline, detail, urgency, date}], found: bool }
+
+export async function scanForNewTriggers(company, daysSinceLastTouch = 14) {
+  const window = Math.max(7, Math.min(daysSinceLastTouch, 60));
+  try {
+    const data = await withTimeout(
+      callClaude({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 800,
+        system: 'You are a sales intelligence researcher. Search for ONLY recent events at this company. Be concise. Return valid JSON only, no markdown.',
+        tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 1 }],
+        messages: [{
+          role: 'user',
+          content: `Search for news or announcements about ${company.name}${company.website ? ` (${company.website})` : ''} from the last ${window} days only. Focus on: funding rounds, leadership changes, product launches, regulatory approvals, major hires, expansions, or brand announcements. Do NOT report anything older than ${window} days.
+
+Return JSON only:
+{"found": true|false, "newTriggers": [{"headline": "max 10 words", "detail": "max 20 words", "urgency": "high|medium|low", "date": "e.g. May 20, 2026"}]}
+
+If nothing new in the last ${window} days, return: {"found": false, "newTriggers": []}`,
+        }],
+      }),
+      45000
+    );
+
+    const textBlocks = (data.content || []).filter(b => b.type === 'text');
+    for (let i = textBlocks.length - 1; i >= 0; i--) {
+      const raw = textBlocks[i]?.text || '';
+      const stripped = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
+      const s = stripped.indexOf('{');
+      const e = stripped.lastIndexOf('}');
+      if (s !== -1 && e !== -1) {
+        try { return JSON.parse(stripped.slice(s, e + 1)); } catch {}
+      }
+    }
+  } catch (err) {
+    console.warn(`scanForNewTriggers failed for ${company.name}:`, err.message);
+  }
+  return { found: false, newTriggers: [] };
+}
