@@ -11,12 +11,12 @@ import SettingsPage from './pages/SettingsPage';
 import { loadIcp, DEFAULT_ICP } from './lib/settings';
 
 const NAV = [
-  { id: 'projects', label: 'Projects',           icon: '⛏️'  },
+  { id: 'projects', label: 'Projects',           icon: '📌'  },
   { id: 'deals',    label: 'Pipeline',           icon: '💵' },
   { id: 'pipeline', label: 'Active Prospects',   icon: '🔥' },
   { divider: true },
   { id: 'discover', label: 'Find New Companies', icon: '🧭' },
-  { id: 'signals',  label: 'Rate & Review',      icon: '🔭' },
+  { id: 'signals',  label: 'Rate & Review',      icon: '🌡️' },
   { id: 'report',   label: 'Weekly Report',      icon: '📋' },
   { id: 'chat',     label: 'Little Stevie',      icon: '💬' },
   { divider: true },
