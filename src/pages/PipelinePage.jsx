@@ -259,7 +259,6 @@ export default function PipelinePage({ icp = {}, refreshKey = 0, onNavigate }) {
               <table>
                 <thead>
                   <tr>
-                    <th style={{ width: 28 }}></th>
                     <th>Company</th>
                     <th>ICP</th>
                     <th>Touches (primary contact)</th>
@@ -298,16 +297,10 @@ export default function PipelinePage({ icp = {}, refreshKey = 0, onNavigate }) {
 
                     return (
                       <Fragment key={entry.id}>
-                      <tr>
-                        <td style={{ verticalAlign: 'top', paddingTop: 14 }}>
-                          <button
-                            onClick={() => setExpandedRows(r => ({ ...r, [entry.id]: !r[entry.id] }))}
-                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 12, padding: 0, lineHeight: 1 }}
-                            title={isExpanded ? 'Collapse' : 'Expand'}
-                          >
-                            {isExpanded ? '▾' : '▸'}
-                          </button>
-                        </td>
+                      <tr
+                        onClick={e => { if (e.target.tagName !== 'SELECT' && e.target.tagName !== 'BUTTON' && e.target.tagName !== 'A' && e.target.tagName !== 'INPUT') setExpandedRows(r => ({ ...r, [entry.id]: !r[entry.id] })); }}
+                        style={{ cursor: 'pointer' }}
+                      >
                         <td>
                           <div>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
@@ -414,7 +407,6 @@ export default function PipelinePage({ icp = {}, refreshKey = 0, onNavigate }) {
                       </tr>
                       {isExpanded && (
                         <tr key={`${entry.id}-expanded`} style={{ background: 'var(--surface)' }}>
-                          <td />
                           <td colSpan={6} style={{ padding: '12px 16px 16px', borderTop: '1px solid var(--border)' }}>
                             <div style={{ display: 'grid', gridTemplateColumns: '3fr 2fr', gap: 24 }}>
                               {/* Left: per-contact touch grid */}
