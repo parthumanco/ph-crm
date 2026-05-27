@@ -104,12 +104,12 @@ function FilterSlider({
 }
 
 const FUNDING_FILTERS = [
-    { id: 'all',     label: 'Any',     match: () => true },
-    { id: 'seed',    label: 'Seed',    match: (s) => /seed|pre.?seed/i.test(s || '') },
-    { id: 'a',       label: 'Series A', match: (s) => /(?:series\s*)?a\b/i.test(s || '') && !/aa/i.test(s || '') },
-    { id: 'b',       label: 'Series B', match: (s) => /(?:series\s*)?b\b/i.test(s || '') },
-    { id: 'cplus',   label: 'C +',      match: (s) => /(?:series\s*)?[cdefg]/i.test(s || '') || /late/i.test(s || '') },
-    { id: 'boot',    label: 'Bootstrap', match: (s) => /boot|self|priv/i.test(s || '') },
+    { id: 'all',     label: 'Any funding stage', match: () => true },
+    { id: 'seed',    label: 'Seed / pre-seed',   match: (s) => /seed|pre.?seed/i.test(s || '') },
+    { id: 'a',       label: 'Series A',          match: (s) => /(?:series\s*)?a\b/i.test(s || '') && !/aa/i.test(s || '') },
+    { id: 'b',       label: 'Series B',          match: (s) => /(?:series\s*)?b\b/i.test(s || '') },
+    { id: 'cplus',   label: 'Series C and later',match: (s) => /(?:series\s*)?[cdefg]/i.test(s || '') || /late/i.test(s || '') },
+    { id: 'boot',    label: 'Bootstrapped',      match: (s) => /boot|self|priv/i.test(s || '') },
 ];
 
 const EMPLOYEE_FILTERS = [
@@ -524,7 +524,19 @@ export default function V2SignalsPage() {
 
                     {/* Row 2 — Company shape & status */}
                     <div className="v2-filter-group">
-                        <div className="v2-filter-group__label">industry</div>
+                        <div className="v2-filter-group__label-row">
+                            <div className="v2-filter-group__label">industry</div>
+                            {indF !== 'all' && (
+                                <button
+                                    type="button"
+                                    className="v2-filter-group__clear"
+                                    onClick={() => setIndF('all')}
+                                    aria-label="Clear industry filter"
+                                >
+                                    Clear
+                                </button>
+                            )}
+                        </div>
                         <div className="v2-select-wrap">
                             <select className="v2-select" value={indF} onChange={(e) => setIndF(e.target.value)}>
                                 <option value="all">Any industry ({companies.length})</option>
@@ -538,13 +550,26 @@ export default function V2SignalsPage() {
                         </div>
                     </div>
                     <div className="v2-filter-group">
-                        <div className="v2-filter-group__label">funding stage</div>
-                        <div className="v2-segmented">
-                            {FUNDING_FILTERS.map((f) => (
-                                <button key={f.id} type="button"
-                                    className={`v2-segmented__item ${fundF === f.id ? 'is-active' : ''}`}
-                                    onClick={() => setFundF(f.id)}>{f.label}</button>
-                            ))}
+                        <div className="v2-filter-group__label-row">
+                            <div className="v2-filter-group__label">funding stage</div>
+                            {fundF !== 'all' && (
+                                <button
+                                    type="button"
+                                    className="v2-filter-group__clear"
+                                    onClick={() => setFundF('all')}
+                                    aria-label="Clear funding filter"
+                                >
+                                    Clear
+                                </button>
+                            )}
+                        </div>
+                        <div className="v2-select-wrap">
+                            <select className="v2-select" value={fundF} onChange={(e) => setFundF(e.target.value)}>
+                                {FUNDING_FILTERS.map((f) => (
+                                    <option key={f.id} value={f.id}>{f.label}</option>
+                                ))}
+                            </select>
+                            <svg className="v2-select__chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9l6 6 6-6"/></svg>
                         </div>
                     </div>
                     <FilterSlider

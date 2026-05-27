@@ -384,6 +384,8 @@
 }
 .v2-segmented {
     display: inline-flex;
+    flex-wrap: wrap;
+    max-width: 100%;
     background: var(--crm-surface-raised);
     border: 1px solid var(--crm-border);
     border-radius: 8px;
@@ -1905,6 +1907,23 @@
     align-items: center;
     justify-content: space-between;
     gap: 8px;
+}
+.v2-filter-group__clear {
+    font-family: var(--v2-font-serif);
+    font-style: italic;
+    font-size: 11px;
+    color: var(--crm-text-3);
+    background: none;
+    border: none;
+    padding: 0 4px;
+    cursor: pointer;
+    text-transform: lowercase;
+    transition: color 0.15s ease;
+    line-height: 1;
+}
+.v2-filter-group__clear:hover {
+    color: var(--v2-blue);
+    text-decoration: underline;
 }
 .v2-slider-badge {
     font-family: var(--v2-font-body);
