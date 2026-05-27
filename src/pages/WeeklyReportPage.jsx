@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from '../lib/supabase';
-import { generateWeeklyPlan, generateEmailDraft, scanForNewTriggers } from '../lib/anthropic';
+import { generateWeeklyPlan, generateEmailDraft, generateLinkedInDrafts, scanForNewTriggers } from '../lib/anthropic';
 import { DEFAULT_ICP } from '../lib/settings';
 
 function getMonday(d = new Date()) {
@@ -233,7 +233,6 @@ export default function WeeklyReportPage({ icp = DEFAULT_ICP, refreshKey = 0 }) 
       try {
         let result;
         if (item.touchNumber === 3) {
-          const { generateLinkedInDrafts } = await import('../lib/anthropic');
           result = { type: 'linkedin', ...(await generateLinkedInDrafts(item.company, contact, null, item.company.engagement_type || 'Sprint')), contact };
         } else {
           result = { type: 'email', ...(await generateEmailDraft(item.touchNumber, item.company, contact, item.company.recommended_angle, icp, null, item.company.engagement_type || 'Sprint')), contact };
