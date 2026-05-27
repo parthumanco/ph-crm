@@ -191,17 +191,18 @@ export async function deleteProjectTask(id) {
 }
 
 export async function fetchAllTasksByOwner(owner) {
-  const { data, error } = await supabase
-    .from('project_tasks').select('*')
-    .eq('assigned_to', owner)
-    .is('deleted_at', null)
-    .order('due_date', { ascending: true, nullsFirst: false });
-  if (!error) return data || [];
-  // fallback if deleted_at column doesn't exist
-  const { data: d2, error: e2 } = await supabase
-    .from('project_tasks').select('*')
-    .eq('assigned_to', owner)
-    .order('due_date', { ascending: true, nullsFirst: false });
+  // '__unassigned__' → fetch tasks with no assigned_to
+  const isUnassigned = owner === '__unassigned__';
+  try {
+    let q = supabase.from('project_tasks').select('*').is('deleted_at', null).order('due_date', { ascending: true, nullsFirst: false });
+    q = isUnassigned ? q.or('assigned_to.is.null,assigned_to.eq.') : q.eq('assigned_to', owner);
+    const { data, error } = await q;
+    if (!error) return data || [];
+  } catch {}
+  // fallback (no deleted_at column)
+  let q2 = supabase.from('project_tasks').select('*').order('due_date', { ascending: true, nullsFirst: false });
+  q2 = isUnassigned ? q2.or('assigned_to.is.null,assigned_to.eq.') : q2.eq('assigned_to', owner);
+  const { data: d2, error: e2 } = await q2;
   if (e2) throw new Error(e2.message);
   return d2 || [];
 }

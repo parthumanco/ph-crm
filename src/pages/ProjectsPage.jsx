@@ -399,6 +399,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0 }) {
   const [assignedTasks, setAssignedTasks]   = useState([]);
   const [assignedFiles, setAssignedFiles]   = useState({});  // taskId → File[]
   const [loadingAssigned, setLoadingAssigned] = useState(false);
+  const [projectOwnerFilter, setProjectOwnerFilter] = useState(''); // '' = all, '__unassigned__', or owner name
   const [showLinkModal, setShowLinkModal]         = useState(null); // { projectId, milestoneId, taskId }
   const [linkUrl, setLinkUrl]                     = useState('');
   const [linkName, setLinkName]                   = useState('');
@@ -490,6 +491,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0 }) {
     setConfirmDeleteTask(null);
     setNewTaskMs(null);
     setNewTaskTitle('');
+    setProjectOwnerFilter('');
     setProposalPanel(null);
     setDeletedTasks({});
     setShowArchivedMs({});
@@ -831,8 +833,11 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0 }) {
       t.id === updated.id ? { ...updated, _project: t._project, _milestone: t._milestone } : t
     ));
     await syncMilestoneDates(updated);
-    // If owner changed away from current filter, remove from list
-    if (updated.assigned_to !== assignedOwner) {
+    // If owner no longer matches the current filter, remove from list
+    const noLongerMatches =
+      (assignedOwner === '__unassigned__' && updated.assigned_to) ||
+      (assignedOwner !== '__unassigned__' && updated.assigned_to !== assignedOwner);
+    if (noLongerMatches) {
       setAssignedTasks(prev => prev.filter(t => t.id !== updated.id));
       setEditingTask(null);
     }
@@ -1034,6 +1039,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0 }) {
                 style={{ fontSize: 14, fontWeight: 700, padding: '5px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', cursor: 'pointer' }}
               >
                 {OWNERS.map(o => <option key={o} value={o}>{o}</option>)}
+                <option value="__unassigned__">Unassigned</option>
               </select>
             </div>
             <p style={{ margin: '4px 0 0', fontSize: 13, color: 'var(--text-muted)' }}>
@@ -1055,8 +1061,8 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0 }) {
           ) : assignedTasks.length === 0 ? (
             <div className="empty-state">
               <div className="empty-icon">✅</div>
-              <h3>No tasks assigned to {assignedOwner}</h3>
-              <p>Tasks assigned to {assignedOwner} will appear here sorted by due date.</p>
+              <h3>No tasks {assignedOwner === '__unassigned__' ? 'without an owner' : `assigned to ${assignedOwner}`}</h3>
+              <p>{assignedOwner === '__unassigned__' ? 'Unassigned tasks will appear here sorted by due date.' : `Tasks assigned to ${assignedOwner} will appear here sorted by due date.`}</p>
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 0, border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
@@ -1491,6 +1497,18 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0 }) {
               <Lbl>Client</Lbl>
               <input type="text" value={activeProject.client_name || ''} onChange={e => setActiveProject(p => ({ ...p, client_name: e.target.value }))} onBlur={handleSaveProject} placeholder="Client name" style={{ fontSize: 12, padding: '4px 8px', width: 140 }} />
             </div>
+            <div>
+              <Lbl>View by</Lbl>
+              <select
+                value={projectOwnerFilter}
+                onChange={e => setProjectOwnerFilter(e.target.value)}
+                style={{ fontSize: 12, padding: '4px 8px', width: 'auto', fontWeight: projectOwnerFilter ? 700 : 400, color: projectOwnerFilter ? 'var(--accent)' : 'var(--text)' }}
+              >
+                <option value="">All Team</option>
+                {OWNERS.map(o => <option key={o} value={o}>{o}</option>)}
+                <option value="__unassigned__">Unassigned</option>
+              </select>
+            </div>
 
             <button
               onClick={handleArchiveProject}
@@ -1682,7 +1700,11 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0 }) {
                       ))}
 
                       {/* Tasks */}
-                      {msTasks.map(task => {
+                      {msTasks.filter(task => {
+                        if (!projectOwnerFilter) return true;
+                        if (projectOwnerFilter === '__unassigned__') return !task.assigned_to;
+                        return task.assigned_to === projectOwnerFilter;
+                      }).map(task => {
                         const taskFiles     = projectFiles.filter(f => f.task_id === task.id);
                         const pendingDelete = confirmDeleteTask === task.id;
                         const isEditingThis = editingTask === task.id;
