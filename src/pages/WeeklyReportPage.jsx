@@ -125,15 +125,23 @@ export default function WeeklyReportPage({ icp = DEFAULT_ICP, refreshKey = 0 }) 
       if (!company) return;
       const entryTouches = touches.filter(t => t.pipeline_entry_id === entry.id);
       const sentTouches  = entryTouches.filter(t => t.status === 'sent').sort((a, b) => new Date(b.sent_date) - new Date(a.sent_date));
-      if (sentTouches.length === 0) {
+
+      // Determine how many touches have actually been completed. Use the higher of:
+      // (a) the max touch_number with status=sent in the touches table, or
+      // (b) entry.current_touch set manually in Active Prospects.
+      const maxSentTouchNum = sentTouches.reduce((max, t) => Math.max(max, t.touch_number || 0), 0);
+      const completedTouches = Math.max(maxSentTouchNum, entry.current_touch || 0);
+
+      if (completedTouches === 0) {
         newOutreach.push({ entry, company });
       } else {
+        // For daysSince, prefer the actual last sent date; fall back to entry's last_touch_date
         const lastSent = sentTouches[0];
-        const days     = daysSince(lastSent.sent_date);
-        const maxSentTouchNum = sentTouches.reduce((max, t) => Math.max(max, t.touch_number || 0), 0);
-        const nextTouch = maxSentTouchNum + 1;
+        const lastDateStr = lastSent?.sent_date || entry.last_touch_date;
+        const days = daysSince(lastDateStr);
+        const nextTouch = completedTouches + 1;
         if (nextTouch <= 5 && days >= 7) {
-          followupsDue.push({ entry, company, touchNumber: nextTouch, daysSince: days, lastTouch: maxSentTouchNum });
+          followupsDue.push({ entry, company, touchNumber: nextTouch, daysSince: days, lastTouch: completedTouches });
         }
       }
     });
