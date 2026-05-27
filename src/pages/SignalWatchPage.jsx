@@ -1691,6 +1691,106 @@ function CompanyCard({ company, distMiles, status, isScanning, scanningAll, week
     onExpandedChange?.(val);
   };
 
+  const exportToPdf = () => {
+    const eng     = company.engagement_type || '';
+    const sc      = company.overall_score;
+    const icp     = company.icp_score;
+    const triggers = company.triggers || [];
+    const contacts = company.contacts || [];
+    const angles   = company.contact_angles || [];
+
+    const scColor = sc ? (sc >= 7 ? '#10b981' : sc >= 4 ? '#f59e0b' : '#94a3b8') : '#94a3b8';
+    const icpColor = icp ? (icp >= 7 ? '#10b981' : icp >= 4 ? '#f59e0b' : '#94a3b8') : '#94a3b8';
+
+    const triggerRows = triggers.map(t => {
+      const cc = catColor(t.category);
+      const uc = urgColor(t.urgency);
+      return `
+        <div style="border:1px solid #e5e7eb;border-radius:6px;padding:10px 14px;margin-bottom:8px;">
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:${t.detail ? '6px' : '0'}">
+            <span style="background:${cc}22;color:${cc};border:1px solid ${cc}44;font-size:10px;font-weight:700;padding:2px 8px;border-radius:4px;">${catLabel(t.category)}</span>
+            <span style="font-weight:700;font-size:13px;flex:1">${t.headline || ''}</span>
+            <span style="background:${uc}18;color:${uc};border:1px solid ${uc}44;font-size:10px;font-weight:700;padding:2px 8px;border-radius:4px;font-family:monospace;">${(t.urgency || '').toUpperCase()}</span>
+          </div>
+          ${t.detail ? `<p style="font-size:12px;color:#6b7280;line-height:1.55;margin:0">${t.detail}</p>` : ''}
+          ${(t.date || t.source) ? `<p style="font-size:11px;color:#9ca3af;margin:4px 0 0">${[t.date, t.source].filter(Boolean).join(' · ')}</p>` : ''}
+        </div>`;
+    }).join('');
+
+    const contactRows = contacts.map(ct => {
+      const angle = angles.find(ca => ca.name?.toLowerCase() === ct.name?.toLowerCase());
+      return `
+        <div style="border:1px solid #e5e7eb;border-radius:6px;overflow:hidden;margin-bottom:8px;">
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 12px;background:#f9fafb;">
+            <span style="font-weight:700;font-size:13px;">${ct.name || ''}</span>
+            ${ct.title ? `<span style="font-size:12px;color:#6b7280;">${ct.title}</span>` : ''}
+            ${ct.email ? `<span style="font-size:12px;color:#6b7280;">${ct.email}</span>` : ''}
+            ${ct.linkedin ? `<span style="font-size:11px;color:#0a66c2;">${ct.linkedin}</span>` : ''}
+          </div>
+          ${angle?.angle ? `<div style="padding:8px 12px;background:#f0fdf4;border-top:1px solid #bbf7d0;font-size:12px;color:#166534;line-height:1.55;"><strong style="color:#15803d;font-size:10px;text-transform:uppercase;letter-spacing:.04em;">Outreach Angle · </strong>${angle.angle}</div>` : ''}
+        </div>`;
+    }).join('');
+
+    const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>${company.name} — Part Human CRM</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: #111; background: #fff; padding: 32px 40px; font-size: 13px; line-height: 1.6; }
+    @media print { body { padding: 20px 24px; } @page { margin: 1.2cm; } }
+    .header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 20px; padding-bottom: 16px; border-bottom: 2px solid #f3f4f6; }
+    .company-name { font-size: 22px; font-weight: 800; color: #111; }
+    .meta { font-size: 12px; color: #6b7280; margin-top: 4px; display: flex; gap: 12px; flex-wrap: wrap; }
+    .scores { display: flex; gap: 8px; flex-direction: column; align-items: flex-end; }
+    .score-pill { font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 6px; border: 1px solid; }
+    .section-label { font-size: 10px; font-weight: 800; color: #9ca3af; letter-spacing: .06em; text-transform: uppercase; margin-bottom: 8px; margin-top: 16px; }
+    .summary { font-size: 13px; color: #374151; line-height: 1.65; }
+    .angle { padding: 12px 14px; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 6px; font-size: 13px; color: #166534; line-height: 1.6; margin-bottom: 4px; }
+    .footer { margin-top: 28px; padding-top: 12px; border-top: 1px solid #f3f4f6; font-size: 10px; color: #9ca3af; display: flex; justify-content: space-between; }
+    .badge { display: inline-block; font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 4px; background: #f3f4f6; color: #6b7280; margin-right: 4px; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div>
+      <div class="company-name">${company.name}</div>
+      <div class="meta">
+        ${company.hq ? `<span>📍 ${company.hq}</span>` : ''}
+        ${company.funding_stage && company.funding_stage !== 'Unknown' ? `<span>💰 ${company.funding_stage}</span>` : ''}
+        ${company.employee_count_num ? `<span>👥 ${company.employee_count_num} employees</span>` : ''}
+        ${company.website ? `<span>🌐 ${company.website.replace(/https?:\/\//, '')}</span>` : ''}
+        ${eng ? `<span class="badge">${eng}</span>` : ''}
+      </div>
+    </div>
+    <div class="scores">
+      ${sc ? `<span class="score-pill" style="color:${scColor};border-color:${scColor}44;background:${scColor}18">SIG ${sc}/10</span>` : ''}
+      ${icp ? `<span class="score-pill" style="color:${icpColor};border-color:${icpColor}44;background:${icpColor}18">ICP ${icp}/10</span>` : ''}
+    </div>
+  </div>
+
+  ${company.summary ? `<div class="section-label">Summary</div><p class="summary">${company.summary}</p>` : ''}
+
+  ${triggers.length > 0 ? `<div class="section-label">Trigger Events</div>${triggerRows}` : ''}
+
+  ${company.recommended_angle ? `<div class="section-label">Recommended Outreach Angle</div><div class="angle">${company.recommended_angle}</div>` : ''}
+
+  ${contacts.length > 0 ? `<div class="section-label">Contacts</div>${contactRows}` : ''}
+
+  <div class="footer">
+    <span>Part Human CRM · Rate &amp; Review</span>
+    <span>Scanned ${company.scan_date ? new Date(company.scan_date).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : '—'} · Exported ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}</span>
+  </div>
+
+  <script>window.onload = () => { window.print(); }<\/script>
+</body>
+</html>`;
+
+    const win = window.open('', '_blank');
+    if (win) { win.document.write(html); win.document.close(); }
+  };
+
   const saveContactEdit = async () => {
     const updated = (company.contacts || []).map((c, i) => i === editingIdx ? { ...editForm } : c);
     const { error } = await supabase.from('companies').update({ contacts: updated }).eq('id', company.id);
@@ -1933,6 +2033,21 @@ function CompanyCard({ company, distMiles, status, isScanning, scanningAll, week
               </div>
             )}
             <AddContactForm companyId={company.id} existingContacts={company.contacts || []} onSaved={onUpdateContacts} />
+          </div>
+
+          {/* Export footer */}
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16, paddingTop: 12, borderTop: '1px solid var(--border-light)' }}>
+            <button
+              className="btn btn-ghost btn-sm"
+              onClick={exportToPdf}
+              title="Export this card as PDF"
+              style={{ fontSize: 12, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 5 }}
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><polyline points="9 15 12 18 15 15"/>
+              </svg>
+              Export PDF
+            </button>
           </div>
 
         </div>
