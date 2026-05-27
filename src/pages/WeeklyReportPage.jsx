@@ -395,10 +395,14 @@ export default function WeeklyReportPage({ icp = DEFAULT_ICP, refreshKey = 0 }) 
         {/* New Outreach Section */}
         {newOutreach.length > 0 && (
           <div style={{ marginBottom: 24 }}>
-            <h3 style={{ fontSize: 15, fontWeight: 800, marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
+            <h3 style={{ fontSize: 15, fontWeight: 800, marginBottom: 6, display: 'flex', alignItems: 'center', gap: 8 }}>
               <span style={{ background: 'var(--accent)', color: '#fff', borderRadius: '50%', width: 22, height: 22, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 800 }}>1</span>
               New Outreach — Touch 1 Initial Emails
+              <span style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 400 }}>{newOutreach.length} email{newOutreach.length !== 1 ? 's' : ''} due</span>
             </h3>
+            <p style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.55, margin: '0 0 12px', paddingLeft: 2 }}>
+              <span style={{ fontWeight: 700, color: 'var(--text)' }}>Reminder: </span>Touch 1 is about earning the right to a conversation, not pitching. One sharp, specific insight about their business. Show them you did the work.
+            </p>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               {newOutreach.map(({ entry, company }) => {
                 const key = `${entry.id}-1`;
