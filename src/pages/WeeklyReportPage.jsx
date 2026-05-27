@@ -400,7 +400,7 @@ export default function WeeklyReportPage({ icp = DEFAULT_ICP, refreshKey = 0 }) 
               New Outreach — Touch 1 Initial Emails
               <span style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 400 }}>{newOutreach.length} email{newOutreach.length !== 1 ? 's' : ''} due</span>
             </h3>
-            <p style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.55, margin: '0 0 12px', paddingLeft: 2 }}>
+            <p style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.55, margin: '0 0 12px', paddingLeft: 30 }}>
               <span style={{ fontWeight: 700, color: 'var(--text)' }}>Reminder: </span>Touch 1 is about earning the right to a conversation, not pitching. One sharp, specific insight about their business. Show them you did the work.
             </p>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -439,13 +439,14 @@ export default function WeeklyReportPage({ icp = DEFAULT_ICP, refreshKey = 0 }) 
                 <div key={tn} style={{ marginBottom: 28 }}>
 
                   {/* ── Section heading ── */}
-                  <div style={{ marginBottom: 6 }}>
-                    <span style={{ fontSize: 14, fontWeight: 800, color: 'var(--text)' }}>{meta.label}</span>
-                    <span style={{ fontSize: 12, color: 'var(--text-muted)', marginLeft: 10 }}>{group.length} email{group.length !== 1 ? 's' : ''} due</span>
+                  <div style={{ marginBottom: 4, fontSize: 14, fontWeight: 800, color: 'var(--text)' }}>
+                    <span style={{ color: 'var(--text-muted)', fontWeight: 600 }}>{meta.prefix}</span>
+                    {meta.name}
+                    <span style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 400, marginLeft: 10 }}>{group.length} email{group.length !== 1 ? 's' : ''} due</span>
                   </div>
 
-                  {/* ── Tactical reminder ── */}
-                  <p style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.55, margin: '0 0 10px', paddingLeft: 2 }}>
+                  {/* ── Tactical reminder — indented to align with name ── */}
+                  <p style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.55, margin: '0 0 10px', paddingLeft: `${meta.prefix.length}ch` }}>
                     <span style={{ fontWeight: 700, color: 'var(--text)' }}>Reminder: </span>{meta.reminder}
                   </p>
 
@@ -721,24 +722,32 @@ const TOUCH_LABELS = {
 
 const TOUCH_GROUP_META = {
   2: {
+    prefix:   'T2 · ',
+    name:     'Follow-Up Email',
     label:    'T2 · Follow-Up Email',
     color:    '#3b82f6',
     headerBg: '#eff6ff',
     reminder: 'Reference your first email briefly — one sentence, then add a new angle or question. Keep it under 5 lines.',
   },
   3: {
+    prefix:   'T3 · ',
+    name:     'LinkedIn',
     label:    'T3 · LinkedIn',
     color:    '#0077b5',
     headerBg: '#e8f4fd',
     reminder: 'Send a connection request with a short personalized note (under 300 chars). No pitch — just earn the connection.',
   },
   4: {
+    prefix:   'T4 · ',
+    name:     'Goodwill',
     label:    'T4 · Goodwill',
     color:    '#8b5cf6',
     headerBg: '#f5f3ff',
     reminder: 'No ask. Share something genuinely useful — an article, an insight, a relevant data point. Build goodwill.',
   },
   5: {
+    prefix:   'T5 · ',
+    name:     'Close the Loop',
     label:    'T5 · Close the Loop',
     color:    '#6b7280',
     headerBg: '#f9fafb',
