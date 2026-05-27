@@ -275,10 +275,18 @@ export default function WeeklyReportPage({ icp = DEFAULT_ICP, refreshKey = 0 }) 
     }
   };
 
-  const markTouchSent = async (entry, touchNumber) => {
+  const markTouchSent = async (entry, touchNumber, draft) => {
     const today = new Date().toISOString().slice(0, 10);
+
+    // Serialize draft content to match the touches table schema
+    const subject_line  = draft?.subject || null;
+    const draft_content = draft
+      ? draft.type === 'linkedin'
+        ? `CONNECTION NOTE:\n${draft.connection_note || ''}\n\n---\nPOST-ACCEPTANCE DM:\n${draft.acceptance_dm || ''}`
+        : draft.body || null
+      : null;
+
     try {
-      // Check if a touch record already exists
       const { data: existing } = await supabase
         .from('touches')
         .select('id')
@@ -287,15 +295,22 @@ export default function WeeklyReportPage({ icp = DEFAULT_ICP, refreshKey = 0 }) 
         .maybeSingle();
 
       if (existing?.id) {
-        await supabase.from('touches').update({ status: 'sent', sent_date: today, updated_at: new Date().toISOString() }).eq('id', existing.id);
+        await supabase.from('touches').update({
+          status: 'sent', sent_date: today, updated_at: new Date().toISOString(),
+          ...(subject_line  && { subject_line }),
+          ...(draft_content && { draft_content }),
+        }).eq('id', existing.id);
       } else {
-        await supabase.from('touches').insert({ pipeline_entry_id: entry.id, touch_number: touchNumber, status: 'sent', sent_date: today });
+        await supabase.from('touches').insert({
+          pipeline_entry_id: entry.id, touch_number: touchNumber,
+          status: 'sent', sent_date: today, subject_line, draft_content,
+        });
       }
+
       // Keep pipeline_entries.current_touch in sync
       await supabase.from('pipeline_entries').update({ current_touch: touchNumber, updated_at: new Date().toISOString() })
         .eq('id', entry.id).lt('current_touch', touchNumber);
 
-      // Refresh so this card moves off the list
       load();
     } catch (e) {
       console.error('markTouchSent error:', e);
@@ -443,7 +458,7 @@ export default function WeeklyReportPage({ icp = DEFAULT_ICP, refreshKey = 0 }) 
                     expanded={expandedEmail === key}
                     onExpand={() => setExpandedEmail(expandedEmail === key ? null : key)}
                     onCopy={() => copyDraft(key)}
-                    onMarkSent={() => markTouchSent(entry, 1)}
+                    onMarkSent={() => markTouchSent(entry, 1, emailDrafts[key])}
                   />
                 );
               })}
@@ -492,7 +507,7 @@ export default function WeeklyReportPage({ icp = DEFAULT_ICP, refreshKey = 0 }) 
                           expanded={expandedEmail === key}
                           onExpand={() => setExpandedEmail(expandedEmail === key ? null : key)}
                           onCopy={() => copyDraft(key)}
-                          onMarkSent={() => markTouchSent(entry, touchNumber)}
+                          onMarkSent={() => markTouchSent(entry, touchNumber, emailDrafts[key])}
                         />
                       );
                     })}
