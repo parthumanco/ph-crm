@@ -81,7 +81,7 @@ export default function App() {
               <button
                 key={n.id}
                 className={`nav-item${page === n.id ? ' active' : ''}`}
-                onClick={() => handleSetPage(n.id)}
+                onClick={() => { handleSetPage(n.id); if (n.id === 'projects') projectsGoHome.current?.(); }}
               >
                 <span className="nav-icon">{n.icon}</span>
                 {n.label}

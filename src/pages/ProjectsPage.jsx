@@ -693,11 +693,29 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0 }) {
   };
 
   // ── Task edits ────────────────────────────────────────────────────────────
+
+  // Auto-update milestone status based on task completion:
+  //   0 done  → not_started | some done → in_progress | all done → completed
+  const syncMilestoneStatus = async (milestoneId, allProjectTasks) => {
+    const msTasks = allProjectTasks.filter(t => t.milestone_id === milestoneId);
+    if (!msTasks.length) return;
+    const doneCount = msTasks.filter(t => t.completed).length;
+    const newStatus = doneCount === msTasks.length ? 'completed'
+                    : doneCount > 0               ? 'in_progress'
+                    :                               'not_started';
+    const ms = milestones.find(m => m.id === milestoneId);
+    if (!ms || ms.status === newStatus) return;
+    const newMs = { ...ms, status: newStatus };
+    await upsertMilestone(newMs);
+    setMilestones(prev => prev.map(m => m.id === milestoneId ? newMs : m));
+  };
+
   const handleToggleTask = async (task) => {
     await toggleTask(task.id, !task.completed);
     const updated = tasks.map(t => t.id === task.id ? { ...t, completed: !t.completed } : t);
     setTasks(updated);
     setAllTasks(prev => ({ ...prev, [activeProject.id]: updated }));
+    if (task.milestone_id) await syncMilestoneStatus(task.milestone_id, updated);
   };
 
   const handleAddTask = async (milestoneId) => {
@@ -753,6 +771,29 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0 }) {
     setEditTaskDraft({ title: task.title, due_date: task.due_date || '', assigned_to: task.assigned_to || '' });
   };
 
+  // Extend milestone (and project) date bounds if a task date falls outside them.
+  // Called after any task due_date save so the Gantt bar stays in sync.
+  const syncMilestoneDates = async (updatedTask) => {
+    const { due_date, milestone_id, project_id } = updatedTask;
+    if (!due_date || !milestone_id) return;
+    const ms = milestones.find(m => m.id === milestone_id);
+    if (!ms) return;
+    let newMs = { ...ms };
+    let changed = false;
+    if (!ms.due_date || due_date > ms.due_date)   { newMs.due_date   = due_date; changed = true; }
+    if (!ms.start_date || due_date < ms.start_date) { newMs.start_date = due_date; changed = true; }
+    if (changed) {
+      await upsertMilestone(newMs);
+      setMilestones(prev => prev.map(m => m.id === newMs.id ? newMs : m));
+      // Also extend project end_date if needed
+      if (newMs.due_date > (activeProject?.end_date || '')) {
+        const updatedProj = { ...activeProject, end_date: newMs.due_date };
+        setActiveProject(updatedProj);
+        upsertProject(updatedProj).catch(console.error);
+      }
+    }
+  };
+
   const handleSaveTaskEdit = async (task) => {
     if (!editTaskDraft.title?.trim()) { setEditingTask(null); return; }
     const updated = {
@@ -765,6 +806,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0 }) {
     setTasks(prev => prev.map(t => t.id === updated.id ? updated : t));
     setAllTasks(prev => ({ ...prev, [activeProject.id]: prev[activeProject.id]?.map(t => t.id === updated.id ? updated : t) || [] }));
     setEditingTask(null);
+    await syncMilestoneDates(updated);
   };
 
   const handleToggleAssignedTask = async (task) => {
@@ -772,6 +814,12 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0 }) {
     setAssignedTasks(prev => prev.map(t =>
       t.id === task.id ? { ...t, completed: !t.completed, completed_at: !task.completed ? new Date().toISOString() : null } : t
     ));
+    if (task.milestone_id && task.project_id) {
+      const projectTasks = (allTasks[task.project_id] || []).map(t =>
+        t.id === task.id ? { ...t, completed: !t.completed } : t
+      );
+      await syncMilestoneStatus(task.milestone_id, projectTasks);
+    }
   };
 
   const handleSaveAssignedTaskEdit = async (task) => {
@@ -782,6 +830,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0 }) {
       t.id === updated.id ? { ...updated, _project: t._project, _milestone: t._milestone } : t
     ));
     setEditingTask(null);
+    await syncMilestoneDates(updated);
     // If owner changed away from current filter, remove from list
     if (updated.assigned_to !== assignedOwner) {
       setAssignedTasks(prev => prev.filter(t => t.id !== updated.id));
