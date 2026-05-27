@@ -275,6 +275,34 @@ export default function WeeklyReportPage({ icp = DEFAULT_ICP, refreshKey = 0 }) 
     }
   };
 
+  const markTouchSent = async (entry, touchNumber) => {
+    const today = new Date().toISOString().slice(0, 10);
+    try {
+      // Check if a touch record already exists
+      const { data: existing } = await supabase
+        .from('touches')
+        .select('id')
+        .eq('pipeline_entry_id', entry.id)
+        .eq('touch_number', touchNumber)
+        .maybeSingle();
+
+      if (existing?.id) {
+        await supabase.from('touches').update({ status: 'sent', sent_date: today, updated_at: new Date().toISOString() }).eq('id', existing.id);
+      } else {
+        await supabase.from('touches').insert({ pipeline_entry_id: entry.id, touch_number: touchNumber, status: 'sent', sent_date: today });
+      }
+      // Keep pipeline_entries.current_touch in sync
+      await supabase.from('pipeline_entries').update({ current_touch: touchNumber, updated_at: new Date().toISOString() })
+        .eq('id', entry.id).lt('current_touch', touchNumber);
+
+      // Refresh so this card moves off the list
+      load();
+    } catch (e) {
+      console.error('markTouchSent error:', e);
+      alert('Error marking touch as sent: ' + e.message);
+    }
+  };
+
   const copyDraft = async (key, drafts = emailDrafts) => {
     const d = drafts[key];
     if (!d) return;
@@ -409,11 +437,13 @@ export default function WeeklyReportPage({ icp = DEFAULT_ICP, refreshKey = 0 }) 
                     company={company}
                     contact={(company.contacts || [])[0]}
                     touchNumber={1}
+                    entry={entry}
                     draft={emailDrafts[key]}
                     triggers={triggerFindings[key]}
                     expanded={expandedEmail === key}
                     onExpand={() => setExpandedEmail(expandedEmail === key ? null : key)}
                     onCopy={() => copyDraft(key)}
+                    onMarkSent={() => markTouchSent(entry, 1)}
                   />
                 );
               })}
@@ -456,11 +486,13 @@ export default function WeeklyReportPage({ icp = DEFAULT_ICP, refreshKey = 0 }) 
                           touchNumber={touchNumber}
                           touchColor={meta.color}
                           daysSince={days}
+                          entry={entry}
                           draft={emailDrafts[key]}
                           triggers={triggerFindings[key]}
                           expanded={expandedEmail === key}
                           onExpand={() => setExpandedEmail(expandedEmail === key ? null : key)}
                           onCopy={() => copyDraft(key)}
+                          onMarkSent={() => markTouchSent(entry, touchNumber)}
                         />
                       );
                     })}
@@ -786,12 +818,17 @@ function TriggerCallout({ triggers = [] }) {
   );
 }
 
-function OutreachCard({ company, contact, touchNumber, touchColor, daysSince, draft, triggers, expanded, onExpand, onCopy }) {
+function OutreachCard({ company, contact, touchNumber, touchColor, daysSince, entry, draft, triggers, expanded, onExpand, onCopy, onMarkSent }) {
   const [copiedLocal, setCopiedLocal] = useState(false);
+  const [sentLocal, setSentLocal] = useState(false);
   const doCopy = async () => {
     await onCopy();
     setCopiedLocal(true);
     setTimeout(() => setCopiedLocal(false), 2000);
+  };
+  const doMarkSent = async () => {
+    await onMarkSent();
+    setSentLocal(true);
   };
 
   const hasTriggers = triggers?.length > 0;
@@ -822,6 +859,16 @@ function OutreachCard({ company, contact, touchNumber, touchColor, daysSince, dr
               {copiedLocal ? '✅ Copied' : '📋 Copy'}
             </button>
           )}
+          {!sentLocal && (
+            <button
+              className="btn btn-xs"
+              onClick={e => { e.stopPropagation(); doMarkSent(); }}
+              style={{ background: '#f0fdf4', color: '#16a34a', border: '1px solid #bbf7d0', fontWeight: 600 }}
+            >
+              ✓ Mark Sent
+            </button>
+          )}
+          {sentLocal && <span style={{ fontSize: 11, color: '#16a34a', fontWeight: 600 }}>✅ Sent</span>}
           {draft?.error && <span style={{ fontSize: 11, color: 'var(--red)' }}>⚠️ Error</span>}
           {!draft && <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>Generating…</span>}
         </div>
