@@ -275,8 +275,12 @@ export default function WeeklyReportPage({ icp = DEFAULT_ICP, refreshKey = 0 }) 
     }
   };
 
-  const markTouchSent = async (entry, touchNumber, draft) => {
+  const TOUCH_TYPES = { 1: 'email', 2: 'email', 3: 'linkedin', 4: 'email', 5: 'email' };
+
+  const markTouchSent = async (entry, touchNumber, draft, contact) => {
     const today = new Date().toISOString().slice(0, 10);
+    const contact_name = contact?.name || null;
+    const touch_type   = TOUCH_TYPES[touchNumber] || 'email';
 
     // Serialize draft content to match the touches table schema
     const subject_line  = draft?.subject || null;
@@ -287,24 +291,30 @@ export default function WeeklyReportPage({ icp = DEFAULT_ICP, refreshKey = 0 }) 
       : null;
 
     try {
-      const { data: existing } = await supabase
+      // Match on both pipeline_entry_id + touch_number + contact_name so we
+      // don't collide with touches for other contacts on the same entry
+      const query = supabase
         .from('touches')
         .select('id')
         .eq('pipeline_entry_id', entry.id)
-        .eq('touch_number', touchNumber)
-        .maybeSingle();
+        .eq('touch_number', touchNumber);
+      const { data: existing } = await (contact_name
+        ? query.eq('contact_name', contact_name).maybeSingle()
+        : query.is('contact_name', null).maybeSingle());
 
       if (existing?.id) {
-        await supabase.from('touches').update({
+        const { error: updateErr } = await supabase.from('touches').update({
           status: 'sent', sent_date: today, updated_at: new Date().toISOString(),
           ...(subject_line  && { subject_line }),
           ...(draft_content && { draft_content }),
         }).eq('id', existing.id);
+        if (updateErr) throw new Error(updateErr.message);
       } else {
-        await supabase.from('touches').insert({
-          pipeline_entry_id: entry.id, touch_number: touchNumber,
-          status: 'sent', sent_date: today, subject_line, draft_content,
+        const { error: insertErr } = await supabase.from('touches').insert({
+          pipeline_entry_id: entry.id, touch_number: touchNumber, touch_type,
+          contact_name, status: 'sent', sent_date: today, subject_line, draft_content,
         });
+        if (insertErr) throw new Error(insertErr.message);
       }
 
       // Keep pipeline_entries.current_touch in sync
@@ -458,7 +468,7 @@ export default function WeeklyReportPage({ icp = DEFAULT_ICP, refreshKey = 0 }) 
                     expanded={expandedEmail === key}
                     onExpand={() => setExpandedEmail(expandedEmail === key ? null : key)}
                     onCopy={() => copyDraft(key)}
-                    onMarkSent={() => markTouchSent(entry, 1, emailDrafts[key])}
+                    onMarkSent={() => markTouchSent(entry, 1, emailDrafts[key], (company.contacts || [])[0])}
                   />
                 );
               })}
@@ -507,7 +517,7 @@ export default function WeeklyReportPage({ icp = DEFAULT_ICP, refreshKey = 0 }) 
                           expanded={expandedEmail === key}
                           onExpand={() => setExpandedEmail(expandedEmail === key ? null : key)}
                           onCopy={() => copyDraft(key)}
-                          onMarkSent={() => markTouchSent(entry, touchNumber, emailDrafts[key])}
+                          onMarkSent={() => markTouchSent(entry, touchNumber, emailDrafts[key], (company.contacts || [])[0])}
                         />
                       );
                     })}
