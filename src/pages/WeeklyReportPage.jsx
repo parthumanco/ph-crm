@@ -77,10 +77,6 @@ export default function WeeklyReportPage({ icp = DEFAULT_ICP, refreshKey = 0 }) 
   // Ref so scanAndDraft always sees the latest plan data even after re-renders
   const planRef = useRef({ newOutreach: [], followupsDue: [] });
 
-  // Keep a stable ref to load() so the realtime subscription can always call the latest version
-  const loadRef = useRef(load);
-  useEffect(() => { loadRef.current = load; }, [load]);
-
   const weekStart  = getMonday();
   const weekKey    = weekStart.toISOString().slice(0, 10);
   const weekLabel  = `Week of ${formatDate(weekStart)}`;
@@ -106,6 +102,10 @@ export default function WeeklyReportPage({ icp = DEFAULT_ICP, refreshKey = 0 }) 
       console.error('WeeklyReport load error:', e);
     }
   }, [refreshKey]);
+
+  // Keep a stable ref to load() so the window-focus handler always calls the latest version
+  const loadRef = useRef(load);
+  useEffect(() => { loadRef.current = load; }, [load]);
 
   useEffect(() => {
     load();
