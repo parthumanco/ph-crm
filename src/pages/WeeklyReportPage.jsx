@@ -157,6 +157,39 @@ export default function WeeklyReportPage({ icp = DEFAULT_ICP, refreshKey = 0 }) 
 
   const { newOutreach, followupsDue } = computePlan();
 
+  // Project ALL remaining touches (T1–T5) for every active entry across future periods
+  const computeForecast = useCallback(() => {
+    const items = [];
+    const todayMs = Date.now();
+
+    entries.forEach(entry => {
+      const company = companies[entry.company_id];
+      if (!company) return;
+
+      const entryTouches  = touches.filter(t => t.pipeline_entry_id === entry.id);
+      const sentTouches   = entryTouches.filter(t => t.status === 'sent').sort((a, b) => new Date(b.sent_date) - new Date(a.sent_date));
+      const maxSentNum    = sentTouches.reduce((mx, t) => Math.max(mx, t.touch_number || 0), 0);
+      const completedTouches = Math.max(maxSentNum, entry.current_touch || 0);
+
+      if (completedTouches >= 5) return;
+
+      const lastSentDate = sentTouches[0]?.sent_date;
+      // Base date: last sent date, or today if no touches have been logged yet
+      const baseMs = lastSentDate ? new Date(lastSentDate).getTime() : todayMs;
+
+      for (let tn = completedTouches + 1; tn <= 5; tn++) {
+        const gapDays = (tn - completedTouches) * 7;
+        const dueDays = Math.round((baseMs + gapDays * 86400000 - todayMs) / 86400000);
+        // Only surface touches within the next year
+        if (dueDays <= 365) {
+          items.push({ entry, company, touchNumber: tn, dueDays });
+        }
+      }
+    });
+
+    return items.sort((a, b) => a.dueDays - b.dueDays);
+  }, [entries, companies, touches]);
+
   // Keep ref in sync so scanAndDraft can read the latest plan
   useEffect(() => {
     planRef.current = { newOutreach, followupsDue };
@@ -427,6 +460,9 @@ export default function WeeklyReportPage({ icp = DEFAULT_ICP, refreshKey = 0 }) 
             <div className="stat-sub">This week</div>
           </div>
         </div>
+
+        {/* Outreach Forecast */}
+        <OutreachForecast forecast={computeForecast()} />
 
         {/* AI Briefing */}
         {report && (
@@ -812,6 +848,138 @@ const TOUCH_GROUP_META = {
     reminder: 'Final touch. Make it easy to say no — or yes. A graceful close leaves the door open for next quarter.',
   },
 };
+
+// ── Outreach Forecast ─────────────────────────────────────────────────────────
+
+const FORECAST_BUCKETS = [
+  { key: 'week',    label: 'Next 7 Days',    min: -999, max: 7,   color: '#ef4444', bg: '#fef2f2' },
+  { key: 'month',   label: 'Next Month',     min: 8,    max: 30,  color: '#f59e0b', bg: '#fffbeb' },
+  { key: '3months', label: 'Next 3 Months',  min: 31,   max: 90,  color: '#3b82f6', bg: '#eff6ff' },
+  { key: '6months', label: 'Next 6 Months',  min: 91,   max: 180, color: '#8b5cf6', bg: '#f5f3ff' },
+  { key: 'year',    label: 'Next Year',      min: 181,  max: 365, color: '#6b7280', bg: '#f9fafb' },
+];
+
+const TOUCH_SHORT = { 1: 'T1', 2: 'T2', 3: 'T3', 4: 'T4', 5: 'T5' };
+const TOUCH_TYPE_LABEL = { 1: 'Initial Email', 2: 'Follow-Up Email', 3: 'LinkedIn', 4: 'Goodwill', 5: 'Close the Loop' };
+
+function fmtDueDate(dueDays) {
+  const d = new Date();
+  d.setDate(d.getDate() + dueDays);
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+function OutreachForecast({ forecast }) {
+  const [open, setOpen]         = useState(false);
+  const [openBucket, setOpenBucket] = useState(null);
+
+  const bucketed = FORECAST_BUCKETS.map(b => ({
+    ...b,
+    items: forecast.filter(f => f.dueDays >= b.min && f.dueDays <= b.max),
+  }));
+
+  const total = forecast.length;
+
+  // Horizontal mini-bar (share of total)
+  const maxCount = Math.max(...bucketed.map(b => b.items.length), 1);
+
+  return (
+    <div style={{ border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden', marginBottom: 20, background: 'var(--surface)' }}>
+      {/* Header row */}
+      <div
+        onClick={() => setOpen(o => !o)}
+        style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '13px 18px', cursor: 'pointer', userSelect: 'none' }}
+      >
+        <span style={{ fontSize: 16 }}>📅</span>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontWeight: 700, fontSize: 14 }}>Outreach Forecast</div>
+          <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 1 }}>
+            {total} touch{total !== 1 ? 'es' : ''} projected across the next year · {forecast.filter(f => f.dueDays <= 7).length} due this week
+          </div>
+        </div>
+        {/* Mini sparkline preview */}
+        <div style={{ display: 'flex', alignItems: 'flex-end', gap: 3, height: 24 }}>
+          {bucketed.map(b => (
+            <div key={b.key} title={`${b.label}: ${b.items.length}`} style={{
+              width: 16,
+              height: b.items.length === 0 ? 3 : Math.max(6, Math.round((b.items.length / maxCount) * 22)),
+              background: b.items.length === 0 ? 'var(--border)' : b.color,
+              borderRadius: 3,
+              opacity: b.items.length === 0 ? 0.4 : 1,
+              transition: 'height .2s',
+            }} />
+          ))}
+        </div>
+        <span style={{ fontSize: 12, color: 'var(--text-faint)', marginLeft: 4 }}>{open ? '▲' : '▼'}</span>
+      </div>
+
+      {open && (
+        <div style={{ borderTop: '1px solid var(--border)' }}>
+          {bucketed.map((bucket, bi) => {
+            const isLast   = bi === bucketed.length - 1;
+            const isBOpen  = openBucket === bucket.key;
+            return (
+              <div key={bucket.key} style={{ borderBottom: isLast ? 'none' : '1px solid var(--border-light)' }}>
+                {/* Bucket header row */}
+                <div
+                  onClick={() => bucket.items.length > 0 && setOpenBucket(isBOpen ? null : bucket.key)}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 12, padding: '11px 18px',
+                    cursor: bucket.items.length > 0 ? 'pointer' : 'default',
+                    userSelect: 'none',
+                    background: isBOpen ? bucket.bg : 'transparent',
+                    transition: 'background .15s',
+                  }}
+                >
+                  <div style={{ width: 10, height: 10, borderRadius: '50%', background: bucket.items.length > 0 ? bucket.color : 'var(--border)', flexShrink: 0 }} />
+                  <div style={{ flex: 1, fontWeight: 600, fontSize: 13, color: 'var(--text)' }}>{bucket.label}</div>
+                  {/* Mini bar */}
+                  <div style={{ width: 80, height: 5, background: 'var(--border)', borderRadius: 3, overflow: 'hidden' }}>
+                    <div style={{
+                      height: '100%',
+                      width: `${bucket.items.length === 0 ? 0 : Math.max(8, Math.round((bucket.items.length / maxCount) * 100))}%`,
+                      background: bucket.color,
+                      borderRadius: 3,
+                    }} />
+                  </div>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: bucket.items.length > 0 ? bucket.color : 'var(--text-faint)', minWidth: 60, textAlign: 'right' }}>
+                    {bucket.items.length} touch{bucket.items.length !== 1 ? 'es' : ''}
+                  </div>
+                  {bucket.items.length > 0 && (
+                    <span style={{ fontSize: 11, color: 'var(--text-faint)', width: 12 }}>{isBOpen ? '▲' : '▼'}</span>
+                  )}
+                </div>
+
+                {/* Expanded company list */}
+                {isBOpen && bucket.items.length > 0 && (
+                  <div style={{ padding: '8px 18px 14px 40px', background: bucket.bg, display: 'flex', flexDirection: 'column', gap: 5 }}>
+                    {bucket.items.map(({ entry, company, touchNumber, dueDays }) => (
+                      <div key={`${entry.id}-${touchNumber}`} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
+                        <span style={{
+                          background: bucket.color, color: '#fff',
+                          borderRadius: 4, padding: '1px 6px',
+                          fontSize: 10, fontWeight: 700, fontFamily: 'monospace', flexShrink: 0,
+                        }}>
+                          {TOUCH_SHORT[touchNumber]}
+                        </span>
+                        <span style={{ fontWeight: 600, color: 'var(--text)' }}>{company.name}</span>
+                        <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>
+                          · {TOUCH_TYPE_LABEL[touchNumber]}
+                        </span>
+                        <span style={{ marginLeft: 'auto', color: dueDays <= 0 ? 'var(--red)' : 'var(--text-faint)', fontSize: 11, fontWeight: dueDays <= 0 ? 700 : 400, flexShrink: 0 }}>
+                          {dueDays <= 0 ? `${Math.abs(dueDays)}d overdue` : `Due ${fmtDueDate(dueDays)}`}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function TriggerCallout({ triggers = [] }) {
   if (!triggers.length) return null;
