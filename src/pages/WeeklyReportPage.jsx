@@ -77,6 +77,10 @@ export default function WeeklyReportPage({ icp = DEFAULT_ICP, refreshKey = 0 }) 
   // Ref so scanAndDraft always sees the latest plan data even after re-renders
   const planRef = useRef({ newOutreach: [], followupsDue: [] });
 
+  // Keep a stable ref to load() so the realtime subscription can always call the latest version
+  const loadRef = useRef(load);
+  useEffect(() => { loadRef.current = load; }, [load]);
+
   const weekStart  = getMonday();
   const weekKey    = weekStart.toISOString().slice(0, 10);
   const weekLabel  = `Week of ${formatDate(weekStart)}`;
@@ -115,6 +119,21 @@ export default function WeeklyReportPage({ icp = DEFAULT_ICP, refreshKey = 0 }) 
       setHistory(h.filter(p => p.weekKey !== weekKey));
     });
   }, [load]);
+
+  // Realtime sync — reload whenever touches or pipeline_entries change on any page
+  useEffect(() => {
+    const channel = supabase
+      .channel('weekly-report-sync')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'touches' }, () => {
+        loadRef.current();
+      })
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'pipeline_entries' }, () => {
+        loadRef.current();
+      })
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, []); // Subscribe once on mount — loadRef always points to the latest load()
 
   // Compute what's due this week
   const computePlan = useCallback(() => {
