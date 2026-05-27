@@ -1823,11 +1823,72 @@
     font-family: var(--v2-font-body);
     font-size: 13px; color: var(--crm-text); flex: 1;
 }
+.v2-filter-panel__head-right {
+    display: flex; align-items: center; gap: 10px;
+}
+.v2-filter-panel__clear {
+    font-family: var(--v2-font-body);
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--crm-text-2);
+    background: none;
+    border: none;
+    padding: 4px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: color 0.15s ease, background 0.15s ease;
+}
+.v2-filter-panel__clear:hover {
+    color: var(--v2-blue);
+    background: rgba(47, 105, 188, 0.08);
+}
 .v2-filter-panel__groups {
     display: grid;
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
     gap: 14px;
     margin-bottom: 10px;
+}
+
+/* Styled select — for filter groups with many options (e.g. industry) */
+.v2-select-wrap {
+    position: relative;
+    display: flex;
+    align-items: center;
+}
+.v2-select {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 100%;
+    font-family: var(--v2-font-body);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--crm-text);
+    background: var(--crm-surface-raised);
+    border: 1px solid var(--crm-border);
+    border-radius: 8px;
+    padding: 8px 32px 8px 12px;
+    cursor: pointer;
+    transition: border-color 0.15s ease;
+    line-height: 1.2;
+}
+.v2-select:hover {
+    border-color: var(--crm-border-strong);
+}
+.v2-select:focus {
+    outline: none;
+    border-color: var(--v2-blue);
+    box-shadow: 0 0 0 3px rgba(47, 105, 188, 0.12);
+}
+.v2-select__chevron {
+    position: absolute;
+    right: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 14px; height: 14px;
+    pointer-events: none;
+    color: var(--crm-text-3);
 }
 .v2-filter-group {
     display: flex; flex-direction: column; gap: 6px;

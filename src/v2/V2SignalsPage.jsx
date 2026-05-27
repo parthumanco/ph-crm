@@ -51,6 +51,40 @@ const STATUS_FILTERS = [
     { id: 'pipeline', label: 'In pipeline' },
 ];
 
+const SIG_FILTERS = [
+    { id: 'all', label: 'Any' },
+    { id: '7',   label: '7 +' },
+    { id: '5',   label: '5 +' },
+    { id: '3',   label: '3 +' },
+];
+
+const FUNDING_FILTERS = [
+    { id: 'all',     label: 'Any',     match: () => true },
+    { id: 'seed',    label: 'Seed',    match: (s) => /seed|pre.?seed/i.test(s || '') },
+    { id: 'a',       label: 'Series A', match: (s) => /(?:series\s*)?a\b/i.test(s || '') && !/aa/i.test(s || '') },
+    { id: 'b',       label: 'Series B', match: (s) => /(?:series\s*)?b\b/i.test(s || '') },
+    { id: 'cplus',   label: 'C +',      match: (s) => /(?:series\s*)?[cdefg]/i.test(s || '') || /late/i.test(s || '') },
+    { id: 'boot',    label: 'Bootstrap', match: (s) => /boot|self|priv/i.test(s || '') },
+];
+
+const EMPLOYEE_FILTERS = [
+    { id: 'all',   label: 'Any',     match: () => true },
+    { id: '0-30',  label: '< 30',    match: (n) => n !== null && n < 30 },
+    { id: '30-100',label: '30–100',  match: (n) => n !== null && n >= 30 && n < 100 },
+    { id: '100-500', label: '100–500', match: (n) => n !== null && n >= 100 && n < 500 },
+    { id: '500+', label: '500+',     match: (n) => n !== null && n >= 500 },
+];
+
+/** Parse employee_count strings like "50", "30-50", "100+", "1000" into a representative number. */
+function parseEmployees(raw) {
+    if (raw == null) return null;
+    const s = String(raw).replace(/,/g, '');
+    const numbers = s.match(/\d+/g);
+    if (!numbers) return null;
+    // For ranges use the lower bound; for single values use as-is.
+    return parseInt(numbers[0], 10);
+}
+
 function ScoreRing({ value, max = 10, accent = 'var(--v2-orange)' }) {
     const v = typeof value === 'number' ? Math.max(0, Math.min(max, value)) : 0;
     const pct = (v / max) * 100;
@@ -233,9 +267,19 @@ export default function V2SignalsPage() {
 
     const [tierF,   setTierF]   = useState('all');
     const [scoreF,  setScoreF]  = useState('all');
+    const [sigF,    setSigF]    = useState('all');
     const [distF,   setDistF]   = useState('all');
     const [statusF, setStatusF] = useState('all');
+    const [fundF,   setFundF]   = useState('all');
+    const [empF,    setEmpF]    = useState('all');
+    const [indF,    setIndF]    = useState('all');
     const [search,  setSearch]  = useState('');
+
+    const clearAll = () => {
+        setTierF('all'); setScoreF('all'); setSigF('all'); setDistF('all');
+        setStatusF('all'); setFundF('all'); setEmpF('all'); setIndF('all');
+        setSearch('');
+    };
 
     useEffect(() => {
         let cancelled = false;
@@ -259,12 +303,32 @@ export default function V2SignalsPage() {
         return () => { cancelled = true; };
     }, []);
 
+    // Compute the industry options dynamically from the data — only show
+    // industries we actually have, with counts. Sort by frequency desc.
+    const industryOptions = useMemo(() => {
+        const counts = new Map();
+        for (const c of companies) {
+            const v = (c.industry || '').trim();
+            if (!v) continue;
+            counts.set(v, (counts.get(v) || 0) + 1);
+        }
+        return Array.from(counts.entries())
+            .sort((a, b) => b[1] - a[1])
+            .map(([name, count]) => ({ name, count }));
+    }, [companies]);
+
     const filtered = useMemo(() => {
+        const fundMatch = FUNDING_FILTERS.find((f) => f.id === fundF)?.match || (() => true);
+        const empMatch  = EMPLOYEE_FILTERS.find((f) => f.id === empF)?.match  || (() => true);
         return companies.filter((c) => {
             if (tierF !== 'all' && c.icp_tier !== tierF) return false;
             if (scoreF !== 'all') {
                 const min = parseInt(scoreF, 10);
                 if ((c.icp_score ?? 0) < min) return false;
+            }
+            if (sigF !== 'all') {
+                const min = parseInt(sigF, 10);
+                if ((c.overall_score ?? 0) < min) return false;
             }
             if (distF !== 'all') {
                 const max = parseInt(distF, 10);
@@ -274,14 +338,20 @@ export default function V2SignalsPage() {
             if (statusF === 'scanned'  && !c.deep_scanned) return false;
             if (statusF === 'pending'  &&  c.deep_scanned) return false;
             if (statusF === 'pipeline' && !pipeline.has(c.id)) return false;
+            if (fundF !== 'all' && !fundMatch(c.funding_stage)) return false;
+            if (empF !== 'all') {
+                const n = parseEmployees(c.employee_count);
+                if (!empMatch(n)) return false;
+            }
+            if (indF !== 'all' && (c.industry || '').trim() !== indF) return false;
             if (search) {
                 const q = search.toLowerCase();
-                const haystack = [c.name, c.industry, c.hq].filter(Boolean).join(' ').toLowerCase();
+                const haystack = [c.name, c.industry, c.hq, c.funding_stage].filter(Boolean).join(' ').toLowerCase();
                 if (!haystack.includes(q)) return false;
             }
             return true;
         });
-    }, [companies, tierF, scoreF, distF, statusF, search, pipeline]);
+    }, [companies, tierF, scoreF, sigF, distF, statusF, fundF, empF, indF, search, pipeline]);
 
     const stats = useMemo(() => {
         const total = companies.length;
@@ -294,8 +364,12 @@ export default function V2SignalsPage() {
     const activeFilterCount =
         (tierF !== 'all' ? 1 : 0) +
         (scoreF !== 'all' ? 1 : 0) +
+        (sigF !== 'all' ? 1 : 0) +
         (distF !== 'all' ? 1 : 0) +
         (statusF !== 'all' ? 1 : 0) +
+        (fundF !== 'all' ? 1 : 0) +
+        (empF !== 'all' ? 1 : 0) +
+        (indF !== 'all' ? 1 : 0) +
         (search ? 1 : 0);
 
     return (
@@ -355,19 +429,28 @@ export default function V2SignalsPage() {
                             <span className="v2-filter-panel__count">{activeFilterCount} active</span>
                         )}
                     </div>
-                    <div className="v2-filter-panel__search">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-5-5"/></svg>
-                        <input
-                            type="text"
-                            placeholder="Search company, industry, HQ…"
-                            value={search}
-                            onChange={(e) => setSearch(e.target.value)}
-                        />
+                    <div className="v2-filter-panel__head-right">
+                        {activeFilterCount > 0 && (
+                            <button type="button" className="v2-filter-panel__clear" onClick={clearAll}>
+                                Clear all
+                            </button>
+                        )}
+                        <div className="v2-filter-panel__search">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-5-5"/></svg>
+                            <input
+                                type="text"
+                                placeholder="Search company, industry, HQ…"
+                                value={search}
+                                onChange={(e) => setSearch(e.target.value)}
+                            />
+                        </div>
                     </div>
                 </div>
+
                 <div className="v2-filter-panel__groups">
+                    {/* Row 1 — Fit & scoring */}
                     <div className="v2-filter-group">
-                        <div className="v2-filter-group__label">fit</div>
+                        <div className="v2-filter-group__label">tier</div>
                         <div className="v2-segmented">
                             {TIER_FILTERS.map((f) => (
                                 <button key={f.id} type="button"
@@ -377,12 +460,22 @@ export default function V2SignalsPage() {
                         </div>
                     </div>
                     <div className="v2-filter-group">
-                        <div className="v2-filter-group__label">score</div>
+                        <div className="v2-filter-group__label">ICP score</div>
                         <div className="v2-segmented">
                             {SCORE_FILTERS.map((f) => (
                                 <button key={f.id} type="button"
                                     className={`v2-segmented__item ${scoreF === f.id ? 'is-active' : ''}`}
                                     onClick={() => setScoreF(f.id)}>{f.label}</button>
+                            ))}
+                        </div>
+                    </div>
+                    <div className="v2-filter-group">
+                        <div className="v2-filter-group__label">signal score</div>
+                        <div className="v2-segmented">
+                            {SIG_FILTERS.map((f) => (
+                                <button key={f.id} type="button"
+                                    className={`v2-segmented__item ${sigF === f.id ? 'is-active' : ''}`}
+                                    onClick={() => setSigF(f.id)}>{f.label}</button>
                             ))}
                         </div>
                     </div>
@@ -393,6 +486,42 @@ export default function V2SignalsPage() {
                                 <button key={f.id} type="button"
                                     className={`v2-segmented__item ${distF === f.id ? 'is-active' : ''}`}
                                     onClick={() => setDistF(f.id)}>{f.label}</button>
+                            ))}
+                        </div>
+                    </div>
+
+                    {/* Row 2 — Company shape & status */}
+                    <div className="v2-filter-group">
+                        <div className="v2-filter-group__label">industry</div>
+                        <div className="v2-select-wrap">
+                            <select className="v2-select" value={indF} onChange={(e) => setIndF(e.target.value)}>
+                                <option value="all">Any industry ({companies.length})</option>
+                                {industryOptions.map((opt) => (
+                                    <option key={opt.name} value={opt.name}>
+                                        {opt.name} ({opt.count})
+                                    </option>
+                                ))}
+                            </select>
+                            <svg className="v2-select__chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+                        </div>
+                    </div>
+                    <div className="v2-filter-group">
+                        <div className="v2-filter-group__label">funding stage</div>
+                        <div className="v2-segmented">
+                            {FUNDING_FILTERS.map((f) => (
+                                <button key={f.id} type="button"
+                                    className={`v2-segmented__item ${fundF === f.id ? 'is-active' : ''}`}
+                                    onClick={() => setFundF(f.id)}>{f.label}</button>
+                            ))}
+                        </div>
+                    </div>
+                    <div className="v2-filter-group">
+                        <div className="v2-filter-group__label">employees</div>
+                        <div className="v2-segmented">
+                            {EMPLOYEE_FILTERS.map((f) => (
+                                <button key={f.id} type="button"
+                                    className={`v2-segmented__item ${empF === f.id ? 'is-active' : ''}`}
+                                    onClick={() => setEmpF(f.id)}>{f.label}</button>
                             ))}
                         </div>
                     </div>
@@ -407,6 +536,7 @@ export default function V2SignalsPage() {
                         </div>
                     </div>
                 </div>
+
                 <div className="v2-filter-panel__result">
                     {loading ? 'Loading…' : `Showing ${filtered.length} of ${companies.length}`}
                 </div>
