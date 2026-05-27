@@ -93,7 +93,13 @@ export default function WeeklyReportPage({ icp = DEFAULT_ICP, refreshKey = 0 }) 
   useEffect(() => {
     load();
     loadPlanHistory().then(h => {
-      // Filter out the current week — it lives in the "active" section
+      // Restore current week's saved plan if it exists
+      const thisWeek = h.find(p => p.weekKey === weekKey);
+      if (thisWeek) {
+        setReport({ briefing: thisWeek.briefing, generated: thisWeek.generatedAt });
+        setEmailDrafts(thisWeek.emailDrafts || {});
+      }
+      // Everything else goes into history
       setHistory(h.filter(p => p.weekKey !== weekKey));
     });
   }, [load]);
