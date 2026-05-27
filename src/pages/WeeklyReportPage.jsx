@@ -21,6 +21,35 @@ function formatDate(d) {
   return d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
 }
 
+function fmtShort(isoStr) {
+  if (!isoStr) return '';
+  return new Date(isoStr).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+// ── Persistence helpers ───────────────────────────────────────────────────────
+
+async function savePlanToHistory(weekKey, payload) {
+  await supabase.from('app_settings').upsert(
+    { key: `weekly_plan_${weekKey}`, value: payload, updated_at: new Date().toISOString() },
+    { onConflict: 'key' }
+  );
+}
+
+async function loadPlanHistory() {
+  try {
+    const { data } = await supabase
+      .from('app_settings')
+      .select('key, value, updated_at')
+      .like('key', 'weekly_plan_%')
+      .order('key', { ascending: false });
+    return (data || []).map(row => ({ ...row.value, _savedAt: row.updated_at, _key: row.key }));
+  } catch {
+    return [];
+  }
+}
+
+// ── Main component ────────────────────────────────────────────────────────────
+
 export default function WeeklyReportPage({ icp = DEFAULT_ICP, refreshKey = 0 }) {
   const [entries, setEntries]       = useState([]);
   const [companies, setCompanies]   = useState({});
@@ -31,9 +60,13 @@ export default function WeeklyReportPage({ icp = DEFAULT_ICP, refreshKey = 0 }) 
   const [emailDrafts, setEmailDrafts] = useState({});
   const [expandedEmail, setExpandedEmail] = useState(null);
   const [error, setError]           = useState(null);
+  const [history, setHistory]       = useState([]);
+  const [expandedHistory, setExpandedHistory] = useState({});
+  const [expandedHistoryEmail, setExpandedHistoryEmail] = useState({});
 
-  const weekStart = getMonday();
-  const weekLabel = `Week of ${formatDate(weekStart)}`;
+  const weekStart  = getMonday();
+  const weekKey    = weekStart.toISOString().slice(0, 10);
+  const weekLabel  = `Week of ${formatDate(weekStart)}`;
 
   const load = useCallback(async () => {
     try {
@@ -42,7 +75,6 @@ export default function WeeklyReportPage({ icp = DEFAULT_ICP, refreshKey = 0 }) 
         supabase.from('touches').select('*'),
       ]);
       if (e1 || e3) console.error('WeeklyReport load error:', e1 || e3);
-      // Only fetch companies actually referenced by pipeline entries (mirrors PipelinePage)
       const companyIds = (ents || []).map(e => e.company_id).filter(Boolean);
       const { data: comps, error: e2 } = companyIds.length
         ? await supabase.from('companies').select('*').in('id', companyIds)
@@ -58,12 +90,18 @@ export default function WeeklyReportPage({ icp = DEFAULT_ICP, refreshKey = 0 }) 
     }
   }, [refreshKey]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    load();
+    loadPlanHistory().then(h => {
+      // Filter out the current week — it lives in the "active" section
+      setHistory(h.filter(p => p.weekKey !== weekKey));
+    });
+  }, [load]);
 
   // Determine what's due this week
   const computePlan = useCallback(() => {
-    const newOutreach   = [];   // Touch 1 (not yet started, added this week)
-    const followupsDue  = [];   // Touch 2-5 due based on timing
+    const newOutreach  = [];
+    const followupsDue = [];
 
     entries.forEach(entry => {
       const company = companies[entry.company_id];
@@ -76,7 +114,6 @@ export default function WeeklyReportPage({ icp = DEFAULT_ICP, refreshKey = 0 }) 
       } else {
         const lastSent = sentTouches[0];
         const days     = daysSince(lastSent.sent_date);
-        // Derive nextTouch from actual sent touch records, not current_touch (which may lag)
         const maxSentTouchNum = sentTouches.reduce((max, t) => Math.max(max, t.touch_number || 0), 0);
         const nextTouch = maxSentTouchNum + 1;
         if (nextTouch <= 5 && days >= 7) {
@@ -90,7 +127,30 @@ export default function WeeklyReportPage({ icp = DEFAULT_ICP, refreshKey = 0 }) 
 
   const { newOutreach, followupsDue } = computePlan();
 
-  // Generate the AI briefing + all email drafts
+  // Build a serialisable snapshot of the current plan for history storage
+  const buildSnapshot = useCallback((briefing, drafts) => ({
+    weekKey,
+    weekLabel,
+    briefing,
+    generatedAt: new Date().toISOString(),
+    newOutreach: newOutreach.map(({ entry, company }) => ({
+      key: `${entry.id}-1`,
+      companyName: company.name,
+      contactName: (company.contacts || [])[0]?.name || '',
+      contactTitle: (company.contacts || [])[0]?.title || '',
+      touchNumber: 1,
+    })),
+    followupsDue: followupsDue.map(({ entry, company, touchNumber, daysSince: days }) => ({
+      key: `${entry.id}-${touchNumber}`,
+      companyName: company.name,
+      contactName: (company.contacts || [])[0]?.name || '',
+      contactTitle: (company.contacts || [])[0]?.title || '',
+      touchNumber,
+      daysSince: days,
+    })),
+    emailDrafts: drafts || {},
+  }), [weekKey, weekLabel, newOutreach, followupsDue]);
+
   const generate = async () => {
     setGenerating(true);
     setError(null);
@@ -102,6 +162,8 @@ export default function WeeklyReportPage({ icp = DEFAULT_ICP, refreshKey = 0 }) 
         icp
       );
       setReport({ briefing, generated: new Date().toISOString() });
+      // Auto-save plan (no emails yet)
+      await savePlanToHistory(weekKey, buildSnapshot(briefing, {}));
     } catch (e) {
       setError(e.message);
     } finally {
@@ -116,6 +178,7 @@ export default function WeeklyReportPage({ icp = DEFAULT_ICP, refreshKey = 0 }) 
       ...followupsDue.map(({ entry, company, touchNumber }) => ({ entry, company, touchNumber, key: `${entry.id}-${touchNumber}` })),
     ];
 
+    const newDrafts = { ...emailDrafts };
     try {
       for (const item of allItems) {
         const contact = (item.company.contacts || [])[0] || { name: 'the decision-maker', title: '' };
@@ -123,24 +186,29 @@ export default function WeeklyReportPage({ icp = DEFAULT_ICP, refreshKey = 0 }) 
           if (item.touchNumber === 3) {
             const { generateLinkedInDrafts } = await import('../lib/anthropic');
             const result = await generateLinkedInDrafts(item.company, contact, null, item.company.engagement_type || 'Sprint');
-            setEmailDrafts(d => ({ ...d, [item.key]: { type: 'linkedin', ...result, contact } }));
+            newDrafts[item.key] = { type: 'linkedin', ...result, contact };
           } else {
             const result = await generateEmailDraft(item.touchNumber, item.company, contact, item.company.recommended_angle, icp, null, item.company.engagement_type || 'Sprint');
-            setEmailDrafts(d => ({ ...d, [item.key]: { type: 'email', ...result, contact } }));
+            newDrafts[item.key] = { type: 'email', ...result, contact };
           }
+          setEmailDrafts({ ...newDrafts });
         } catch (e) {
-          setEmailDrafts(d => ({ ...d, [item.key]: { error: e.message } }));
+          newDrafts[item.key] = { error: e.message };
+          setEmailDrafts({ ...newDrafts });
         }
-        // Small delay between calls
         await new Promise(r => setTimeout(r, 500));
       }
     } finally {
       setGeneratingEmails(false);
+      // Update saved plan with email drafts
+      if (report) {
+        await savePlanToHistory(weekKey, buildSnapshot(report.briefing, newDrafts));
+      }
     }
   };
 
-  const copyDraft = async (key) => {
-    const d = emailDrafts[key];
+  const copyDraft = async (key, drafts = emailDrafts) => {
+    const d = drafts[key];
     if (!d) return;
     const text = d.type === 'linkedin'
       ? `CONNECTION NOTE:\n${d.connection_note}\n\n---\nPOST-ACCEPTANCE DM:\n${d.acceptance_dm}`
@@ -246,7 +314,7 @@ export default function WeeklyReportPage({ icp = DEFAULT_ICP, refreshKey = 0 }) 
 
         {/* Follow-Ups Section */}
         {followupsDue.length > 0 && (
-          <div>
+          <div style={{ marginBottom: 24 }}>
             <h3 style={{ fontSize: 15, fontWeight: 800, marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
               <span style={{ background: 'var(--amber)', color: '#fff', borderRadius: '50%', width: 22, height: 22, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 800 }}>↩</span>
               Follow-Ups Due
@@ -279,6 +347,133 @@ export default function WeeklyReportPage({ icp = DEFAULT_ICP, refreshKey = 0 }) 
             <div className="empty-icon">🎉</div>
             <h3>You're all caught up!</h3>
             <p>No touches due this week. Add new companies via Signal Watch to keep the pipeline full.</p>
+          </div>
+        )}
+
+        {/* ── Past Weekly Plans ──────────────────────────────────────────── */}
+        {history.length > 0 && (
+          <div style={{ marginTop: 40 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
+              <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
+              <span style={{ fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.07em', color: 'var(--text-faint)', whiteSpace: 'nowrap' }}>
+                📚 Past Weekly Plans
+              </span>
+              <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {history.map(plan => {
+                const isOpen = !!expandedHistory[plan._key];
+                const allItems = [...(plan.newOutreach || []), ...(plan.followupsDue || [])];
+                const emailCount = Object.keys(plan.emailDrafts || {}).filter(k => !plan.emailDrafts[k].error).length;
+
+                return (
+                  <div key={plan._key} style={{ border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden', background: 'var(--surface)' }}>
+
+                    {/* Plan header — click to expand */}
+                    <div
+                      onClick={() => setExpandedHistory(prev => ({ ...prev, [plan._key]: !prev[plan._key] }))}
+                      style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 18px', cursor: 'pointer', userSelect: 'none' }}
+                    >
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontWeight: 700, fontSize: 14 }}>{plan.weekLabel}</div>
+                        <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
+                          {allItems.length} outreach action{allItems.length !== 1 ? 's' : ''}
+                          {emailCount > 0 && ` · ${emailCount} email draft${emailCount !== 1 ? 's' : ''} saved`}
+                          {plan._savedAt && <span style={{ color: 'var(--text-faint)' }}> · Saved {fmtShort(plan._savedAt)}</span>}
+                        </div>
+                      </div>
+                      <span style={{ fontSize: 13, color: 'var(--text-faint)' }}>{isOpen ? '▲' : '▼'}</span>
+                    </div>
+
+                    {isOpen && (
+                      <div style={{ borderTop: '1px solid var(--border-light)' }}>
+
+                        {/* Briefing */}
+                        {plan.briefing && (
+                          <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border-light)', background: 'var(--bg)' }}>
+                            <div style={{ fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--text-faint)', marginBottom: 8 }}>AI Briefing</div>
+                            <p style={{ fontSize: 13, lineHeight: 1.7, whiteSpace: 'pre-wrap', color: 'var(--text)', margin: 0 }}>{plan.briefing}</p>
+                          </div>
+                        )}
+
+                        {/* Outreach items */}
+                        {allItems.length > 0 && (
+                          <div style={{ padding: '14px 20px' }}>
+                            <div style={{ fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--text-faint)', marginBottom: 10 }}>Outreach</div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                              {allItems.map(item => {
+                                const emailKey = `${plan._key}__${item.key}`;
+                                const draft = (plan.emailDrafts || {})[item.key];
+                                const isEmailOpen = !!expandedHistoryEmail[emailKey];
+
+                                return (
+                                  <div key={item.key} style={{ border: '1px solid var(--border-light)', borderRadius: 8, overflow: 'hidden', background: 'var(--surface)' }}>
+                                    <div
+                                      style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', cursor: draft && !draft.error ? 'pointer' : 'default' }}
+                                      onClick={() => draft && !draft.error && setExpandedHistoryEmail(prev => ({ ...prev, [emailKey]: !prev[emailKey] }))}
+                                    >
+                                      <span style={{
+                                        background: item.touchNumber === 1 ? 'var(--accent)' : 'var(--amber)',
+                                        color: '#fff', borderRadius: 4, padding: '2px 7px',
+                                        fontSize: 10, fontWeight: 700, fontFamily: 'monospace', flexShrink: 0,
+                                      }}>
+                                        {TOUCH_LABELS[item.touchNumber]}
+                                      </span>
+                                      <span style={{ fontWeight: 700, fontSize: 13 }}>{item.companyName}</span>
+                                      {item.contactName && (
+                                        <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>→ {item.contactName}{item.contactTitle ? `, ${item.contactTitle}` : ''}</span>
+                                      )}
+                                      <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+                                        {draft && !draft.error ? (
+                                          <>
+                                            <button
+                                              className="btn btn-ghost btn-xs"
+                                              onClick={e => { e.stopPropagation(); copyDraft(item.key, plan.emailDrafts); }}
+                                            >📋 Copy</button>
+                                            <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>{isEmailOpen ? '▲' : '▼'}</span>
+                                          </>
+                                        ) : (
+                                          <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>No draft saved</span>
+                                        )}
+                                      </div>
+                                    </div>
+
+                                    {isEmailOpen && draft && !draft.error && (
+                                      <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border-light)', background: 'var(--bg)' }}>
+                                        {draft.type === 'linkedin' ? (
+                                          <>
+                                            <div style={{ marginBottom: 10 }}>
+                                              <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', marginBottom: 4 }}>Connection Request Note</div>
+                                              <div className="email-draft" style={{ minHeight: 'unset' }}>{draft.connection_note}</div>
+                                            </div>
+                                            <div>
+                                              <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', marginBottom: 4 }}>Post-Acceptance DM</div>
+                                              <div className="email-draft">{draft.acceptance_dm}</div>
+                                            </div>
+                                          </>
+                                        ) : (
+                                          <>
+                                            <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)', marginBottom: 6 }}>
+                                              Subject: <span style={{ color: 'var(--text)', fontWeight: 600 }}>{draft.subject}</span>
+                                            </div>
+                                            <div className="email-draft">{draft.body}</div>
+                                          </>
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
           </div>
         )}
       </div>
