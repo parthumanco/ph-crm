@@ -13,7 +13,7 @@ import { loadIcp, DEFAULT_ICP } from './lib/settings';
 const NAV = [
   { id: 'projects', label: 'Projects',           icon: '📌'  },
   { id: 'deals',    label: 'Pipeline',           icon: '💵' },
-  { id: 'pipeline', label: 'Active Prospects',   icon: '🔥' },
+  { id: 'pipeline', label: 'Prospects',          icon: '🔥' },
   { divider: true },
   { id: 'report',   label: 'Weekly Outreach',    icon: '📋' },
   { id: 'discover', label: 'Find New Companies', icon: '🧭' },
@@ -26,7 +26,7 @@ const NAV = [
 
 const PAGE_TITLES = {
   signals:  { title: 'Rate & Review',       sub: 'Company intelligence & outreach triggers' },
-  pipeline: { title: 'Active Prospects',    sub: 'Active prospects & touch cadence' },
+  pipeline: { title: 'Prospects',           sub: 'Active prospects & touch cadence' },
   deals:    { title: 'Pipeline',            sub: 'CRM pipeline, activities & revenue tracking' },
   support:  { title: 'Support',             sub: 'Case management & client communication' },
   projects: { title: 'Projects',            sub: 'Timelines, milestones & deliverables' },
