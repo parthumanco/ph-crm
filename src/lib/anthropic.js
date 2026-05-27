@@ -669,7 +669,7 @@ Write a brief, motivating weekly briefing for Mike and Pete. Include:
 2. The top 2-3 companies to prioritize and why
 3. One tactical reminder based on the Dan Allard 5-touch cadence
 
-Keep it under 200 words. Direct and human. No bullet-point overload. Never use em dashes.`;
+Keep it under 200 words. Direct and human. Write in prose paragraphs, no bullet points. Bold every company name using **CompanyName** wherever it appears. Never use em dashes.`;
 
   const data = await withTimeout(
     callClaude({
