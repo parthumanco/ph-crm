@@ -435,34 +435,18 @@ export default function WeeklyReportPage({ icp = DEFAULT_ICP, refreshKey = 0 }) 
                 <div key={tn} style={{ marginBottom: 28 }}>
 
                   {/* ── Section heading ── */}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
-                    <span style={{
-                      background: meta.color, color: '#fff',
-                      borderRadius: 6, padding: '4px 12px',
-                      fontSize: 12, fontWeight: 800, fontFamily: 'monospace',
-                      letterSpacing: '.02em', whiteSpace: 'nowrap',
-                    }}>
-                      {meta.label}
-                    </span>
-                    <span style={{ fontSize: 11, fontWeight: 600, color: meta.color, opacity: .8 }}>
-                      {group.length} email{group.length !== 1 ? 's' : ''} due
-                    </span>
-                    <div style={{ flex: 1, height: 1, background: meta.color, opacity: .2 }} />
+                  <div style={{ marginBottom: 6 }}>
+                    <span style={{ fontSize: 14, fontWeight: 800, color: 'var(--text)' }}>{meta.label}</span>
+                    <span style={{ fontSize: 12, color: 'var(--text-muted)', marginLeft: 10 }}>{group.length} email{group.length !== 1 ? 's' : ''} due</span>
                   </div>
 
                   {/* ── Tactical reminder ── */}
-                  <div style={{
-                    fontSize: 12, color: '#6b7280', lineHeight: 1.55,
-                    padding: '6px 12px', marginBottom: 10,
-                    borderLeft: `3px solid ${meta.color}`,
-                    background: meta.headerBg,
-                    borderRadius: '0 6px 6px 0',
-                  }}>
-                    <span style={{ fontWeight: 700, color: meta.color }}>Tactical: </span>{meta.reminder}
-                  </div>
+                  <p style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.55, margin: '0 0 10px', paddingLeft: 2 }}>
+                    <span style={{ fontWeight: 700, color: 'var(--text)' }}>Reminder: </span>{meta.reminder}
+                  </p>
 
                   {/* ── Company cards ── */}
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8, paddingLeft: 12, borderLeft: `2px solid ${meta.color}22` }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                     {group.map(({ entry, company, touchNumber, daysSince: days }) => {
                       const key = `${entry.id}-${touchNumber}`;
                       return (
