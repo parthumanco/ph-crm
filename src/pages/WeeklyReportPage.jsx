@@ -597,9 +597,16 @@ function TriggerCallout({ triggers = [] }) {
           return (
             <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
               <span style={{ fontSize: 10, fontWeight: 800, background: ts.badge, color: '#fff', padding: '2px 6px', borderRadius: 4, flexShrink: 0, marginTop: 1 }}>{t.urgency?.toUpperCase()}</span>
-              <div>
-                <span style={{ fontSize: 13, fontWeight: 600, color: '#1a1a1a' }}>{t.headline}</span>
-                {t.date && <span style={{ fontSize: 11, color: '#6b7280', marginLeft: 6 }}>{t.date}</span>}
+              <div style={{ flex: 1 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: '#1a1a1a' }}>{t.headline}</span>
+                  {t.date && <span style={{ fontSize: 11, color: '#6b7280' }}>{t.date}</span>}
+                  {t.source === 'contact' && (
+                    <span style={{ fontSize: 10, fontWeight: 700, background: '#dbeafe', color: '#1d4ed8', padding: '1px 6px', borderRadius: 6, border: '1px solid #bfdbfe' }}>
+                      LinkedIn{t.contactName ? ` · ${t.contactName}` : ''}
+                    </span>
+                  )}
+                </div>
                 {t.detail && <div style={{ fontSize: 12, color: '#4b5563', marginTop: 2, lineHeight: 1.5 }}>{t.detail}</div>}
               </div>
             </div>

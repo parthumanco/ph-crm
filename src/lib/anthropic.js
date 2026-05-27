@@ -805,28 +805,74 @@ export async function analyzeResponse(company, contact, touchNumber, responseTex
 }
 
 // ── New trigger scan — what's changed since last outreach ─────────────────────
-// Returns { newTriggers: [{headline, detail, urgency, date}], found: bool }
+// Scans company news AND each known contact's LinkedIn for recent posts/activity.
+// Returns { newTriggers: [{headline, detail, urgency, date, source}], found: bool }
 
 export async function scanForNewTriggers(company, daysSinceLastTouch = 14) {
-  const window = Math.max(7, Math.min(daysSinceLastTouch, 60));
+  const scanWindow = Math.max(7, Math.min(daysSinceLastTouch, 60));
+  const contacts   = (company.contacts || []).filter(c => c.name);
+
+  // Build contact-specific search instructions
+  const linkedInContacts = contacts.filter(c => c.linkedin);
+  const nameOnlyContacts = contacts.filter(c => !c.linkedin && c.name);
+
+  const linkedInClause = linkedInContacts.length
+    ? `\n\nLINKEDIN PROFILES TO CHECK (search each URL for recent posts):
+${linkedInContacts.map(c => `- ${c.name}${c.title ? ` (${c.title})` : ''}: ${c.linkedin}`).join('\n')}`
+    : '';
+
+  const nameSearchClause = nameOnlyContacts.length
+    ? `\n\nALSO SEARCH LINKEDIN/TWITTER for recent posts by these contacts at ${company.name}:
+${nameOnlyContacts.map(c => `- "${c.name}"${c.title ? ` (${c.title})` : ''}`).join('\n')}`
+    : '';
+
+  const contactSection = linkedInClause || nameSearchClause
+    ? `${linkedInClause}${nameSearchClause}
+
+For contact posts look for: job changes, promotions, strategic announcements, pain points, company milestones they mention, or anything signaling brand/growth challenges or momentum.`
+    : '';
+
   try {
     const data = await withTimeout(
       callClaude({
         model: 'claude-sonnet-4-6',
-        max_tokens: 800,
-        system: 'You are a sales intelligence researcher. Search for ONLY recent events at this company. Be concise. Return valid JSON only, no markdown.',
-        tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 1 }],
+        max_tokens: 1200,
+        system: 'You are a sales intelligence researcher. Search thoroughly but report ONLY events from the specified time window. For each trigger include whether it came from company news or a specific contact\'s LinkedIn. Return valid JSON only, no markdown.',
+        tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 3 }],
         messages: [{
           role: 'user',
-          content: `Search for news or announcements about ${company.name}${company.website ? ` (${company.website})` : ''} from the last ${window} days only. Focus on: funding rounds, leadership changes, product launches, regulatory approvals, major hires, expansions, or brand announcements. Do NOT report anything older than ${window} days.
+          content: `Search for new intelligence about ${company.name}${company.website ? ` (${company.website})` : ''} from the last ${scanWindow} days ONLY.
+
+COMPANY NEWS TO LOOK FOR:
+- Funding rounds, valuations, investor news
+- Leadership changes (new CMO, CEO, brand hires)
+- Product launches or major announcements
+- Regulatory approvals or milestones
+- Expansions, partnerships, acquisitions
+- Brand or marketing campaign launches
+- Layoffs, restructuring, or challenges${contactSection}
+
+Do NOT report anything older than ${scanWindow} days. Each trigger must have a specific date or "recent" if date unclear.
 
 Return JSON only:
-{"found": true|false, "newTriggers": [{"headline": "max 10 words", "detail": "max 20 words", "urgency": "high|medium|low", "date": "e.g. May 20, 2026"}]}
+{
+  "found": true|false,
+  "newTriggers": [
+    {
+      "headline": "max 10 words",
+      "detail": "max 25 words describing what happened",
+      "urgency": "high|medium|low",
+      "date": "e.g. May 20, 2026 or 'this week'",
+      "source": "company|contact",
+      "contactName": "name if from a contact post, else null"
+    }
+  ]
+}
 
-If nothing new in the last ${window} days, return: {"found": false, "newTriggers": []}`,
+If nothing found in the last ${scanWindow} days: {"found": false, "newTriggers": []}`,
         }],
       }),
-      45000
+      60000
     );
 
     const textBlocks = (data.content || []).filter(b => b.type === 'text');
