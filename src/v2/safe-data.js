@@ -2,9 +2,9 @@
    V2 READ-ONLY DATA LAYER
 
    All v2 components import data functions through
-   this file, NOT directly from lib/projects.js,
-   lib/deals.js, etc. Only read/fetch functions
-   are re-exported here.
+   this file, NOT directly from lib/*.js. Only
+   read/fetch functions and pure helpers are
+   re-exported here.
 
    This is the defense-in-depth for the "v2 is
    read-only" guarantee: even if a future
@@ -20,15 +20,14 @@
    key), not a quiet import.
 ============================================ */
 
+// ── Projects ─────────────────────────────────────────────
 export {
-    // Projects — read only
     fetchProjects,
     fetchArchivedProjects,
     fetchMilestones,
     fetchArchivedMilestones,
     fetchProjectTasks,
     fetchProjectFiles,
-    // Helpers (pure, no DB calls)
     PROJECT_STATUSES,
     MILESTONE_STATUSES,
     projColor,
@@ -40,3 +39,34 @@ export {
     projectProgress,
     fmtDate,
 } from '../lib/projects.js';
+
+// ── Deals ────────────────────────────────────────────────
+export {
+    STAGES as DEAL_STAGES,
+    ACTIVE_STAGES as DEAL_ACTIVE_STAGES,
+    CLOSED_STAGES as DEAL_CLOSED_STAGES,
+    OWNERS as DEAL_OWNERS,
+    stageColor,
+    stageLabel,
+    dealValue,
+    fmt$,
+    daysSince,
+    fetchDeals,
+    fetchActivities,
+    fetchTasks as fetchDealTasks,
+} from '../lib/deals.js';
+
+// ── Support ──────────────────────────────────────────────
+export {
+    CASE_STATUSES,
+    CASE_PRIORITIES,
+    CHANNELS,
+    statusColor   as caseStatusColor,
+    statusLabel   as caseStatusLabel,
+    priorityColor as casePriorityColor,
+    priorityLabel as casePriorityLabel,
+    channelIcon,
+    channelLabel,
+    fetchCases,
+    fetchMessages as fetchCaseMessages,
+} from '../lib/support.js';

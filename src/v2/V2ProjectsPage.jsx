@@ -76,7 +76,7 @@ function statusDotClass(status) {
     return 'v2-project-cell-name__dot';
 }
 
-export default function V2ProjectsPage() {
+export default function V2ProjectsPage({ onSelect }) {
     const [projects, setProjects] = useState([]);
     const [rowsMeta, setRowsMeta] = useState({});  // { [projectId]: { nextMilestone, progress, totalTasks, doneTasks } }
     const [filter, setFilter] = useState('all');
@@ -247,7 +247,11 @@ export default function V2ProjectsPage() {
                     const done = meta?.done ?? 0;
 
                     return (
-                        <div key={p.id} className="v2-project-row">
+                        <div
+                            key={p.id}
+                            className="v2-project-row"
+                            onClick={() => onSelect && onSelect(p.id)}
+                        >
                             <div className="v2-project-cell-name">
                                 <span className={statusDotClass(p.status)} />
                                 <div className="v2-project-cell-name__body">

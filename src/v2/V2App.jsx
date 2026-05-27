@@ -1,5 +1,10 @@
 import { useState } from 'react';
 import V2ProjectsPage from './V2ProjectsPage.jsx';
+import V2ProjectPage from './V2ProjectPage.jsx';
+import V2DealsPage from './V2DealsPage.jsx';
+import V2AccountsPage from './V2AccountsPage.jsx';
+import V2AccountPage from './V2AccountPage.jsx';
+import V2SupportPage from './V2SupportPage.jsx';
 import './v2.css';
 
 /* ============================================
@@ -10,21 +15,23 @@ import './v2.css';
    App tree while on a /v2 URL; legacy app at /
    stays bit-for-bit untouched.
 
-   First-pass scope: shell + Projects page only.
-   Every other sidebar item shows a placeholder
-   that points back at the prototype set so we can
-   port them in subsequent passes without
-   half-breaking the new app.
+   READ-ONLY GUARANTEE
+   ────────────────────
+   Every v2 page imports data only through
+   safe-data.js, which re-exports nothing that
+   mutates the database. Adding a write surface
+   later requires explicitly extending that file
+   — making the decision visible in code review.
 ============================================ */
 
 const NAV_SECTIONS = [
     {
         label: 'work',
         items: [
-            { id: 'projects', label: 'Projects', icon: 'folder', count: null },
-            { id: 'deals',    label: 'Deals',    icon: 'cash',   count: null },
-            { id: 'accounts', label: 'Accounts', icon: 'list',   count: null },
-            { id: 'support',  label: 'Support',  icon: 'support',count: null },
+            { id: 'projects', label: 'Projects', icon: 'folder' },
+            { id: 'deals',    label: 'Deals',    icon: 'cash' },
+            { id: 'accounts', label: 'Accounts', icon: 'list' },
+            { id: 'support',  label: 'Support',  icon: 'support' },
         ],
     },
     {
@@ -46,17 +53,21 @@ const NAV_SECTIONS = [
 ];
 
 const PAGE_META = {
-    projects: { eyebrow: 'currently in flight',   title: 'Projects', breadcrumb: 'Projects' },
-    deals:    { eyebrow: 'the pipeline',          title: 'Deals',    breadcrumb: 'Deals' },
-    accounts: { eyebrow: 'your network',          title: 'Accounts', breadcrumb: 'Accounts' },
-    support:  { eyebrow: 'client care',           title: 'Support',  breadcrumb: 'Support' },
-    signals:  { eyebrow: 'intelligence',          title: 'Signals',  breadcrumb: 'Signals' },
-    discover: { eyebrow: 'find your next client', title: 'Discover', breadcrumb: 'Discover' },
-    outreach: { eyebrow: 'cold to warm',          title: 'Outreach', breadcrumb: 'Outreach' },
-    report:   { eyebrow: 'this week',             title: 'Weekly Report', breadcrumb: 'Weekly Report' },
-    chat:     { eyebrow: 'ask the data',          title: 'Little Stevie', breadcrumb: 'Little Stevie' },
-    settings: { eyebrow: 'who you serve',         title: 'ICP Settings', breadcrumb: 'ICP Settings' },
+    projects:        { breadcrumb: 'Projects' },
+    'project-detail':{ breadcrumb: 'Project detail' },
+    deals:           { breadcrumb: 'Deals' },
+    accounts:        { breadcrumb: 'Accounts' },
+    'account-detail':{ breadcrumb: 'Account' },
+    support:         { breadcrumb: 'Support' },
+    signals:         { breadcrumb: 'Signals' },
+    discover:        { breadcrumb: 'Discover' },
+    outreach:        { breadcrumb: 'Outreach' },
+    report:          { breadcrumb: 'Weekly Report' },
+    chat:            { breadcrumb: 'Little Stevie' },
+    settings:        { breadcrumb: 'ICP Settings' },
 };
+
+const PORTED = new Set(['projects', 'project-detail', 'deals', 'accounts', 'account-detail', 'support']);
 
 function Icon({ name }) {
     const stroke = { stroke: 'currentColor', fill: 'none', strokeWidth: 1.75, strokeLinecap: 'round', strokeLinejoin: 'round' };
@@ -70,22 +81,22 @@ function Icon({ name }) {
         case 'wave':    return <svg className="v2-nav-item__icon" viewBox="0 0 24 24" {...stroke}><path d="M3 12c4-6 14-6 18 0M3 12c4 6 14 6 18 0"/><circle cx="12" cy="12" r="2"/></svg>;
         case 'doc':     return <svg className="v2-nav-item__icon" viewBox="0 0 24 24" {...stroke}><path d="M6 4h12v16l-6-3-6 3z"/></svg>;
         case 'chat':    return <svg className="v2-nav-item__icon" viewBox="0 0 24 24" {...stroke}><path d="M21 12a8 8 0 1 1-3-6"/><path d="M21 4v5h-5"/></svg>;
-        case 'gear':    return <svg className="v2-nav-item__icon" viewBox="0 0 24 24" {...stroke}><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3h0a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8v0a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>;
+        case 'gear':    return <svg className="v2-nav-item__icon" viewBox="0 0 24 24" {...stroke}><circle cx="12" cy="12" r="3"/></svg>;
         default: return null;
     }
 }
 
-function V2Placeholder({ pageKey, meta }) {
+function V2Placeholder({ pageKey }) {
     return (
         <div className="v2-placeholder">
-            <div className="v2-placeholder__eyebrow">{meta?.eyebrow || 'coming next'}</div>
-            <div className="v2-placeholder__title">{meta?.title || pageKey}</div>
+            <div className="v2-placeholder__eyebrow">coming next</div>
+            <div className="v2-placeholder__title">{pageKey}</div>
             <p className="v2-placeholder__body">
-                Not ported yet. The visual direction for this surface is in the static prototype set.
+                Not ported to v2 yet. Use the legacy app for {pageKey} until this surface lands.
             </p>
             <p className="v2-placeholder__hint">
                 <a href="/" onClick={(e) => { e.preventDefault(); window.location.href = '/'; }}>
-                    ← Use the legacy {meta?.title || pageKey} for now
+                    ← Use the legacy app
                 </a>
             </p>
         </div>
@@ -93,8 +104,13 @@ function V2Placeholder({ pageKey, meta }) {
 }
 
 export default function V2App() {
-    const [page, setPage] = useState('projects');
-    const meta = PAGE_META[page];
+    // Single source of truth for navigation. Detail views carry an id
+    // so we can drill into a specific record without changing the URL
+    // (URL routing comes in a later phase).
+    const [view, setView] = useState({ page: 'projects', projectId: null, accountName: null });
+    const goTo = (page, extras = {}) => setView({ page, projectId: null, accountName: null, ...extras });
+
+    const meta = PAGE_META[view.page];
 
     return (
         <div className="v2-app">
@@ -113,17 +129,22 @@ export default function V2App() {
                         <div key={section.label} className="v2-nav-section">
                             <div className="v2-nav-section__label">{section.label}</div>
                             <div className="v2-nav-section__items">
-                                {section.items.map((item) => (
-                                    <button
-                                        key={item.id}
-                                        type="button"
-                                        className={`v2-nav-item ${page === item.id ? 'is-active' : ''}`}
-                                        onClick={() => setPage(item.id)}
-                                    >
-                                        <Icon name={item.icon} />
-                                        <span className="v2-nav-item__label">{item.label}</span>
-                                    </button>
-                                ))}
+                                {section.items.map((item) => {
+                                    const isActive = view.page === item.id
+                                        || (view.page === 'project-detail' && item.id === 'projects')
+                                        || (view.page === 'account-detail' && item.id === 'accounts');
+                                    return (
+                                        <button
+                                            key={item.id}
+                                            type="button"
+                                            className={`v2-nav-item ${isActive ? 'is-active' : ''}`}
+                                            onClick={() => goTo(item.id)}
+                                        >
+                                            <Icon name={item.icon} />
+                                            <span className="v2-nav-item__label">{item.label}</span>
+                                        </button>
+                                    );
+                                })}
                             </div>
                         </div>
                     ))}
@@ -151,11 +172,11 @@ export default function V2App() {
                     <div className="v2-breadcrumb">
                         <span>Work</span>
                         <span className="v2-breadcrumb__sep">/</span>
-                        <span className="v2-breadcrumb__current">{meta?.breadcrumb || page}</span>
+                        <span className="v2-breadcrumb__current">{meta?.breadcrumb || view.page}</span>
                     </div>
                     <div className="v2-header__actions">
                         <div className="v2-search">
-                            <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-5-5"/></svg>
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-5-5"/></svg>
                             <input type="text" placeholder="Search projects, deals, accounts…" />
                             <kbd>⌘K</kbd>
                         </div>
@@ -163,14 +184,30 @@ export default function V2App() {
                 </header>
 
                 <div className="v2-banner">
-                    Prototype UI · /v2 redesign branch
+                    Prototype UI · /v2 redesign branch · read-only
                     <a onClick={() => { window.location.href = '/'; }}>↩ legacy app</a>
                 </div>
 
                 <div className="v2-content">
-                    {page === 'projects'
-                        ? <V2ProjectsPage />
-                        : <V2Placeholder pageKey={page} meta={meta} />}
+                    {view.page === 'projects' && (
+                        <V2ProjectsPage onSelect={(id) => setView({ page: 'project-detail', projectId: id, accountName: null })} />
+                    )}
+                    {view.page === 'project-detail' && (
+                        <V2ProjectPage projectId={view.projectId} onBack={() => goTo('projects')} />
+                    )}
+                    {view.page === 'deals' && <V2DealsPage />}
+                    {view.page === 'accounts' && (
+                        <V2AccountsPage onSelect={(name) => setView({ page: 'account-detail', projectId: null, accountName: name })} />
+                    )}
+                    {view.page === 'account-detail' && (
+                        <V2AccountPage
+                            accountName={view.accountName}
+                            onBack={() => goTo('accounts')}
+                            onSelectProject={(id) => setView({ page: 'project-detail', projectId: id, accountName: null })}
+                        />
+                    )}
+                    {view.page === 'support' && <V2SupportPage />}
+                    {!PORTED.has(view.page) && <V2Placeholder pageKey={view.page} />}
                 </div>
 
             </div>
