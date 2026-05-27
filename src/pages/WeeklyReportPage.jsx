@@ -420,32 +420,62 @@ export default function WeeklyReportPage({ icp = DEFAULT_ICP, refreshKey = 0 }) 
           </div>
         )}
 
-        {/* Follow-Ups Section */}
+        {/* Follow-Ups Section — grouped by touch number */}
         {followupsDue.length > 0 && (
           <div style={{ marginBottom: 24 }}>
-            <h3 style={{ fontSize: 15, fontWeight: 800, marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
+            <h3 style={{ fontSize: 15, fontWeight: 800, marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
               <span style={{ background: 'var(--amber)', color: '#fff', borderRadius: '50%', width: 22, height: 22, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 800 }}>↩</span>
               Follow-Ups Due
             </h3>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              {followupsDue.map(({ entry, company, touchNumber, daysSince: days }) => {
-                const key = `${entry.id}-${touchNumber}`;
-                return (
-                  <OutreachCard
-                    key={`${entry.id}-${touchNumber}`}
-                    company={company}
-                    contact={(company.contacts || [])[0]}
-                    touchNumber={touchNumber}
-                    daysSince={days}
-                    draft={emailDrafts[key]}
-                    triggers={triggerFindings[key]}
-                    expanded={expandedEmail === key}
-                    onExpand={() => setExpandedEmail(expandedEmail === key ? null : key)}
-                    onCopy={() => copyDraft(key)}
-                  />
-                );
-              })}
-            </div>
+            {[2, 3, 4, 5].map(tn => {
+              const group = followupsDue.filter(f => f.touchNumber === tn);
+              if (!group.length) return null;
+              const meta = TOUCH_GROUP_META[tn];
+              return (
+                <div key={tn} style={{ marginBottom: 20 }}>
+                  {/* Touch group header */}
+                  <div style={{
+                    display: 'flex', alignItems: 'flex-start', gap: 12,
+                    padding: '10px 14px', borderRadius: 8,
+                    background: meta.headerBg, borderLeft: `4px solid ${meta.color}`,
+                    marginBottom: 10,
+                  }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                        <span style={{ background: meta.color, color: '#fff', borderRadius: 4, padding: '2px 9px', fontSize: 11, fontWeight: 700, fontFamily: 'monospace' }}>
+                          {meta.label}
+                        </span>
+                        <span style={{ fontSize: 12, fontWeight: 600, color: meta.color }}>{group.length} email{group.length !== 1 ? 's' : ''} due</span>
+                      </div>
+                      <div style={{ fontSize: 12, color: '#4b5563', lineHeight: 1.5 }}>
+                        <span style={{ fontWeight: 700, color: meta.color }}>Tactical reminder: </span>{meta.reminder}
+                      </div>
+                    </div>
+                  </div>
+                  {/* Cards */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8, paddingLeft: 4 }}>
+                    {group.map(({ entry, company, touchNumber, daysSince: days }) => {
+                      const key = `${entry.id}-${touchNumber}`;
+                      return (
+                        <OutreachCard
+                          key={key}
+                          company={company}
+                          contact={(company.contacts || [])[0]}
+                          touchNumber={touchNumber}
+                          touchColor={meta.color}
+                          daysSince={days}
+                          draft={emailDrafts[key]}
+                          triggers={triggerFindings[key]}
+                          expanded={expandedEmail === key}
+                          onExpand={() => setExpandedEmail(expandedEmail === key ? null : key)}
+                          onCopy={() => copyDraft(key)}
+                        />
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         )}
 
@@ -692,6 +722,33 @@ const TOUCH_LABELS = {
   5: 'T5 · Close the Loop',
 };
 
+const TOUCH_GROUP_META = {
+  2: {
+    label:    'T2 · Follow-Up Email',
+    color:    '#3b82f6',
+    headerBg: '#eff6ff',
+    reminder: 'Reference your first email briefly — one sentence, then add a new angle or question. Keep it under 5 lines.',
+  },
+  3: {
+    label:    'T3 · LinkedIn',
+    color:    '#0077b5',
+    headerBg: '#e8f4fd',
+    reminder: 'Send a connection request with a short personalized note (under 300 chars). No pitch — just earn the connection.',
+  },
+  4: {
+    label:    'T4 · Goodwill',
+    color:    '#8b5cf6',
+    headerBg: '#f5f3ff',
+    reminder: 'No ask. Share something genuinely useful — an article, an insight, a relevant data point. Build goodwill.',
+  },
+  5: {
+    label:    'T5 · Close the Loop',
+    color:    '#6b7280',
+    headerBg: '#f9fafb',
+    reminder: 'Final touch. Make it easy to say no — or yes. A graceful close leaves the door open for next quarter.',
+  },
+};
+
 function TriggerCallout({ triggers = [] }) {
   if (!triggers.length) return null;
   const topUrgency = triggers.some(t => t.urgency === 'high') ? 'high'
@@ -729,7 +786,7 @@ function TriggerCallout({ triggers = [] }) {
   );
 }
 
-function OutreachCard({ company, contact, touchNumber, daysSince, draft, triggers, expanded, onExpand, onCopy }) {
+function OutreachCard({ company, contact, touchNumber, touchColor, daysSince, draft, triggers, expanded, onExpand, onCopy }) {
   const [copiedLocal, setCopiedLocal] = useState(false);
   const doCopy = async () => {
     await onCopy();
@@ -747,7 +804,7 @@ function OutreachCard({ company, contact, touchNumber, daysSince, draft, trigger
         onClick={() => draft && onExpand()}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, flexWrap: 'wrap' }}>
-          <span style={{ background: touchNumber === 1 ? 'var(--accent)' : 'var(--amber)', color: '#fff', borderRadius: 4, padding: '2px 8px', fontSize: 11, fontWeight: 700, fontFamily: 'monospace' }}>
+          <span style={{ background: touchColor || (touchNumber === 1 ? 'var(--accent)' : 'var(--amber)'), color: '#fff', borderRadius: 4, padding: '2px 8px', fontSize: 11, fontWeight: 700, fontFamily: 'monospace' }}>
             {TOUCH_LABELS[touchNumber]}
           </span>
           <span style={{ fontWeight: 700 }}>{company.name}</span>
