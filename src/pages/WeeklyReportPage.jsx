@@ -207,7 +207,10 @@ export default function WeeklyReportPage({ icp = DEFAULT_ICP, refreshKey = 0 }) 
       }
     }
 
-    // ── Phase 2: Draft emails ─────────────────────────────────────────────────
+    // Save trigger findings so they survive a navigation mid-pipeline
+    await savePlanToHistory(weekKey, buildSnapshot(briefing, {}, accTriggers));
+
+    // ── Phase 2: Draft emails — save after every single draft ────────────────
     for (let i = 0; i < allItems.length; i++) {
       const item = allItems[i];
       setAutoProgress({ phase: 'drafting', current: i + 1, total: allItems.length, currentName: item.company.name });
@@ -225,11 +228,12 @@ export default function WeeklyReportPage({ icp = DEFAULT_ICP, refreshKey = 0 }) 
         accDrafts[item.key] = { error: e.message };
       }
       setEmailDrafts(d => ({ ...d, [item.key]: accDrafts[item.key] }));
+      // Persist immediately — if user navigates away, this draft is already saved
+      await savePlanToHistory(weekKey, buildSnapshot(briefing, { ...accDrafts }, accTriggers));
       await new Promise(r => setTimeout(r, 300));
     }
 
     setAutoProgress({ phase: 'done', current: allItems.length, total: allItems.length, currentName: '' });
-    await savePlanToHistory(weekKey, buildSnapshot(briefing, accDrafts, accTriggers));
     setTimeout(() => setAutoProgress(null), 3000);
   };
 
