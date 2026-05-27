@@ -120,20 +120,13 @@ export default function WeeklyReportPage({ icp = DEFAULT_ICP, refreshKey = 0 }) 
     });
   }, [load]);
 
-  // Realtime sync — reload whenever touches or pipeline_entries change on any page
+  // Reload whenever the user returns to this browser window/tab (e.g. after
+  // marking a touch sent on the Prospects page and switching back here).
   useEffect(() => {
-    const channel = supabase
-      .channel('weekly-report-sync')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'touches' }, () => {
-        loadRef.current();
-      })
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'pipeline_entries' }, () => {
-        loadRef.current();
-      })
-      .subscribe();
-
-    return () => { supabase.removeChannel(channel); };
-  }, []); // Subscribe once on mount — loadRef always points to the latest load()
+    const handleFocus = () => loadRef.current();
+    window.addEventListener('focus', handleFocus);
+    return () => window.removeEventListener('focus', handleFocus);
+  }, []);
 
   // Compute what's due this week
   const computePlan = useCallback(() => {
