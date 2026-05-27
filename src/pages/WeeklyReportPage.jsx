@@ -233,7 +233,15 @@ export default function WeeklyReportPage({ icp = DEFAULT_ICP, refreshKey = 0 }) 
       try {
         let result;
         if (item.touchNumber === 3) {
-          result = { type: 'linkedin', ...(await generateLinkedInDrafts(item.company, contact, null, item.company.engagement_type || 'Sprint')), contact };
+          // Retry once on failure — LinkedIn JSON parsing can be flaky
+          let liResult;
+          try {
+            liResult = await generateLinkedInDrafts(item.company, contact, null, item.company.engagement_type || 'Sprint');
+          } catch (e1) {
+            console.warn(`T3 first attempt failed for ${item.company.name}, retrying:`, e1.message);
+            liResult = await generateLinkedInDrafts(item.company, contact, null, item.company.engagement_type || 'Sprint');
+          }
+          result = { type: 'linkedin', ...liResult, contact };
         } else {
           result = { type: 'email', ...(await generateEmailDraft(item.touchNumber, item.company, contact, item.company.recommended_angle, icp, null, item.company.engagement_type || 'Sprint')), contact };
         }
@@ -869,7 +877,17 @@ function OutreachCard({ company, contact, touchNumber, touchColor, daysSince, en
             {TOUCH_LABELS[touchNumber]}
           </span>
           <span style={{ fontWeight: 700 }}>{company.name}</span>
-          {contact && <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>→ {contact.name}{contact.title ? `, ${contact.title}` : ''}</span>}
+          {contact && (
+            <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+              → {contact.name}{contact.title ? `, ${contact.title}` : ''}
+              {touchNumber === 3 && contact.linkedin && (
+                <a href={contact.linkedin} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}
+                  style={{ marginLeft: 8, fontSize: 11, color: '#0077b5', fontWeight: 600, textDecoration: 'none' }}>
+                  LinkedIn ↗
+                </a>
+              )}
+            </span>
+          )}
           {daysSince !== undefined && <span style={{ fontSize: 11, color: 'var(--red)', fontWeight: 600 }}>{daysSince}d overdue</span>}
           {hasTriggers && (
             <span style={{ fontSize: 10, fontWeight: 700, background: '#fef3c7', color: '#92400e', padding: '2px 8px', borderRadius: 8, border: '1px solid #fde68a' }}>
@@ -905,10 +923,30 @@ function OutreachCard({ company, contact, touchNumber, touchColor, daysSince, en
             <div className="card-body">
               {draft.type === 'linkedin' ? (
                 <>
+                  {/* LinkedIn profile link + send button */}
+                  {contact?.linkedin && (
+                    <div style={{ marginBottom: 14, display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <a
+                        href={contact.linkedin}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="btn btn-xs"
+                        style={{ background: '#0077b5', color: '#fff', border: 'none', fontWeight: 700, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 5 }}
+                      >
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M19 0h-14c-2.761 0-5 2.239-5 5v14c0 2.761 2.239 5 5 5h14c2.762 0 5-2.239 5-5v-14c0-2.761-2.238-5-5-5zm-11 19h-3v-11h3v11zm-1.5-12.268c-.966 0-1.75-.79-1.75-1.764s.784-1.764 1.75-1.764 1.75.79 1.75 1.764-.783 1.764-1.75 1.764zm13.5 12.268h-3v-5.604c0-3.368-4-3.113-4 0v5.604h-3v-11h3v1.765c1.396-2.586 7-2.777 7 2.476v6.759z"/></svg>
+                        Open {contact.name?.split(' ')[0]}'s Profile
+                      </a>
+                      <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>Copy the note below, then send a connection request on LinkedIn</span>
+                    </div>
+                  )}
                   <div style={{ marginBottom: 12 }}>
-                    <label>Connection Request Note</label>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                      <label style={{ margin: 0 }}>Connection Request Note</label>
+                      <span style={{ fontSize: 11, color: (draft.connection_note || '').length > 280 ? 'var(--red)' : 'var(--text-muted)' }}>
+                        {(draft.connection_note || '').length} / 300 chars
+                      </span>
+                    </div>
                     <div className="email-draft" style={{ minHeight: 60 }}>{draft.connection_note}</div>
-                    <p style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>{(draft.connection_note || '').length} / 300 characters</p>
                   </div>
                   <div>
                     <label>Post-Acceptance DM</label>
