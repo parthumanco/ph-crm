@@ -251,11 +251,7 @@ export default function SettingsPage({ icp, onIcpSaved, teamMembers = [], onTeam
       <SectionHeader
         title="👥 Team & Billing Rates"
         description="Team members appear in project task assignment dropdowns. Billing and cost rates power project estimates and profitability forecasts."
-      >
-        <button className="btn btn-primary" onClick={handleSaveMembers} disabled={memberSaving}>
-          {memberSaving ? <><span className="spinner" /> Saving…</> : memberSaved ? '✅ Saved!' : '💾 Save Team'}
-        </button>
-      </SectionHeader>
+      />
 
       <div className="card" style={{ padding: '20px 24px' }}>
         {/* Column headers */}
@@ -303,6 +299,12 @@ export default function SettingsPage({ icp, onIcpSaved, teamMembers = [], onTeam
             style={{ background: 'var(--accent)', border: 'none', color: '#fff', cursor: newMemberName.trim() ? 'pointer' : 'default', fontSize: 18, padding: '2px', borderRadius: 4, lineHeight: 1, opacity: newMemberName.trim() ? 1 : 0.3 }}
           >+</button>
         </div>
+      </div>
+
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 14 }}>
+        <button className="btn btn-primary" onClick={handleSaveMembers} disabled={memberSaving}>
+          {memberSaving ? <><span className="spinner" /> Saving…</> : memberSaved ? '✅ Saved!' : '💾 Save Team'}
+        </button>
       </div>
 
       <SectionDivider />
