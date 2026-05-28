@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { saveIcp, loadTeamEmails, saveTeamEmails } from '../lib/settings';
+import { saveIcp, loadTeamEmails, saveTeamEmails, saveTeamMembers } from '../lib/settings';
 import { OWNERS } from '../lib/projects';
 import { supabase } from '../lib/supabase';
 
@@ -44,10 +44,56 @@ const FIELD_META = [
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 
-export default function SettingsPage({ icp, onIcpSaved }) {
+export default function SettingsPage({ icp, onIcpSaved, teamMembers = [], onTeamMembersSaved }) {
   const [draft, setDraft]           = useState({ ...icp });
   const [saving, setSaving]         = useState(false);
   const [saved, setSaved]           = useState(false);
+
+  // Team members / billing rates state
+  const [memberDraft, setMemberDraft]         = useState(teamMembers);
+  const [memberSaving, setMemberSaving]       = useState(false);
+  const [memberSaved, setMemberSaved]         = useState(false);
+  const [newMemberName, setNewMemberName]     = useState('');
+  const [newMemberRole, setNewMemberRole]     = useState('');
+  const [newMemberRate, setNewMemberRate]     = useState('');
+
+  // Keep draft in sync if parent reloads
+  useEffect(() => { setMemberDraft(teamMembers); }, [teamMembers]);
+
+  const handleSaveMembers = async () => {
+    setMemberSaving(true);
+    try {
+      const cleaned = memberDraft.map(m => ({
+        name: m.name.trim(),
+        role: m.role?.trim() || '',
+        hourlyRate: parseFloat(m.hourlyRate) || 0,
+      })).filter(m => m.name);
+      await saveTeamMembers(cleaned);
+      onTeamMembersSaved?.(cleaned);
+      setMemberSaved(true);
+      setTimeout(() => setMemberSaved(false), 2500);
+    } catch (e) {
+      alert('Save failed: ' + e.message);
+    } finally {
+      setMemberSaving(false);
+    }
+  };
+
+  const handleAddMember = () => {
+    if (!newMemberName.trim()) return;
+    setMemberDraft(prev => [...prev, {
+      name: newMemberName.trim(),
+      role: newMemberRole.trim(),
+      hourlyRate: parseFloat(newMemberRate) || 0,
+    }]);
+    setNewMemberName('');
+    setNewMemberRole('');
+    setNewMemberRate('');
+  };
+
+  const handleRemoveMember = (idx) => {
+    setMemberDraft(prev => prev.filter((_, i) => i !== idx));
+  };
 
   // Team emails state
   const [teamEmails, setTeamEmails]     = useState({});
@@ -164,6 +210,100 @@ export default function SettingsPage({ icp, onIcpSaved }) {
           </button>
         </div>
 
+        {/* ── Team & Billing Rates ────────────────────────────────────── */}
+        <div className="card" style={{ padding: '20px 24px', marginBottom: 24 }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 16, gap: 16, flexWrap: 'wrap' }}>
+            <div>
+              <h3 style={{ margin: 0, fontSize: 15, fontWeight: 800 }}>👥 Team & Billing Rates</h3>
+              <p style={{ margin: '4px 0 0', fontSize: 13, color: 'var(--text-muted)' }}>
+                Team members appear in project task assignment dropdowns. Hourly rates power project cost estimates.
+              </p>
+            </div>
+            <button className="btn btn-primary" onClick={handleSaveMembers} disabled={memberSaving} style={{ flexShrink: 0 }}>
+              {memberSaving ? <><span className="spinner" /> Saving…</> : memberSaved ? '✅ Saved!' : '💾 Save Team'}
+            </button>
+          </div>
+
+          {/* Column headers */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 100px 36px', gap: 8, marginBottom: 6, padding: '0 4px' }}>
+            {['Name', 'Role / Title', '$/hr', ''].map(h => (
+              <div key={h} style={{ fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--text-faint)' }}>{h}</div>
+            ))}
+          </div>
+
+          {/* Existing members */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 14 }}>
+            {memberDraft.map((m, i) => (
+              <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 100px 36px', gap: 8, alignItems: 'center' }}>
+                <input
+                  type="text"
+                  value={m.name}
+                  onChange={e => setMemberDraft(prev => prev.map((x, j) => j === i ? { ...x, name: e.target.value } : x))}
+                  style={{ fontSize: 13, padding: '5px 10px' }}
+                  placeholder="Name"
+                />
+                <input
+                  type="text"
+                  value={m.role || ''}
+                  onChange={e => setMemberDraft(prev => prev.map((x, j) => j === i ? { ...x, role: e.target.value } : x))}
+                  style={{ fontSize: 13, padding: '5px 10px' }}
+                  placeholder="e.g. Creative Director"
+                />
+                <input
+                  type="number"
+                  min="0"
+                  step="5"
+                  value={m.hourlyRate || ''}
+                  onChange={e => setMemberDraft(prev => prev.map((x, j) => j === i ? { ...x, hourlyRate: e.target.value } : x))}
+                  style={{ fontSize: 13, padding: '5px 10px' }}
+                  placeholder="0"
+                />
+                <button
+                  onClick={() => handleRemoveMember(i)}
+                  title="Remove"
+                  style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 16, padding: '4px', borderRadius: 4, lineHeight: 1 }}
+                >✕</button>
+              </div>
+            ))}
+          </div>
+
+          {/* Add new member row */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 100px 36px', gap: 8, alignItems: 'center', paddingTop: 12, borderTop: '1px solid var(--border-light)' }}>
+            <input
+              type="text"
+              value={newMemberName}
+              onChange={e => setNewMemberName(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleAddMember()}
+              placeholder="New name…"
+              style={{ fontSize: 13, padding: '5px 10px' }}
+            />
+            <input
+              type="text"
+              value={newMemberRole}
+              onChange={e => setNewMemberRole(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleAddMember()}
+              placeholder="Role (optional)"
+              style={{ fontSize: 13, padding: '5px 10px' }}
+            />
+            <input
+              type="number"
+              min="0"
+              step="5"
+              value={newMemberRate}
+              onChange={e => setNewMemberRate(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleAddMember()}
+              placeholder="0"
+              style={{ fontSize: 13, padding: '5px 10px' }}
+            />
+            <button
+              onClick={handleAddMember}
+              disabled={!newMemberName.trim()}
+              title="Add member"
+              style={{ background: 'var(--accent)', border: 'none', color: '#fff', cursor: newMemberName.trim() ? 'pointer' : 'default', fontSize: 18, padding: '2px', borderRadius: 4, lineHeight: 1, opacity: newMemberName.trim() ? 1 : 0.3 }}
+            >+</button>
+          </div>
+        </div>
+
         {/* ── Weekly Task Digest ──────────────────────────────────────── */}
         <div className="card" style={{ padding: '20px 24px' }}>
           <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 16, gap: 16, flexWrap: 'wrap' }}>
@@ -185,16 +325,16 @@ export default function SettingsPage({ icp, onIcpSaved }) {
 
           {/* Email inputs */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 20 }}>
-            {OWNERS.map(owner => (
-              <div key={owner} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            {memberDraft.map(member => (
+              <div key={member.name} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                 <div style={{ width: 56, fontSize: 13, fontWeight: 700, color: 'var(--text)', flexShrink: 0 }}>
-                  {owner}
+                  {member.name}
                 </div>
                 <input
                   type="email"
-                  value={teamEmails[owner] || ''}
-                  onChange={e => setTeamEmails(prev => ({ ...prev, [owner]: e.target.value }))}
-                  placeholder={`${owner.toLowerCase()}@yourcompany.com`}
+                  value={teamEmails[member.name] || ''}
+                  onChange={e => setTeamEmails(prev => ({ ...prev, [member.name]: e.target.value }))}
+                  placeholder={`${member.name.toLowerCase()}@yourcompany.com`}
                   style={{ flex: 1, maxWidth: 320, fontSize: 13, padding: '6px 10px' }}
                 />
               </div>
@@ -209,7 +349,7 @@ export default function SettingsPage({ icp, onIcpSaved }) {
               onChange={e => setTestOwner(e.target.value)}
               style={{ fontSize: 13, padding: '5px 8px', width: 'auto' }}
             >
-              {OWNERS.map(o => <option key={o} value={o}>{o}</option>)}
+              {memberDraft.map(m => <option key={m.name} value={m.name}>{m.name}</option>)}
             </select>
             <button
               className="btn"

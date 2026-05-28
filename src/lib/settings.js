@@ -111,6 +111,29 @@ export async function saveTeamEmails(emails) {
   if (error) throw new Error(error.message);
 }
 
+// ── Team members & billing rates ─────────────────────────────────────────────
+
+export const DEFAULT_TEAM_MEMBERS = [
+  { name: 'Mike', role: '', hourlyRate: 0 },
+  { name: 'Pete', role: '', hourlyRate: 0 },
+  { name: 'Jill', role: '', hourlyRate: 0 },
+];
+
+export async function loadTeamMembers() {
+  try {
+    const { data } = await supabase.from('app_settings').select('value').eq('key', 'team_members').single();
+    return data?.value?.length ? data.value : DEFAULT_TEAM_MEMBERS;
+  } catch { return DEFAULT_TEAM_MEMBERS; }
+}
+
+export async function saveTeamMembers(members) {
+  const { error } = await supabase.from('app_settings').upsert(
+    { key: 'team_members', value: members, updated_at: new Date().toISOString() },
+    { onConflict: 'key' }
+  );
+  if (error) throw new Error(error.message);
+}
+
 // Returns true if a weekly rescan is due (last one > 6 days ago or never run)
 export function isWeeklyScanDue(lastScan) {
   if (!lastScan?.timestamp) return true;

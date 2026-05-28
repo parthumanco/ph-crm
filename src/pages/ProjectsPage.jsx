@@ -363,7 +363,9 @@ function ProjectCard({ project, tasks, files, onClick, onUpload, onImport, uploa
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 
-export default function ProjectsPage({ goHomeRef, refreshKey = 0 }) {
+export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = [] }) {
+  // Dynamic owner list from Settings — falls back to hardcoded OWNERS if not configured
+  const owners = teamMembers.length ? teamMembers.map(m => m.name) : OWNERS;
   const [view, setView]             = useState('list');   // 'list' | 'detail'
   const [projects, setProjects]     = useState([]);
   const [allTasks, setAllTasks]     = useState({});       // { projectId: tasks[] }
@@ -395,7 +397,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0 }) {
   const [showArchivedMilestones, setShowArchivedMilestones] = useState(false);
   const [confirmHardDelete, setConfirmHardDelete]   = useState(null); // { type: 'task'|'milestone'|'project', item }
   const [reindexing, setReindexing]                 = useState(false);
-  const [assignedOwner, setAssignedOwner]   = useState(OWNERS[0]);
+  const [assignedOwner, setAssignedOwner]   = useState(OWNERS[0]); // initial fallback — updated below
   const [assignedTasks, setAssignedTasks]   = useState([]);
   const [assignedFiles, setAssignedFiles]   = useState({});  // taskId → File[]
   const [loadingAssigned, setLoadingAssigned] = useState(false);
@@ -404,7 +406,8 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0 }) {
   const [linkUrl, setLinkUrl]                     = useState('');
   const [linkName, setLinkName]                   = useState('');
   const [editingTask, setEditingTask]             = useState(null); // task id
-  const [editTaskDraft, setEditTaskDraft]         = useState({});   // { title, due_date, assigned_to }
+  const [editTaskDraft, setEditTaskDraft]         = useState({});   // { title, due_date, assigned_to, estimated_hours }
+  const [showEstimate, setShowEstimate]           = useState(false);
   const [proposalPanel, setProposalPanel]         = useState(null); // { task } | null
 
   // File state
@@ -775,7 +778,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0 }) {
 
   const startEditTask = (task) => {
     setEditingTask(task.id);
-    setEditTaskDraft({ title: task.title, due_date: task.due_date || '', assigned_to: task.assigned_to || '' });
+    setEditTaskDraft({ title: task.title, due_date: task.due_date || '', assigned_to: task.assigned_to || '', estimated_hours: task.estimated_hours ?? '' });
   };
 
   // Extend milestone (and project) date bounds if a task date falls outside them.
@@ -806,9 +809,10 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0 }) {
     if (!draft.title?.trim()) { setEditingTask(null); return; }
     const updated = {
       ...task,
-      title:       draft.title.trim(),
-      due_date:    draft.due_date   || null,
-      assigned_to: draft.assigned_to || '',
+      title:            draft.title.trim(),
+      due_date:         draft.due_date   || null,
+      assigned_to:      draft.assigned_to || '',
+      estimated_hours:  draft.estimated_hours !== '' && draft.estimated_hours != null ? parseFloat(draft.estimated_hours) : null,
     };
     await upsertProjectTask(updated);
     setTasks(prev => prev.map(t => t.id === updated.id ? updated : t));
@@ -832,7 +836,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0 }) {
   const handleSaveAssignedTaskEdit = async (task, overrides = {}) => {
     const draft = { ...editTaskDraft, ...overrides };
     if (!draft.title?.trim()) { setEditingTask(null); return; }
-    const updated = { ...task, title: draft.title.trim(), due_date: draft.due_date || null, assigned_to: draft.assigned_to || '' };
+    const updated = { ...task, title: draft.title.trim(), due_date: draft.due_date || null, assigned_to: draft.assigned_to || '', estimated_hours: draft.estimated_hours !== '' && draft.estimated_hours != null ? parseFloat(draft.estimated_hours) : null };
     await upsertProjectTask(updated);
     setAssignedTasks(prev => prev.map(t =>
       t.id === updated.id ? { ...updated, _project: t._project, _milestone: t._milestone } : t
@@ -1052,7 +1056,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0 }) {
                 onChange={e => { setAssignedOwner(e.target.value); loadAssigned(e.target.value); }}
                 style={{ fontSize: 14, fontWeight: 700, padding: '5px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', cursor: 'pointer' }}
               >
-                {OWNERS.map(o => <option key={o} value={o}>{o}</option>)}
+                {owners.map(o => <option key={o} value={o}>{o}</option>)}
                 <option value="__unassigned__">Unassigned</option>
               </select>
             </div>
@@ -1133,7 +1137,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0 }) {
                             handleSaveAssignedTaskEdit(task, { assigned_to: val });
                           }} style={{ fontSize: 12, padding: '4px 8px', width: 'auto' }}>
                             <option value="">—</option>
-                            {OWNERS.map(o => <option key={o} value={o}>{o}</option>)}
+                            {owners.map(o => <option key={o} value={o}>{o}</option>)}
                           </select>
                         </div>
                         <div style={{ marginLeft: 'auto' }}>
@@ -1536,7 +1540,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0 }) {
                 style={{ fontSize: 12, padding: '4px 8px', width: 'auto', fontWeight: projectOwnerFilter ? 700 : 400, color: projectOwnerFilter ? 'var(--accent)' : 'var(--text)' }}
               >
                 <option value="">All Team</option>
-                {OWNERS.map(o => <option key={o} value={o}>{o}</option>)}
+                {owners.map(o => <option key={o} value={o}>{o}</option>)}
                 <option value="__unassigned__">Unassigned</option>
               </select>
             </div>
@@ -1686,7 +1690,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0 }) {
                           <Lbl>Assigned to</Lbl>
                           <select value={ms.assigned_to || ''} onChange={e => { const u = { ...ms, assigned_to: e.target.value }; setMilestones(p => p.map(m => m.id === ms.id ? u : m)); upsertMilestone(u); }} style={{ fontSize: 12, padding: '3px 8px', width: 'auto' }}>
                             <option value="">Unassigned</option>
-                            {OWNERS.map(o => <option key={o} value={o}>{o}</option>)}
+                            {owners.map(o => <option key={o} value={o}>{o}</option>)}
                           </select>
                         </div>
                         <div>
@@ -1783,8 +1787,24 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0 }) {
                                     style={{ fontSize: 12, padding: '4px 8px', width: 'auto' }}
                                   >
                                     <option value="">—</option>
-                                    {OWNERS.map(o => <option key={o} value={o}>{o}</option>)}
+                                    {owners.map(o => <option key={o} value={o}>{o}</option>)}
                                   </select>
+                                </div>
+                                <div>
+                                  <Lbl>Est. hrs</Lbl>
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    step="0.5"
+                                    value={editTaskDraft.estimated_hours}
+                                    onChange={e => {
+                                      const val = e.target.value;
+                                      setEditTaskDraft(d => ({ ...d, estimated_hours: val }));
+                                      handleSaveTaskEdit(task, { estimated_hours: val });
+                                    }}
+                                    placeholder="—"
+                                    style={{ fontSize: 12, padding: '4px 8px', width: 70 }}
+                                  />
                                 </div>
                                 <div style={{ marginLeft: 'auto' }}>
                                   <button onClick={() => setEditingTask(null)} style={{ padding: '5px 10px', borderRadius: 5, border: '1px solid var(--border)', background: 'transparent', cursor: 'pointer', fontSize: 12 }}>Done</button>
@@ -1821,6 +1841,11 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0 }) {
                                 </div>
                                 {task.assigned_to && (
                                   <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600, flexShrink: 0 }}>{task.assigned_to}</span>
+                                )}
+                                {task.estimated_hours != null && task.estimated_hours !== '' && (
+                                  <span style={{ fontSize: 10, color: 'var(--text-faint)', fontWeight: 600, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 3, padding: '1px 6px', flexShrink: 0 }}>
+                                    {task.estimated_hours}h
+                                  </span>
                                 )}
                                 {task.due_date && (
                                   <span style={{ fontSize: 11, color: 'var(--text-faint)', whiteSpace: 'nowrap', flexShrink: 0 }}>{fmtDate(task.due_date)}</span>
@@ -2060,6 +2085,16 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0 }) {
               </div>
             )}
 
+            {/* ── Project Estimate ──────────────────────────────────────── */}
+            {tasks.length > 0 && (
+              <ProjectEstimate
+                tasks={tasks}
+                teamMembers={teamMembers}
+                open={showEstimate}
+                onToggle={() => setShowEstimate(o => !o)}
+              />
+            )}
+
             {/* Add milestone footer */}
             <button
               onClick={handleAddMilestone}
@@ -2277,5 +2312,110 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0 }) {
         />
       )}
     </>
+  );
+}
+
+// ── Project Estimate ──────────────────────────────────────────────────────────
+
+function ProjectEstimate({ tasks, teamMembers, open, onToggle }) {
+  const memberMap = Object.fromEntries((teamMembers || []).map(m => [m.name, m]));
+
+  // Build per-person rollup from tasks with estimated_hours
+  const byPerson = {};
+  let unestimated = 0;
+
+  tasks.forEach(task => {
+    if (task.deleted_at) return;
+    const hrs = task.estimated_hours;
+    if (!hrs) { unestimated++; return; }
+    const name = task.assigned_to || '(Unassigned)';
+    if (!byPerson[name]) byPerson[name] = { name, tasks: 0, hours: 0, rate: memberMap[name]?.hourlyRate || 0 };
+    byPerson[name].tasks++;
+    byPerson[name].hours += parseFloat(hrs);
+  });
+
+  const rows       = Object.values(byPerson).sort((a, b) => b.hours - a.hours);
+  const totalHours = rows.reduce((s, r) => s + r.hours, 0);
+  const totalCost  = rows.reduce((s, r) => s + r.hours * r.rate, 0);
+  const hasRates   = rows.some(r => r.rate > 0);
+  const fmt$       = n => n > 0 ? `$${n.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}` : '—';
+  const fmtHrs     = n => `${parseFloat(n.toFixed(1))}h`;
+
+  return (
+    <div style={{ border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden', background: 'var(--surface)', marginBottom: 0 }}>
+      {/* Header row */}
+      <div
+        onClick={onToggle}
+        style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '13px 18px', cursor: 'pointer', userSelect: 'none' }}
+      >
+        <span style={{ fontSize: 16 }}>💰</span>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontWeight: 700, fontSize: 14 }}>Project Estimate</div>
+          <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 1 }}>
+            {totalHours > 0
+              ? <>{fmtHrs(totalHours)} estimated{hasRates && totalCost > 0 ? ` · ${fmt$(totalCost)} total` : ''}{unestimated > 0 ? ` · ${unestimated} task${unestimated !== 1 ? 's' : ''} without hours` : ''}</>
+              : `No hours estimated yet — edit tasks to add estimates`}
+          </div>
+        </div>
+        <span style={{ fontSize: 12, color: 'var(--text-faint)' }}>{open ? '▲' : '▼'}</span>
+      </div>
+
+      {open && (
+        <div style={{ borderTop: '1px solid var(--border)' }}>
+          {rows.length === 0 ? (
+            <div style={{ padding: '16px 18px', fontSize: 13, color: 'var(--text-muted)' }}>
+              Edit any task and set "Est. hrs" to start building the estimate.
+            </div>
+          ) : (
+            <>
+              {/* Column headers */}
+              <div style={{ display: 'grid', gridTemplateColumns: `1fr ${hasRates ? '80px 80px 80px' : '80px'}`, gap: 0, borderBottom: '1px solid var(--border-light)' }}>
+                {['Team Member', 'Tasks', 'Hours', hasRates ? 'Rate' : null, hasRates ? 'Cost' : null].filter(Boolean).map(h => (
+                  <div key={h} style={{ padding: '7px 18px', fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--text-faint)' }}>{h}</div>
+                ))}
+              </div>
+
+              {/* Per-person rows */}
+              {rows.map((r, i) => (
+                <div
+                  key={r.name}
+                  style={{ display: 'grid', gridTemplateColumns: `1fr ${hasRates ? '80px 80px 80px' : '80px'}`, gap: 0, borderBottom: i < rows.length - 1 ? '1px solid var(--border-light)' : 'none', background: i % 2 === 0 ? 'var(--bg)' : 'var(--surface)' }}
+                >
+                  <div style={{ padding: '10px 18px', display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <div style={{ width: 28, height: 28, borderRadius: '50%', background: 'var(--accent)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 800, flexShrink: 0 }}>
+                      {r.name.charAt(0).toUpperCase()}
+                    </div>
+                    <div>
+                      <div style={{ fontWeight: 700, fontSize: 13 }}>{r.name}</div>
+                      {memberMap[r.name]?.role && <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{memberMap[r.name].role}</div>}
+                    </div>
+                  </div>
+                  <div style={{ padding: '10px 18px', fontSize: 13, color: 'var(--text-muted)', display: 'flex', alignItems: 'center' }}>{r.tasks}</div>
+                  <div style={{ padding: '10px 18px', fontSize: 13, fontWeight: 600, display: 'flex', alignItems: 'center' }}>{fmtHrs(r.hours)}</div>
+                  {hasRates && <div style={{ padding: '10px 18px', fontSize: 12, color: 'var(--text-muted)', display: 'flex', alignItems: 'center' }}>{r.rate > 0 ? `$${r.rate}/hr` : '—'}</div>}
+                  {hasRates && <div style={{ padding: '10px 18px', fontSize: 13, fontWeight: 700, color: r.rate > 0 ? '#10b981' : 'var(--text-faint)', display: 'flex', alignItems: 'center' }}>{fmt$(r.hours * r.rate)}</div>}
+                </div>
+              ))}
+
+              {/* Totals footer */}
+              <div style={{ display: 'grid', gridTemplateColumns: `1fr ${hasRates ? '80px 80px 80px' : '80px'}`, borderTop: '2px solid var(--border)', background: 'var(--surface)' }}>
+                <div style={{ padding: '11px 18px', fontWeight: 800, fontSize: 13 }}>Total</div>
+                <div style={{ padding: '11px 18px', fontSize: 13, fontWeight: 700 }}>{rows.reduce((s, r) => s + r.tasks, 0)}</div>
+                <div style={{ padding: '11px 18px', fontSize: 13, fontWeight: 800 }}>{fmtHrs(totalHours)}</div>
+                {hasRates && <div style={{ padding: '11px 18px' }} />}
+                {hasRates && <div style={{ padding: '11px 18px', fontSize: 14, fontWeight: 800, color: '#10b981' }}>{fmt$(totalCost)}</div>}
+              </div>
+
+              {/* Note about unestimated tasks */}
+              {unestimated > 0 && (
+                <div style={{ padding: '10px 18px', fontSize: 12, color: 'var(--text-muted)', borderTop: '1px solid var(--border-light)', background: 'var(--bg)' }}>
+                  ⚠️ {unestimated} task{unestimated !== 1 ? 's' : ''} {unestimated !== 1 ? 'have' : 'has'} no hours estimate and {unestimated !== 1 ? 'are' : 'is'} excluded from totals.
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+    </div>
   );
 }

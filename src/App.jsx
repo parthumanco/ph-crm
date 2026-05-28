@@ -8,7 +8,7 @@ import DiscoverPage from './pages/DiscoverPage';
 import WeeklyReportPage from './pages/WeeklyReportPage';
 import ChatPage from './pages/ChatPage';
 import SettingsPage from './pages/SettingsPage';
-import { loadIcp, DEFAULT_ICP } from './lib/settings';
+import { loadIcp, DEFAULT_ICP, loadTeamMembers, DEFAULT_TEAM_MEMBERS } from './lib/settings';
 
 const NAV = [
   { id: 'projects', label: 'Projects',           icon: '📌'  },
@@ -46,13 +46,15 @@ function PageSlot({ active, children }) {
 }
 
 export default function App() {
-  const [page, setPage]         = useState(() => localStorage.getItem('ph_current_page') || 'projects');
-  const [pageKeys, setPageKeys] = useState({});
-  const [icp, setIcp]           = useState(DEFAULT_ICP);
-  const projectsGoHome          = useRef(null); // ProjectsPage registers its goHome fn here
+  const [page, setPage]               = useState(() => localStorage.getItem('ph_current_page') || 'projects');
+  const [pageKeys, setPageKeys]       = useState({});
+  const [icp, setIcp]                 = useState(DEFAULT_ICP);
+  const [teamMembers, setTeamMembers] = useState(DEFAULT_TEAM_MEMBERS);
+  const projectsGoHome                = useRef(null); // ProjectsPage registers its goHome fn here
 
   useEffect(() => {
     loadIcp().then(loaded => setIcp(loaded));
+    loadTeamMembers().then(setTeamMembers);
   }, []);
 
   // Increment the refresh key for a page every time the user navigates to it,
@@ -117,7 +119,7 @@ export default function App() {
           <SupportPage />
         </PageSlot>
         <PageSlot active={page === 'projects'}>
-          <ProjectsPage goHomeRef={projectsGoHome} refreshKey={pageKeys.projects || 0} />
+          <ProjectsPage goHomeRef={projectsGoHome} refreshKey={pageKeys.projects || 0} teamMembers={teamMembers} />
         </PageSlot>
         <PageSlot active={page === 'discover'}>
           <DiscoverPage icp={icp} refreshKey={pageKeys.discover || 0} />
@@ -129,7 +131,7 @@ export default function App() {
           <ChatPage />
         </PageSlot>
         <PageSlot active={page === 'settings'}>
-          <SettingsPage icp={icp} onIcpSaved={setIcp} />
+          <SettingsPage icp={icp} onIcpSaved={setIcp} teamMembers={teamMembers} onTeamMembersSaved={setTeamMembers} />
         </PageSlot>
       </main>
     </div>
