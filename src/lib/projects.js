@@ -415,6 +415,7 @@ Project start date: ${startDate}
 Return ONLY a valid JSON object with no markdown, no explanation, no code fences. Use this exact structure:
 {
   "project_name": "Short descriptive project name",
+  "total_budget": 45000,
   "milestones": [
     {
       "title": "Phase name",
@@ -434,6 +435,7 @@ Rules:
 - Each milestone starts the day the previous one ends
 - Tasks within a milestone are concrete, actionable deliverables
 - Estimate realistic durations based on the described work
+- "total_budget": extract the total project fee, investment, or contract value as a plain number (no $ or commas). If not stated, omit the field or set to null
 - assigned_to fields should be blank strings
 - "page" must be the page where that task or milestone is described IN DETAIL — meaning it has its own paragraph, section heading, or substantial explanation of what will be done and how. NEVER use a page that only contains a table of contents, executive summary, scope overview, deliverables list, or any other page where the task appears as a single line or bullet point. If a task is briefly listed on page 2 but has a full description on page 7, "page" must be 7. When in doubt, choose the later page with more detail over the earlier page with a brief mention. If the proposal is plain text (not a PDF), omit page fields or set them to null
 - Return ONLY the raw JSON object, nothing else`;

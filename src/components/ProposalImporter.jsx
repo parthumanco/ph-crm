@@ -179,6 +179,7 @@ export default function ProposalImporter({ projectId, projectStart, onImported, 
     onImported({
       startDate,
       projectName:     parsed.project_name || '',
+      budget:          parsed.total_budget  || null,
       milestones:      preview,
       proposalText,
       proposalPdfFile: inputMode === 'pdf' ? pdfFile : null,

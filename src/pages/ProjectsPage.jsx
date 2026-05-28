@@ -877,7 +877,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
   };
 
   // ── Proposal import callback (works from card OR detail view) ────────────
-  const handleImported = async ({ startDate, projectName, milestones: msParsed, proposalText, proposalPdfFile, proposalPageHints, gdocUrl, gdocName }, fromProjectId) => {
+  const handleImported = async ({ startDate, projectName, budget: importedBudget, milestones: msParsed, proposalText, proposalPdfFile, proposalPageHints, gdocUrl, gdocName }, fromProjectId) => {
     const projectId = fromProjectId || activeProject?.id;
     const baseProj  = projects.find(p => p.id === projectId) || activeProject;
     const fromCard  = !!fromProjectId;
@@ -886,6 +886,8 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
         ...baseProj,
         name:       baseProj.name || projectName || baseProj.name,
         start_date: startDate,
+        // Pre-fill budget from proposal if not already set
+        ...(importedBudget && !baseProj.budget ? { budget: importedBudget } : {}),
       };
 
       const now = new Date().toISOString();
