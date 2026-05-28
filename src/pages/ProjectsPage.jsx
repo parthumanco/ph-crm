@@ -2094,7 +2094,11 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
             {tasks.length > 0 && (
               <ProjectForecast
                 tasks={tasks}
+                milestones={milestones}
                 teamMembers={teamMembers}
+                activeProject={activeProject}
+                onBudgetChange={val => { setActiveProject(p => ({ ...p, budget: val })); }}
+                onBudgetBlur={handleSaveProject}
                 open={showEstimate}
                 onToggle={() => setShowEstimate(o => !o)}
               />
@@ -2320,35 +2324,43 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
   );
 }
 
-// ── Project Estimate ──────────────────────────────────────────────────────────
+// ── Project Forecast ──────────────────────────────────────────────────────────
 
-function ProjectForecast({ tasks, teamMembers, open, onToggle }) {
-  const [activeTab, setActiveTab] = useState('estimate'); // 'estimate' | 'profitability'
+function ProjectForecast({ tasks, milestones = [], teamMembers, activeProject, onBudgetChange, onBudgetBlur, open, onToggle }) {
+  const [activeTab, setActiveTab] = useState('estimate');
   const memberMap = Object.fromEntries((teamMembers || []).map(m => [m.name, m]));
 
-  // Build per-person rollup
+  const fmt$   = n => n >= 0 ? `$${Math.round(n).toLocaleString('en-US')}` : `-$${Math.round(Math.abs(n)).toLocaleString('en-US')}`;
+  const fmtHrs = n => `${parseFloat(n.toFixed(1))}h`;
+  const marginColor = m => m == null ? 'var(--text-faint)' : m >= 50 ? '#10b981' : m >= 25 ? '#f59e0b' : '#ef4444';
+  const budgetColor = pct => pct == null ? 'var(--text-faint)' : pct <= 80 ? '#10b981' : pct <= 100 ? '#f59e0b' : '#ef4444';
+
+  // ── Per-person rollup ────────────────────────────────────────────────────────
   const byPerson = {};
   let unestimated = 0;
 
   tasks.forEach(task => {
     if (task.deleted_at) return;
-    const hrs = task.estimated_hours;
+    const hrs = parseFloat(task.estimated_hours);
     if (!hrs) { unestimated++; return; }
-    const name = task.assigned_to || '(Unassigned)';
+    const name   = task.assigned_to || '(Unassigned)';
     const member = memberMap[name] || {};
     if (!byPerson[name]) byPerson[name] = {
       name,
-      tasks:    0,
-      hours:    0,
+      tasks: 0, hours: 0, hoursDone: 0, hoursLeft: 0,
       billRate: parseFloat(member.hourlyRate) || 0,
       costRate: parseFloat(member.costRate)   || 0,
     };
     byPerson[name].tasks++;
-    byPerson[name].hours += parseFloat(hrs);
+    byPerson[name].hours    += hrs;
+    byPerson[name].hoursDone += task.completed ? hrs : 0;
+    byPerson[name].hoursLeft += task.completed ? 0   : hrs;
   });
 
   const rows         = Object.values(byPerson).sort((a, b) => b.hours - a.hours);
   const totalHours   = rows.reduce((s, r) => s + r.hours, 0);
+  const totalDone    = rows.reduce((s, r) => s + r.hoursDone, 0);
+  const totalLeft    = rows.reduce((s, r) => s + r.hoursLeft, 0);
   const totalRevenue = rows.reduce((s, r) => s + r.hours * r.billRate, 0);
   const totalCost    = rows.reduce((s, r) => s + r.hours * r.costRate, 0);
   const totalProfit  = totalRevenue - totalCost;
@@ -2358,36 +2370,59 @@ function ProjectForecast({ tasks, teamMembers, open, onToggle }) {
   const hasCostRates = rows.some(r => r.costRate > 0);
   const hasProfit    = hasBillRates && hasCostRates;
 
-  const fmt$   = n => n >= 0 ? `$${Math.round(n).toLocaleString('en-US')}` : `-$${Math.round(Math.abs(n)).toLocaleString('en-US')}`;
-  const fmtHrs = n => `${parseFloat(n.toFixed(1))}h`;
-  const marginColor = m => m == null ? 'var(--text-faint)' : m >= 50 ? '#10b981' : m >= 25 ? '#f59e0b' : '#ef4444';
+  // ── Budget ───────────────────────────────────────────────────────────────────
+  const budget     = parseFloat(activeProject?.budget) || 0;
+  const budgetPct  = budget > 0 && totalRevenue > 0 ? (totalRevenue / budget) * 100 : null;
+  const budgetVar  = budget > 0 ? budget - totalRevenue : null;
 
-  // Collapsed header summary
+  // ── By-phase rollup ──────────────────────────────────────────────────────────
+  const msMap = Object.fromEntries(milestones.map(m => [m.id, m]));
+  const byPhase = {};
+
+  tasks.forEach(task => {
+    if (task.deleted_at) return;
+    const hrs = parseFloat(task.estimated_hours);
+    if (!hrs) return;
+    const key    = task.milestone_id || '__none__';
+    const label  = task.milestone_id ? (msMap[task.milestone_id]?.title || 'Unknown Phase') : 'No Phase';
+    const member = memberMap[task.assigned_to] || {};
+    if (!byPhase[key]) byPhase[key] = { label, tasks: 0, hours: 0, cost: 0, revenue: 0, order: task.milestone_id ? (msMap[task.milestone_id]?.order_index ?? 999) : 1000 };
+    byPhase[key].tasks++;
+    byPhase[key].hours   += hrs;
+    byPhase[key].cost    += hrs * (parseFloat(member.costRate)   || 0);
+    byPhase[key].revenue += hrs * (parseFloat(member.hourlyRate) || 0);
+  });
+
+  const phaseRows = Object.values(byPhase).sort((a, b) => a.order - b.order);
+
+  // ── Collapsed summary ────────────────────────────────────────────────────────
+  const doneBarPct = totalHours > 0 ? (totalDone / totalHours) * 100 : 0;
   const summary = totalHours > 0
     ? [
-        `${fmtHrs(totalHours)}`,
+        `${fmtHrs(totalHours)} estimated`,
+        totalDone > 0 ? `${fmtHrs(totalDone)} done` : null,
         hasBillRates && totalRevenue > 0 ? `${fmt$(totalRevenue)} revenue` : null,
-        hasCostRates && totalCost > 0    ? `${fmt$(totalCost)} cost`    : null,
-        hasProfit && margin != null      ? `${Math.round(margin)}% margin` : null,
-        unestimated > 0                  ? `${unestimated} task${unestimated !== 1 ? 's' : ''} unestimated` : null,
+        hasProfit && margin != null ? `${Math.round(margin)}% margin` : null,
+        unestimated > 0 ? `${unestimated} unestimated` : null,
       ].filter(Boolean).join(' · ')
     : 'No hours estimated — edit tasks to add estimates';
 
-  const ColHdr = ({ children, align = 'left' }) => (
-    <div style={{ padding: '7px 16px', fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--text-faint)', textAlign: align }}>
+  // ── Sub-components ───────────────────────────────────────────────────────────
+  const ColHdr = ({ children, align = 'left', title: tt }) => (
+    <div title={tt} style={{ padding: '7px 14px', fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--text-faint)', textAlign: align, cursor: tt ? 'help' : 'default' }}>
       {children}
     </div>
   );
 
   const Cell = ({ children, bold, color, align = 'left', muted }) => (
-    <div style={{ padding: '10px 16px', fontSize: 13, fontWeight: bold ? 700 : 400, color: color || (muted ? 'var(--text-muted)' : 'var(--text)'), display: 'flex', alignItems: 'center', justifyContent: align === 'right' ? 'flex-end' : 'flex-start' }}>
+    <div style={{ padding: '9px 14px', fontSize: 13, fontWeight: bold ? 700 : 400, color: color || (muted ? 'var(--text-muted)' : 'var(--text)'), display: 'flex', alignItems: 'center', justifyContent: align === 'right' ? 'flex-end' : 'flex-start', gap: 4 }}>
       {children}
     </div>
   );
 
   const Avatar = ({ name, role }) => (
-    <div style={{ padding: '10px 16px', display: 'flex', alignItems: 'center', gap: 8 }}>
-      <div style={{ width: 28, height: 28, borderRadius: '50%', background: 'var(--accent)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 800, flexShrink: 0 }}>
+    <div style={{ padding: '9px 14px', display: 'flex', alignItems: 'center', gap: 8 }}>
+      <div style={{ width: 26, height: 26, borderRadius: '50%', background: 'var(--accent)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 800, flexShrink: 0 }}>
         {name.charAt(0).toUpperCase()}
       </div>
       <div>
@@ -2397,20 +2432,49 @@ function ProjectForecast({ tasks, teamMembers, open, onToggle }) {
     </div>
   );
 
+  const Tab = ({ id, label, disabled }) => (
+    <button
+      onClick={() => !disabled && setActiveTab(id)}
+      disabled={disabled}
+      title={disabled ? 'Set billing & cost rates in Settings → Team & Billing Rates to enable' : undefined}
+      style={{
+        padding: '7px 14px', fontSize: 12, fontWeight: 700, borderRadius: '6px 6px 0 0',
+        border: '1px solid var(--border-light)', borderBottom: activeTab === id ? '1px solid var(--surface)' : '1px solid var(--border-light)',
+        background: activeTab === id ? 'var(--surface)' : 'var(--bg)',
+        color: disabled ? 'var(--text-faint)' : activeTab === id ? 'var(--accent)' : 'var(--text-muted)',
+        cursor: disabled ? 'default' : 'pointer', marginBottom: -1,
+      }}
+    >{label}</button>
+  );
+
   return (
     <div style={{ border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden', background: 'var(--surface)' }}>
 
       {/* ── Collapsed header ── */}
       <div onClick={onToggle} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '13px 18px', cursor: 'pointer', userSelect: 'none' }}>
         <span style={{ fontSize: 16 }}>💰</span>
-        <div style={{ flex: 1 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontWeight: 700, fontSize: 14 }}>Project Forecast</div>
           <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 1 }}>{summary}</div>
         </div>
-        {/* Quick-glance margin pill when collapsed */}
-        {!open && hasProfit && margin != null && (
-          <div style={{ fontSize: 12, fontWeight: 700, padding: '3px 10px', borderRadius: 20, background: marginColor(margin) + '18', color: marginColor(margin), border: `1px solid ${marginColor(margin)}33` }}>
-            {Math.round(margin)}% margin
+        {/* Quick-glance chips when collapsed */}
+        {!open && totalHours > 0 && (
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0 }}>
+            {totalDone > 0 && (
+              <div style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 20, background: 'var(--bg)', border: '1px solid var(--border)', color: 'var(--text-muted)' }}>
+                {Math.round(doneBarPct)}% done
+              </div>
+            )}
+            {hasProfit && margin != null && (
+              <div style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 20, background: marginColor(margin) + '18', color: marginColor(margin), border: `1px solid ${marginColor(margin)}33` }}>
+                {Math.round(margin)}% margin
+              </div>
+            )}
+            {budgetPct != null && (
+              <div style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 20, background: budgetColor(budgetPct) + '18', color: budgetColor(budgetPct), border: `1px solid ${budgetColor(budgetPct)}33` }}>
+                {budgetPct <= 100 ? `${Math.round(budgetPct)}% of budget` : `${Math.round(budgetPct - 100)}% over budget`}
+              </div>
+            )}
           </div>
         )}
         <span style={{ fontSize: 12, color: 'var(--text-faint)' }}>{open ? '▲' : '▼'}</span>
@@ -2419,66 +2483,142 @@ function ProjectForecast({ tasks, teamMembers, open, onToggle }) {
       {open && (
         <div style={{ borderTop: '1px solid var(--border)' }}>
 
+          {/* ── Contract value + budget health ── */}
+          <div style={{ padding: '12px 18px', borderBottom: '1px solid var(--border-light)', background: 'var(--bg)', display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>Contract value</span>
+              <div style={{ display: 'flex', alignItems: 'center', border: '1px solid var(--border)', borderRadius: 6, overflow: 'hidden', background: 'var(--surface)' }}>
+                <span style={{ padding: '4px 8px', fontSize: 13, color: 'var(--text-muted)', borderRight: '1px solid var(--border)', background: 'var(--bg)' }}>$</span>
+                <input
+                  type="number"
+                  min="0"
+                  step="1000"
+                  value={activeProject?.budget || ''}
+                  onChange={e => onBudgetChange(e.target.value)}
+                  onBlur={onBudgetBlur}
+                  placeholder="0"
+                  onClick={e => e.stopPropagation()}
+                  style={{ border: 'none', outline: 'none', padding: '4px 10px', fontSize: 13, width: 110, background: 'transparent' }}
+                />
+              </div>
+            </div>
+
+            {/* Budget health bar */}
+            {budget > 0 && totalRevenue > 0 && (
+              <div style={{ flex: 1, minWidth: 180 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                  <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                    {fmt$(totalRevenue)} estimated of {fmt$(budget)} budget
+                  </span>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: budgetColor(budgetPct) }}>
+                    {budgetVar >= 0 ? `${fmt$(budgetVar)} under` : `${fmt$(-budgetVar)} OVER`}
+                  </span>
+                </div>
+                <div style={{ height: 8, background: 'var(--border-light)', borderRadius: 4, overflow: 'hidden' }}>
+                  <div style={{
+                    height: '100%',
+                    width: `${Math.min(budgetPct, 100)}%`,
+                    background: budgetColor(budgetPct),
+                    borderRadius: 4,
+                    transition: 'width .3s ease',
+                  }} />
+                </div>
+              </div>
+            )}
+          </div>
+
           {rows.length === 0 ? (
             <div style={{ padding: '16px 18px', fontSize: 13, color: 'var(--text-muted)' }}>
               Edit any task and set "Est. hrs" to start building the forecast.
             </div>
           ) : (
             <>
-              {/* ── Tab toggle ── */}
+              {/* ── Tabs ── */}
               <div style={{ display: 'flex', gap: 4, padding: '12px 18px 0', borderBottom: '1px solid var(--border-light)' }}>
-                {[
-                  { id: 'estimate',      label: '📋 Estimate' },
-                  { id: 'profitability', label: '📊 Profitability', disabled: !hasProfit },
-                ].map(tab => (
-                  <button
-                    key={tab.id}
-                    onClick={() => !tab.disabled && setActiveTab(tab.id)}
-                    disabled={tab.disabled}
-                    style={{
-                      padding: '7px 16px', fontSize: 12, fontWeight: 700, borderRadius: '6px 6px 0 0',
-                      border: '1px solid var(--border-light)', borderBottom: activeTab === tab.id ? '1px solid var(--surface)' : '1px solid var(--border-light)',
-                      background: activeTab === tab.id ? 'var(--surface)' : 'var(--bg)',
-                      color: tab.disabled ? 'var(--text-faint)' : activeTab === tab.id ? 'var(--accent)' : 'var(--text-muted)',
-                      cursor: tab.disabled ? 'default' : 'pointer',
-                      marginBottom: -1,
-                    }}
-                    title={tab.disabled ? 'Set billing & cost rates in ICP Settings → Team & Billing Rates to enable' : undefined}
-                  >
-                    {tab.label}
-                  </button>
-                ))}
+                <Tab id="estimate"      label="📋 Estimate" />
+                <Tab id="phase"         label="📅 By Phase" />
+                <Tab id="profitability" label="📊 Profitability" disabled={!hasProfit} />
               </div>
 
               {/* ── ESTIMATE TAB ── */}
               {activeTab === 'estimate' && (() => {
-                const cols = hasBillRates
-                  ? '1fr 60px 70px 80px 90px'
-                  : '1fr 60px 70px';
+                const showRev  = hasBillRates;
+                const cols = showRev ? '1fr 55px 70px 70px 70px 90px' : '1fr 55px 70px 70px';
                 return (
                   <>
                     <div style={{ display: 'grid', gridTemplateColumns: cols, borderBottom: '1px solid var(--border-light)' }}>
                       <ColHdr>Team Member</ColHdr>
                       <ColHdr align="right">Tasks</ColHdr>
-                      <ColHdr align="right">Hours</ColHdr>
-                      {hasBillRates && <ColHdr align="right">Rate</ColHdr>}
-                      {hasBillRates && <ColHdr align="right">Revenue</ColHdr>}
+                      <ColHdr align="right" title="Estimated hours on completed tasks">Done</ColHdr>
+                      <ColHdr align="right" title="Estimated hours on incomplete tasks">Remaining</ColHdr>
+                      {showRev && <ColHdr align="right">Rate</ColHdr>}
+                      {showRev && <ColHdr align="right">Revenue</ColHdr>}
                     </div>
                     {rows.map((r, i) => (
                       <div key={r.name} style={{ display: 'grid', gridTemplateColumns: cols, borderBottom: i < rows.length - 1 ? '1px solid var(--border-light)' : 'none', background: i % 2 === 0 ? 'var(--bg)' : 'var(--surface)' }}>
                         <Avatar name={r.name} role={memberMap[r.name]?.role} />
                         <Cell muted align="right">{r.tasks}</Cell>
-                        <Cell bold align="right">{fmtHrs(r.hours)}</Cell>
-                        {hasBillRates && <Cell muted align="right">{r.billRate > 0 ? `$${r.billRate}/hr` : '—'}</Cell>}
-                        {hasBillRates && <Cell bold color={r.billRate > 0 ? '#10b981' : 'var(--text-faint)'} align="right">{r.billRate > 0 ? fmt$(r.hours * r.billRate) : '—'}</Cell>}
+                        <Cell align="right" color={r.hoursDone > 0 ? '#10b981' : 'var(--text-faint)'}>{fmtHrs(r.hoursDone)}</Cell>
+                        <Cell align="right" color={r.hoursLeft > 0 ? 'var(--text)' : 'var(--text-faint)'}>{fmtHrs(r.hoursLeft)}</Cell>
+                        {showRev && <Cell muted align="right">{r.billRate > 0 ? `$${r.billRate}/hr` : '—'}</Cell>}
+                        {showRev && <Cell bold color={r.billRate > 0 ? '#10b981' : 'var(--text-faint)'} align="right">{r.billRate > 0 ? fmt$(r.hours * r.billRate) : '—'}</Cell>}
                       </div>
                     ))}
                     <div style={{ display: 'grid', gridTemplateColumns: cols, borderTop: '2px solid var(--border)', background: 'var(--surface)' }}>
                       <Cell bold>Total</Cell>
                       <Cell bold align="right">{rows.reduce((s, r) => s + r.tasks, 0)}</Cell>
-                      <Cell bold align="right">{fmtHrs(totalHours)}</Cell>
-                      {hasBillRates && <div />}
-                      {hasBillRates && <Cell bold color="#10b981" align="right">{fmt$(totalRevenue)}</Cell>}
+                      <Cell bold color="#10b981" align="right">{fmtHrs(totalDone)}</Cell>
+                      <Cell bold align="right">{fmtHrs(totalLeft)}</Cell>
+                      {showRev && <div />}
+                      {showRev && <Cell bold color="#10b981" align="right">{fmt$(totalRevenue)}</Cell>}
+                    </div>
+                    {/* Hours burn bar */}
+                    {totalDone > 0 && (
+                      <div style={{ padding: '10px 18px', borderTop: '1px solid var(--border-light)', background: 'var(--bg)' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 5 }}>
+                          <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{fmtHrs(totalDone)} of {fmtHrs(totalHours)} completed</span>
+                          <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)' }}>{Math.round(doneBarPct)}%</span>
+                        </div>
+                        <div style={{ height: 6, background: 'var(--border-light)', borderRadius: 3, overflow: 'hidden' }}>
+                          <div style={{ height: '100%', width: `${doneBarPct}%`, background: '#10b981', borderRadius: 3, transition: 'width .3s ease' }} />
+                        </div>
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
+
+              {/* ── BY PHASE TAB ── */}
+              {activeTab === 'phase' && (() => {
+                const showCost = hasCostRates;
+                const showRev  = hasBillRates;
+                const cols = ['1fr', '55px', '70px', showCost && '80px', showRev && '80px'].filter(Boolean).join(' ');
+                const phTotal = { tasks: 0, hours: 0, cost: 0, revenue: 0 };
+                phaseRows.forEach(r => { phTotal.tasks += r.tasks; phTotal.hours += r.hours; phTotal.cost += r.cost; phTotal.revenue += r.revenue; });
+                return (
+                  <>
+                    <div style={{ display: 'grid', gridTemplateColumns: cols, borderBottom: '1px solid var(--border-light)' }}>
+                      <ColHdr>Phase / Milestone</ColHdr>
+                      <ColHdr align="right">Tasks</ColHdr>
+                      <ColHdr align="right">Hours</ColHdr>
+                      {showCost && <ColHdr align="right">Cost</ColHdr>}
+                      {showRev  && <ColHdr align="right">Revenue</ColHdr>}
+                    </div>
+                    {phaseRows.map((r, i) => (
+                      <div key={r.label} style={{ display: 'grid', gridTemplateColumns: cols, borderBottom: i < phaseRows.length - 1 ? '1px solid var(--border-light)' : 'none', background: i % 2 === 0 ? 'var(--bg)' : 'var(--surface)' }}>
+                        <Cell bold>{r.label}</Cell>
+                        <Cell muted align="right">{r.tasks}</Cell>
+                        <Cell bold align="right">{fmtHrs(r.hours)}</Cell>
+                        {showCost && <Cell align="right" color="#ef4444">{r.cost > 0 ? fmt$(r.cost) : '—'}</Cell>}
+                        {showRev  && <Cell align="right" color="#10b981">{r.revenue > 0 ? fmt$(r.revenue) : '—'}</Cell>}
+                      </div>
+                    ))}
+                    <div style={{ display: 'grid', gridTemplateColumns: cols, borderTop: '2px solid var(--border)', background: 'var(--surface)' }}>
+                      <Cell bold>Total</Cell>
+                      <Cell bold align="right">{phTotal.tasks}</Cell>
+                      <Cell bold align="right">{fmtHrs(phTotal.hours)}</Cell>
+                      {showCost && <Cell bold color="#ef4444" align="right">{fmt$(phTotal.cost)}</Cell>}
+                      {showRev  && <Cell bold color="#10b981" align="right">{fmt$(phTotal.revenue)}</Cell>}
                     </div>
                   </>
                 );
@@ -2486,7 +2626,7 @@ function ProjectForecast({ tasks, teamMembers, open, onToggle }) {
 
               {/* ── PROFITABILITY TAB ── */}
               {activeTab === 'profitability' && hasProfit && (() => {
-                const cols = '1fr 70px 80px 80px 80px 80px 80px';
+                const cols = '1fr 70px 75px 80px 75px 80px 90px';
                 return (
                   <>
                     <div style={{ display: 'grid', gridTemplateColumns: cols, borderBottom: '1px solid var(--border-light)' }}>
@@ -2513,31 +2653,28 @@ function ProjectForecast({ tasks, teamMembers, open, onToggle }) {
                           <Cell align="right" color="#ef4444">{r.costRate > 0 ? fmt$(cost) : '—'}</Cell>
                           <Cell bold align="right" color={profit >= 0 ? '#10b981' : '#ef4444'}>
                             {(r.billRate > 0 || r.costRate > 0) ? fmt$(profit) : '—'}
-                            {m != null && <span style={{ fontSize: 10, marginLeft: 4, color: marginColor(m), fontWeight: 600 }}>({Math.round(m)}%)</span>}
+                            {m != null && <span style={{ fontSize: 10, color: marginColor(m), fontWeight: 600 }}>({Math.round(m)}%)</span>}
                           </Cell>
                         </div>
                       );
                     })}
-
-                    {/* Totals row */}
                     <div style={{ display: 'grid', gridTemplateColumns: cols, borderTop: '2px solid var(--border)', background: 'var(--surface)' }}>
                       <Cell bold>Total</Cell>
                       <Cell bold align="right">{fmtHrs(totalHours)}</Cell>
-                      <div />
-                      <Cell bold color="#10b981" align="right">{fmt$(totalRevenue)}</Cell>
-                      <div />
-                      <Cell bold color="#ef4444" align="right">{fmt$(totalCost)}</Cell>
+                      <div /><Cell bold color="#10b981" align="right">{fmt$(totalRevenue)}</Cell>
+                      <div /><Cell bold color="#ef4444" align="right">{fmt$(totalCost)}</Cell>
                       <Cell bold color={totalProfit >= 0 ? '#10b981' : '#ef4444'} align="right">{fmt$(totalProfit)}</Cell>
                     </div>
 
-                    {/* P&L summary bar */}
+                    {/* P&L summary */}
                     <div style={{ padding: '14px 18px', borderTop: '1px solid var(--border-light)', background: 'var(--bg)', display: 'flex', gap: 24, flexWrap: 'wrap', alignItems: 'center' }}>
                       {[
-                        { label: 'Revenue',  value: fmt$(totalRevenue), color: '#10b981' },
-                        { label: 'Cost',     value: fmt$(totalCost),    color: '#ef4444' },
-                        { label: 'Profit',   value: fmt$(totalProfit),  color: totalProfit >= 0 ? '#10b981' : '#ef4444' },
+                        { label: 'Revenue',  value: fmt$(totalRevenue),  color: '#10b981' },
+                        { label: 'Cost',     value: fmt$(totalCost),     color: '#ef4444' },
+                        { label: 'Profit',   value: fmt$(totalProfit),   color: totalProfit >= 0 ? '#10b981' : '#ef4444' },
                         { label: 'Margin',   value: margin != null ? `${Math.round(margin)}%` : '—', color: marginColor(margin) },
-                      ].map(stat => (
+                        budget > 0 ? { label: 'vs Budget', value: budgetVar >= 0 ? `${fmt$(budgetVar)} under` : `${fmt$(-budgetVar)} OVER`, color: budgetColor(budgetPct) } : null,
+                      ].filter(Boolean).map(stat => (
                         <div key={stat.label}>
                           <div style={{ fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--text-faint)', marginBottom: 2 }}>{stat.label}</div>
                           <div style={{ fontSize: 18, fontWeight: 800, color: stat.color }}>{stat.value}</div>
@@ -2548,7 +2685,6 @@ function ProjectForecast({ tasks, teamMembers, open, onToggle }) {
                 );
               })()}
 
-              {/* Unestimated tasks note */}
               {unestimated > 0 && (
                 <div style={{ padding: '9px 18px', fontSize: 12, color: 'var(--text-muted)', borderTop: '1px solid var(--border-light)', background: 'var(--bg)' }}>
                   ⚠️ {unestimated} task{unestimated !== 1 ? 's' : ''} {unestimated !== 1 ? 'have' : 'has'} no hours estimate and {unestimated !== 1 ? 'are' : 'is'} excluded from totals.
