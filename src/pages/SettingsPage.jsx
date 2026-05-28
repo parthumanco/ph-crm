@@ -53,9 +53,10 @@ export default function SettingsPage({ icp, onIcpSaved, teamMembers = [], onTeam
   const [memberDraft, setMemberDraft]         = useState(teamMembers);
   const [memberSaving, setMemberSaving]       = useState(false);
   const [memberSaved, setMemberSaved]         = useState(false);
-  const [newMemberName, setNewMemberName]     = useState('');
-  const [newMemberRole, setNewMemberRole]     = useState('');
-  const [newMemberRate, setNewMemberRate]     = useState('');
+  const [newMemberName, setNewMemberName]         = useState('');
+  const [newMemberRole, setNewMemberRole]         = useState('');
+  const [newMemberRate, setNewMemberRate]         = useState('');
+  const [newMemberCostRate, setNewMemberCostRate] = useState('');
 
   // Keep draft in sync if parent reloads
   useEffect(() => { setMemberDraft(teamMembers); }, [teamMembers]);
@@ -67,6 +68,7 @@ export default function SettingsPage({ icp, onIcpSaved, teamMembers = [], onTeam
         name: m.name.trim(),
         role: m.role?.trim() || '',
         hourlyRate: parseFloat(m.hourlyRate) || 0,
+        costRate: parseFloat(m.costRate) || 0,
       })).filter(m => m.name);
       await saveTeamMembers(cleaned);
       onTeamMembersSaved?.(cleaned);
@@ -85,10 +87,12 @@ export default function SettingsPage({ icp, onIcpSaved, teamMembers = [], onTeam
       name: newMemberName.trim(),
       role: newMemberRole.trim(),
       hourlyRate: parseFloat(newMemberRate) || 0,
+      costRate: parseFloat(newMemberCostRate) || 0,
     }]);
     setNewMemberName('');
     setNewMemberRole('');
     setNewMemberRate('');
+    setNewMemberCostRate('');
   };
 
   const handleRemoveMember = (idx) => {
@@ -225,82 +229,38 @@ export default function SettingsPage({ icp, onIcpSaved, teamMembers = [], onTeam
           </div>
 
           {/* Column headers */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 100px 36px', gap: 8, marginBottom: 6, padding: '0 4px' }}>
-            {['Name', 'Role / Title', '$/hr', ''].map(h => (
-              <div key={h} style={{ fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--text-faint)' }}>{h}</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 88px 88px 36px', gap: 8, marginBottom: 6, padding: '0 4px' }}>
+            {[
+              { label: 'Name', hint: null },
+              { label: 'Role / Title', hint: null },
+              { label: 'Bill $/hr', hint: 'What you charge the client' },
+              { label: 'Cost $/hr', hint: 'Your fully-loaded internal cost (salary + overhead)' },
+              { label: '', hint: null },
+            ].map(({ label, hint }) => (
+              <div key={label} title={hint || undefined} style={{ fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--text-faint)', cursor: hint ? 'help' : 'default' }}>{label}</div>
             ))}
           </div>
 
           {/* Existing members */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 14 }}>
             {memberDraft.map((m, i) => (
-              <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 100px 36px', gap: 8, alignItems: 'center' }}>
-                <input
-                  type="text"
-                  value={m.name}
-                  onChange={e => setMemberDraft(prev => prev.map((x, j) => j === i ? { ...x, name: e.target.value } : x))}
-                  style={{ fontSize: 13, padding: '5px 10px' }}
-                  placeholder="Name"
-                />
-                <input
-                  type="text"
-                  value={m.role || ''}
-                  onChange={e => setMemberDraft(prev => prev.map((x, j) => j === i ? { ...x, role: e.target.value } : x))}
-                  style={{ fontSize: 13, padding: '5px 10px' }}
-                  placeholder="e.g. Creative Director"
-                />
-                <input
-                  type="number"
-                  min="0"
-                  step="5"
-                  value={m.hourlyRate || ''}
-                  onChange={e => setMemberDraft(prev => prev.map((x, j) => j === i ? { ...x, hourlyRate: e.target.value } : x))}
-                  style={{ fontSize: 13, padding: '5px 10px' }}
-                  placeholder="0"
-                />
-                <button
-                  onClick={() => handleRemoveMember(i)}
-                  title="Remove"
-                  style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 16, padding: '4px', borderRadius: 4, lineHeight: 1 }}
-                >✕</button>
+              <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 88px 88px 36px', gap: 8, alignItems: 'center' }}>
+                <input type="text" value={m.name} onChange={e => setMemberDraft(prev => prev.map((x, j) => j === i ? { ...x, name: e.target.value } : x))} style={{ fontSize: 13, padding: '5px 10px' }} placeholder="Name" />
+                <input type="text" value={m.role || ''} onChange={e => setMemberDraft(prev => prev.map((x, j) => j === i ? { ...x, role: e.target.value } : x))} style={{ fontSize: 13, padding: '5px 10px' }} placeholder="e.g. Creative Director" />
+                <input type="number" min="0" step="5" value={m.hourlyRate || ''} onChange={e => setMemberDraft(prev => prev.map((x, j) => j === i ? { ...x, hourlyRate: e.target.value } : x))} style={{ fontSize: 13, padding: '5px 10px' }} placeholder="0" />
+                <input type="number" min="0" step="5" value={m.costRate || ''} onChange={e => setMemberDraft(prev => prev.map((x, j) => j === i ? { ...x, costRate: e.target.value } : x))} style={{ fontSize: 13, padding: '5px 10px' }} placeholder="0" />
+                <button onClick={() => handleRemoveMember(i)} title="Remove" style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 16, padding: '4px', borderRadius: 4, lineHeight: 1 }}>✕</button>
               </div>
             ))}
           </div>
 
           {/* Add new member row */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 100px 36px', gap: 8, alignItems: 'center', paddingTop: 12, borderTop: '1px solid var(--border-light)' }}>
-            <input
-              type="text"
-              value={newMemberName}
-              onChange={e => setNewMemberName(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && handleAddMember()}
-              placeholder="New name…"
-              style={{ fontSize: 13, padding: '5px 10px' }}
-            />
-            <input
-              type="text"
-              value={newMemberRole}
-              onChange={e => setNewMemberRole(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && handleAddMember()}
-              placeholder="Role (optional)"
-              style={{ fontSize: 13, padding: '5px 10px' }}
-            />
-            <input
-              type="number"
-              min="0"
-              step="5"
-              value={newMemberRate}
-              onChange={e => setNewMemberRate(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && handleAddMember()}
-              placeholder="0"
-              style={{ fontSize: 13, padding: '5px 10px' }}
-            />
-            <button
-              onClick={handleAddMember}
-              disabled={!newMemberName.trim()}
-              title="Add member"
-              style={{ background: 'var(--accent)', border: 'none', color: '#fff', cursor: newMemberName.trim() ? 'pointer' : 'default', fontSize: 18, padding: '2px', borderRadius: 4, lineHeight: 1, opacity: newMemberName.trim() ? 1 : 0.3 }}
-            >+</button>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 88px 88px 36px', gap: 8, alignItems: 'center', paddingTop: 12, borderTop: '1px solid var(--border-light)' }}>
+            <input type="text" value={newMemberName} onChange={e => setNewMemberName(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleAddMember()} placeholder="New name…" style={{ fontSize: 13, padding: '5px 10px' }} />
+            <input type="text" value={newMemberRole} onChange={e => setNewMemberRole(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleAddMember()} placeholder="Role (optional)" style={{ fontSize: 13, padding: '5px 10px' }} />
+            <input type="number" min="0" step="5" value={newMemberRate} onChange={e => setNewMemberRate(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleAddMember()} placeholder="0" style={{ fontSize: 13, padding: '5px 10px' }} />
+            <input type="number" min="0" step="5" value={newMemberCostRate} onChange={e => setNewMemberCostRate(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleAddMember()} placeholder="0" style={{ fontSize: 13, padding: '5px 10px' }} />
+            <button onClick={handleAddMember} disabled={!newMemberName.trim()} title="Add member" style={{ background: 'var(--accent)', border: 'none', color: '#fff', cursor: newMemberName.trim() ? 'pointer' : 'default', fontSize: 18, padding: '2px', borderRadius: 4, lineHeight: 1, opacity: newMemberName.trim() ? 1 : 0.3 }}>+</button>
           </div>
         </div>
 

@@ -2087,7 +2087,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
 
             {/* ── Project Estimate ──────────────────────────────────────── */}
             {tasks.length > 0 && (
-              <ProjectEstimate
+              <ProjectForecast
                 tasks={tasks}
                 teamMembers={teamMembers}
                 open={showEstimate}
@@ -2317,10 +2317,11 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
 
 // ── Project Estimate ──────────────────────────────────────────────────────────
 
-function ProjectEstimate({ tasks, teamMembers, open, onToggle }) {
+function ProjectForecast({ tasks, teamMembers, open, onToggle }) {
+  const [activeTab, setActiveTab] = useState('estimate'); // 'estimate' | 'profitability'
   const memberMap = Object.fromEntries((teamMembers || []).map(m => [m.name, m]));
 
-  // Build per-person rollup from tasks with estimated_hours
+  // Build per-person rollup
   const byPerson = {};
   let unestimated = 0;
 
@@ -2329,86 +2330,222 @@ function ProjectEstimate({ tasks, teamMembers, open, onToggle }) {
     const hrs = task.estimated_hours;
     if (!hrs) { unestimated++; return; }
     const name = task.assigned_to || '(Unassigned)';
-    if (!byPerson[name]) byPerson[name] = { name, tasks: 0, hours: 0, rate: memberMap[name]?.hourlyRate || 0 };
+    const member = memberMap[name] || {};
+    if (!byPerson[name]) byPerson[name] = {
+      name,
+      tasks:    0,
+      hours:    0,
+      billRate: parseFloat(member.hourlyRate) || 0,
+      costRate: parseFloat(member.costRate)   || 0,
+    };
     byPerson[name].tasks++;
     byPerson[name].hours += parseFloat(hrs);
   });
 
-  const rows       = Object.values(byPerson).sort((a, b) => b.hours - a.hours);
-  const totalHours = rows.reduce((s, r) => s + r.hours, 0);
-  const totalCost  = rows.reduce((s, r) => s + r.hours * r.rate, 0);
-  const hasRates   = rows.some(r => r.rate > 0);
-  const fmt$       = n => n > 0 ? `$${n.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}` : '—';
-  const fmtHrs     = n => `${parseFloat(n.toFixed(1))}h`;
+  const rows         = Object.values(byPerson).sort((a, b) => b.hours - a.hours);
+  const totalHours   = rows.reduce((s, r) => s + r.hours, 0);
+  const totalRevenue = rows.reduce((s, r) => s + r.hours * r.billRate, 0);
+  const totalCost    = rows.reduce((s, r) => s + r.hours * r.costRate, 0);
+  const totalProfit  = totalRevenue - totalCost;
+  const margin       = totalRevenue > 0 ? (totalProfit / totalRevenue) * 100 : null;
+
+  const hasBillRates = rows.some(r => r.billRate > 0);
+  const hasCostRates = rows.some(r => r.costRate > 0);
+  const hasProfit    = hasBillRates && hasCostRates;
+
+  const fmt$   = n => n >= 0 ? `$${Math.round(n).toLocaleString('en-US')}` : `-$${Math.round(Math.abs(n)).toLocaleString('en-US')}`;
+  const fmtHrs = n => `${parseFloat(n.toFixed(1))}h`;
+  const marginColor = m => m == null ? 'var(--text-faint)' : m >= 50 ? '#10b981' : m >= 25 ? '#f59e0b' : '#ef4444';
+
+  // Collapsed header summary
+  const summary = totalHours > 0
+    ? [
+        `${fmtHrs(totalHours)}`,
+        hasBillRates && totalRevenue > 0 ? `${fmt$(totalRevenue)} revenue` : null,
+        hasCostRates && totalCost > 0    ? `${fmt$(totalCost)} cost`    : null,
+        hasProfit && margin != null      ? `${Math.round(margin)}% margin` : null,
+        unestimated > 0                  ? `${unestimated} task${unestimated !== 1 ? 's' : ''} unestimated` : null,
+      ].filter(Boolean).join(' · ')
+    : 'No hours estimated — edit tasks to add estimates';
+
+  const ColHdr = ({ children, align = 'left' }) => (
+    <div style={{ padding: '7px 16px', fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--text-faint)', textAlign: align }}>
+      {children}
+    </div>
+  );
+
+  const Cell = ({ children, bold, color, align = 'left', muted }) => (
+    <div style={{ padding: '10px 16px', fontSize: 13, fontWeight: bold ? 700 : 400, color: color || (muted ? 'var(--text-muted)' : 'var(--text)'), display: 'flex', alignItems: 'center', justifyContent: align === 'right' ? 'flex-end' : 'flex-start' }}>
+      {children}
+    </div>
+  );
+
+  const Avatar = ({ name, role }) => (
+    <div style={{ padding: '10px 16px', display: 'flex', alignItems: 'center', gap: 8 }}>
+      <div style={{ width: 28, height: 28, borderRadius: '50%', background: 'var(--accent)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 800, flexShrink: 0 }}>
+        {name.charAt(0).toUpperCase()}
+      </div>
+      <div>
+        <div style={{ fontWeight: 700, fontSize: 13 }}>{name}</div>
+        {role && <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{role}</div>}
+      </div>
+    </div>
+  );
 
   return (
-    <div style={{ border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden', background: 'var(--surface)', marginBottom: 0 }}>
-      {/* Header row */}
-      <div
-        onClick={onToggle}
-        style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '13px 18px', cursor: 'pointer', userSelect: 'none' }}
-      >
+    <div style={{ border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden', background: 'var(--surface)' }}>
+
+      {/* ── Collapsed header ── */}
+      <div onClick={onToggle} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '13px 18px', cursor: 'pointer', userSelect: 'none' }}>
         <span style={{ fontSize: 16 }}>💰</span>
         <div style={{ flex: 1 }}>
-          <div style={{ fontWeight: 700, fontSize: 14 }}>Project Estimate</div>
-          <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 1 }}>
-            {totalHours > 0
-              ? <>{fmtHrs(totalHours)} estimated{hasRates && totalCost > 0 ? ` · ${fmt$(totalCost)} total` : ''}{unestimated > 0 ? ` · ${unestimated} task${unestimated !== 1 ? 's' : ''} without hours` : ''}</>
-              : `No hours estimated yet — edit tasks to add estimates`}
-          </div>
+          <div style={{ fontWeight: 700, fontSize: 14 }}>Project Forecast</div>
+          <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 1 }}>{summary}</div>
         </div>
+        {/* Quick-glance margin pill when collapsed */}
+        {!open && hasProfit && margin != null && (
+          <div style={{ fontSize: 12, fontWeight: 700, padding: '3px 10px', borderRadius: 20, background: marginColor(margin) + '18', color: marginColor(margin), border: `1px solid ${marginColor(margin)}33` }}>
+            {Math.round(margin)}% margin
+          </div>
+        )}
         <span style={{ fontSize: 12, color: 'var(--text-faint)' }}>{open ? '▲' : '▼'}</span>
       </div>
 
       {open && (
         <div style={{ borderTop: '1px solid var(--border)' }}>
+
           {rows.length === 0 ? (
             <div style={{ padding: '16px 18px', fontSize: 13, color: 'var(--text-muted)' }}>
-              Edit any task and set "Est. hrs" to start building the estimate.
+              Edit any task and set "Est. hrs" to start building the forecast.
             </div>
           ) : (
             <>
-              {/* Column headers */}
-              <div style={{ display: 'grid', gridTemplateColumns: `1fr ${hasRates ? '80px 80px 80px' : '80px'}`, gap: 0, borderBottom: '1px solid var(--border-light)' }}>
-                {['Team Member', 'Tasks', 'Hours', hasRates ? 'Rate' : null, hasRates ? 'Cost' : null].filter(Boolean).map(h => (
-                  <div key={h} style={{ padding: '7px 18px', fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--text-faint)' }}>{h}</div>
+              {/* ── Tab toggle ── */}
+              <div style={{ display: 'flex', gap: 4, padding: '12px 18px 0', borderBottom: '1px solid var(--border-light)' }}>
+                {[
+                  { id: 'estimate',      label: '📋 Estimate' },
+                  { id: 'profitability', label: '📊 Profitability', disabled: !hasProfit },
+                ].map(tab => (
+                  <button
+                    key={tab.id}
+                    onClick={() => !tab.disabled && setActiveTab(tab.id)}
+                    disabled={tab.disabled}
+                    style={{
+                      padding: '7px 16px', fontSize: 12, fontWeight: 700, borderRadius: '6px 6px 0 0',
+                      border: '1px solid var(--border-light)', borderBottom: activeTab === tab.id ? '1px solid var(--surface)' : '1px solid var(--border-light)',
+                      background: activeTab === tab.id ? 'var(--surface)' : 'var(--bg)',
+                      color: tab.disabled ? 'var(--text-faint)' : activeTab === tab.id ? 'var(--accent)' : 'var(--text-muted)',
+                      cursor: tab.disabled ? 'default' : 'pointer',
+                      marginBottom: -1,
+                    }}
+                    title={tab.disabled ? 'Set billing & cost rates in ICP Settings → Team & Billing Rates to enable' : undefined}
+                  >
+                    {tab.label}
+                  </button>
                 ))}
               </div>
 
-              {/* Per-person rows */}
-              {rows.map((r, i) => (
-                <div
-                  key={r.name}
-                  style={{ display: 'grid', gridTemplateColumns: `1fr ${hasRates ? '80px 80px 80px' : '80px'}`, gap: 0, borderBottom: i < rows.length - 1 ? '1px solid var(--border-light)' : 'none', background: i % 2 === 0 ? 'var(--bg)' : 'var(--surface)' }}
-                >
-                  <div style={{ padding: '10px 18px', display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <div style={{ width: 28, height: 28, borderRadius: '50%', background: 'var(--accent)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 800, flexShrink: 0 }}>
-                      {r.name.charAt(0).toUpperCase()}
+              {/* ── ESTIMATE TAB ── */}
+              {activeTab === 'estimate' && (() => {
+                const cols = hasBillRates
+                  ? '1fr 60px 70px 80px 90px'
+                  : '1fr 60px 70px';
+                return (
+                  <>
+                    <div style={{ display: 'grid', gridTemplateColumns: cols, borderBottom: '1px solid var(--border-light)' }}>
+                      <ColHdr>Team Member</ColHdr>
+                      <ColHdr align="right">Tasks</ColHdr>
+                      <ColHdr align="right">Hours</ColHdr>
+                      {hasBillRates && <ColHdr align="right">Rate</ColHdr>}
+                      {hasBillRates && <ColHdr align="right">Revenue</ColHdr>}
                     </div>
-                    <div>
-                      <div style={{ fontWeight: 700, fontSize: 13 }}>{r.name}</div>
-                      {memberMap[r.name]?.role && <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{memberMap[r.name].role}</div>}
+                    {rows.map((r, i) => (
+                      <div key={r.name} style={{ display: 'grid', gridTemplateColumns: cols, borderBottom: i < rows.length - 1 ? '1px solid var(--border-light)' : 'none', background: i % 2 === 0 ? 'var(--bg)' : 'var(--surface)' }}>
+                        <Avatar name={r.name} role={memberMap[r.name]?.role} />
+                        <Cell muted align="right">{r.tasks}</Cell>
+                        <Cell bold align="right">{fmtHrs(r.hours)}</Cell>
+                        {hasBillRates && <Cell muted align="right">{r.billRate > 0 ? `$${r.billRate}/hr` : '—'}</Cell>}
+                        {hasBillRates && <Cell bold color={r.billRate > 0 ? '#10b981' : 'var(--text-faint)'} align="right">{r.billRate > 0 ? fmt$(r.hours * r.billRate) : '—'}</Cell>}
+                      </div>
+                    ))}
+                    <div style={{ display: 'grid', gridTemplateColumns: cols, borderTop: '2px solid var(--border)', background: 'var(--surface)' }}>
+                      <Cell bold>Total</Cell>
+                      <Cell bold align="right">{rows.reduce((s, r) => s + r.tasks, 0)}</Cell>
+                      <Cell bold align="right">{fmtHrs(totalHours)}</Cell>
+                      {hasBillRates && <div />}
+                      {hasBillRates && <Cell bold color="#10b981" align="right">{fmt$(totalRevenue)}</Cell>}
                     </div>
-                  </div>
-                  <div style={{ padding: '10px 18px', fontSize: 13, color: 'var(--text-muted)', display: 'flex', alignItems: 'center' }}>{r.tasks}</div>
-                  <div style={{ padding: '10px 18px', fontSize: 13, fontWeight: 600, display: 'flex', alignItems: 'center' }}>{fmtHrs(r.hours)}</div>
-                  {hasRates && <div style={{ padding: '10px 18px', fontSize: 12, color: 'var(--text-muted)', display: 'flex', alignItems: 'center' }}>{r.rate > 0 ? `$${r.rate}/hr` : '—'}</div>}
-                  {hasRates && <div style={{ padding: '10px 18px', fontSize: 13, fontWeight: 700, color: r.rate > 0 ? '#10b981' : 'var(--text-faint)', display: 'flex', alignItems: 'center' }}>{fmt$(r.hours * r.rate)}</div>}
-                </div>
-              ))}
+                  </>
+                );
+              })()}
 
-              {/* Totals footer */}
-              <div style={{ display: 'grid', gridTemplateColumns: `1fr ${hasRates ? '80px 80px 80px' : '80px'}`, borderTop: '2px solid var(--border)', background: 'var(--surface)' }}>
-                <div style={{ padding: '11px 18px', fontWeight: 800, fontSize: 13 }}>Total</div>
-                <div style={{ padding: '11px 18px', fontSize: 13, fontWeight: 700 }}>{rows.reduce((s, r) => s + r.tasks, 0)}</div>
-                <div style={{ padding: '11px 18px', fontSize: 13, fontWeight: 800 }}>{fmtHrs(totalHours)}</div>
-                {hasRates && <div style={{ padding: '11px 18px' }} />}
-                {hasRates && <div style={{ padding: '11px 18px', fontSize: 14, fontWeight: 800, color: '#10b981' }}>{fmt$(totalCost)}</div>}
-              </div>
+              {/* ── PROFITABILITY TAB ── */}
+              {activeTab === 'profitability' && hasProfit && (() => {
+                const cols = '1fr 70px 80px 80px 80px 80px 80px';
+                return (
+                  <>
+                    <div style={{ display: 'grid', gridTemplateColumns: cols, borderBottom: '1px solid var(--border-light)' }}>
+                      <ColHdr>Team Member</ColHdr>
+                      <ColHdr align="right">Hours</ColHdr>
+                      <ColHdr align="right">Bill Rate</ColHdr>
+                      <ColHdr align="right">Revenue</ColHdr>
+                      <ColHdr align="right">Cost Rate</ColHdr>
+                      <ColHdr align="right">Cost</ColHdr>
+                      <ColHdr align="right">Profit</ColHdr>
+                    </div>
+                    {rows.map((r, i) => {
+                      const rev    = r.hours * r.billRate;
+                      const cost   = r.hours * r.costRate;
+                      const profit = rev - cost;
+                      const m      = rev > 0 ? (profit / rev) * 100 : null;
+                      return (
+                        <div key={r.name} style={{ display: 'grid', gridTemplateColumns: cols, borderBottom: i < rows.length - 1 ? '1px solid var(--border-light)' : 'none', background: i % 2 === 0 ? 'var(--bg)' : 'var(--surface)' }}>
+                          <Avatar name={r.name} role={memberMap[r.name]?.role} />
+                          <Cell bold align="right">{fmtHrs(r.hours)}</Cell>
+                          <Cell muted align="right">{r.billRate > 0 ? `$${r.billRate}` : '—'}</Cell>
+                          <Cell align="right" color="#10b981">{r.billRate > 0 ? fmt$(rev) : '—'}</Cell>
+                          <Cell muted align="right">{r.costRate > 0 ? `$${r.costRate}` : '—'}</Cell>
+                          <Cell align="right" color="#ef4444">{r.costRate > 0 ? fmt$(cost) : '—'}</Cell>
+                          <Cell bold align="right" color={profit >= 0 ? '#10b981' : '#ef4444'}>
+                            {(r.billRate > 0 || r.costRate > 0) ? fmt$(profit) : '—'}
+                            {m != null && <span style={{ fontSize: 10, marginLeft: 4, color: marginColor(m), fontWeight: 600 }}>({Math.round(m)}%)</span>}
+                          </Cell>
+                        </div>
+                      );
+                    })}
 
-              {/* Note about unestimated tasks */}
+                    {/* Totals row */}
+                    <div style={{ display: 'grid', gridTemplateColumns: cols, borderTop: '2px solid var(--border)', background: 'var(--surface)' }}>
+                      <Cell bold>Total</Cell>
+                      <Cell bold align="right">{fmtHrs(totalHours)}</Cell>
+                      <div />
+                      <Cell bold color="#10b981" align="right">{fmt$(totalRevenue)}</Cell>
+                      <div />
+                      <Cell bold color="#ef4444" align="right">{fmt$(totalCost)}</Cell>
+                      <Cell bold color={totalProfit >= 0 ? '#10b981' : '#ef4444'} align="right">{fmt$(totalProfit)}</Cell>
+                    </div>
+
+                    {/* P&L summary bar */}
+                    <div style={{ padding: '14px 18px', borderTop: '1px solid var(--border-light)', background: 'var(--bg)', display: 'flex', gap: 24, flexWrap: 'wrap', alignItems: 'center' }}>
+                      {[
+                        { label: 'Revenue',  value: fmt$(totalRevenue), color: '#10b981' },
+                        { label: 'Cost',     value: fmt$(totalCost),    color: '#ef4444' },
+                        { label: 'Profit',   value: fmt$(totalProfit),  color: totalProfit >= 0 ? '#10b981' : '#ef4444' },
+                        { label: 'Margin',   value: margin != null ? `${Math.round(margin)}%` : '—', color: marginColor(margin) },
+                      ].map(stat => (
+                        <div key={stat.label}>
+                          <div style={{ fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--text-faint)', marginBottom: 2 }}>{stat.label}</div>
+                          <div style={{ fontSize: 18, fontWeight: 800, color: stat.color }}>{stat.value}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                );
+              })()}
+
+              {/* Unestimated tasks note */}
               {unestimated > 0 && (
-                <div style={{ padding: '10px 18px', fontSize: 12, color: 'var(--text-muted)', borderTop: '1px solid var(--border-light)', background: 'var(--bg)' }}>
+                <div style={{ padding: '9px 18px', fontSize: 12, color: 'var(--text-muted)', borderTop: '1px solid var(--border-light)', background: 'var(--bg)' }}>
                   ⚠️ {unestimated} task{unestimated !== 1 ? 's' : ''} {unestimated !== 1 ? 'have' : 'has'} no hours estimate and {unestimated !== 1 ? 'are' : 'is'} excluded from totals.
                 </div>
               )}

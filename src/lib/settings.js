@@ -114,9 +114,9 @@ export async function saveTeamEmails(emails) {
 // ── Team members & billing rates ─────────────────────────────────────────────
 
 export const DEFAULT_TEAM_MEMBERS = [
-  { name: 'Mike', role: '', hourlyRate: 0 },
-  { name: 'Pete', role: '', hourlyRate: 0 },
-  { name: 'Jill', role: '', hourlyRate: 0 },
+  { name: 'Mike', role: '', hourlyRate: 0, costRate: 0 },
+  { name: 'Pete', role: '', hourlyRate: 0, costRate: 0 },
+  { name: 'Jill', role: '', hourlyRate: 0, costRate: 0 },
 ];
 
 export async function loadTeamMembers() {
