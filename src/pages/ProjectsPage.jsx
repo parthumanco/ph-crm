@@ -409,11 +409,9 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
   const [editTaskDraft, setEditTaskDraft]         = useState({});   // { title, due_date, assigned_to, estimated_hours }
   const editTaskDraftRef                          = useRef({});     // always-current mirror of editTaskDraft (avoids stale closures)
   const setEditDraft = (updater) => {
-    setEditTaskDraft(prev => {
-      const next = typeof updater === 'function' ? updater(prev) : updater;
-      editTaskDraftRef.current = next;
-      return next;
-    });
+    // Update ref synchronously so save callbacks always read the latest value
+    editTaskDraftRef.current = typeof updater === 'function' ? updater(editTaskDraftRef.current) : updater;
+    setEditTaskDraft(editTaskDraftRef.current);
   };
   const [showEstimate, setShowEstimate]           = useState(false);
   const [proposalPanel, setProposalPanel]         = useState(null); // { task } | null
@@ -1190,6 +1188,11 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                             {isOverdue ? '⚠ ' : ''}{fmtDate(task.due_date)}
                           </span>
                         )}
+                        {task.estimated_hours != null && task.estimated_hours !== '' && (
+                          <span style={{ fontSize: 11, fontWeight: 600, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 4, padding: '2px 7px', flexShrink: 0, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                            {task.estimated_hours}h
+                          </span>
+                        )}
                         <button onClick={() => startEditTask(task)} title="Edit" style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 13, padding: '2px 4px', flexShrink: 0 }}>✏️</button>
                         <button
                           onClick={e => { e.stopPropagation(); triggerFileUpload(task.project_id, null, null, task.id); }}
@@ -1839,12 +1842,9 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                                     </div>
                                   )}
                                 </div>
-                                {task.assigned_to && (
-                                  <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600, flexShrink: 0 }}>{task.assigned_to}</span>
-                                )}
-                                {task.estimated_hours != null && task.estimated_hours !== '' && (
-                                  <span style={{ fontSize: 10, color: 'var(--text-faint)', fontWeight: 600, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 3, padding: '1px 6px', flexShrink: 0 }}>
-                                    {task.estimated_hours}h
+                                {(task.assigned_to || (task.estimated_hours != null && task.estimated_hours !== '')) && (
+                                  <span style={{ fontSize: 11, fontWeight: 600, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 4, padding: '2px 7px', flexShrink: 0, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                                    {[task.assigned_to, task.estimated_hours != null && task.estimated_hours !== '' ? `${task.estimated_hours}h` : null].filter(Boolean).join(' · ')}
                                   </span>
                                 )}
                                 {task.due_date && (
