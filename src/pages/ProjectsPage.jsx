@@ -407,6 +407,14 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
   const [linkName, setLinkName]                   = useState('');
   const [editingTask, setEditingTask]             = useState(null); // task id
   const [editTaskDraft, setEditTaskDraft]         = useState({});   // { title, due_date, assigned_to, estimated_hours }
+  const editTaskDraftRef                          = useRef({});     // always-current mirror of editTaskDraft (avoids stale closures)
+  const setEditDraft = (updater) => {
+    setEditTaskDraft(prev => {
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      editTaskDraftRef.current = next;
+      return next;
+    });
+  };
   const [showEstimate, setShowEstimate]           = useState(false);
   const [proposalPanel, setProposalPanel]         = useState(null); // { task } | null
 
@@ -778,7 +786,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
 
   const startEditTask = (task) => {
     setEditingTask(task.id);
-    setEditTaskDraft({ title: task.title, due_date: task.due_date || '', assigned_to: task.assigned_to || '', estimated_hours: task.estimated_hours ?? '' });
+    setEditDraft({ title: task.title, due_date: task.due_date || '', assigned_to: task.assigned_to || '', estimated_hours: task.estimated_hours ?? '' });
   };
 
   // Extend milestone (and project) date bounds if a task date falls outside them.
@@ -805,7 +813,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
   };
 
   const handleSaveTaskEdit = async (task, overrides = {}) => {
-    const draft = { ...editTaskDraft, ...overrides };
+    const draft = { ...editTaskDraftRef.current, ...overrides };
     if (!draft.title?.trim()) { setEditingTask(null); return; }
     const updated = {
       ...task,
@@ -834,7 +842,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
   };
 
   const handleSaveAssignedTaskEdit = async (task, overrides = {}) => {
-    const draft = { ...editTaskDraft, ...overrides };
+    const draft = { ...editTaskDraftRef.current, ...overrides };
     if (!draft.title?.trim()) { setEditingTask(null); return; }
     const updated = { ...task, title: draft.title.trim(), due_date: draft.due_date || null, assigned_to: draft.assigned_to || '', estimated_hours: draft.estimated_hours !== '' && draft.estimated_hours != null ? parseFloat(draft.estimated_hours) : null };
     await upsertProjectTask(updated);
@@ -1123,7 +1131,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                           type="text"
                           autoFocus
                           value={editTaskDraft.title}
-                          onChange={e => setEditTaskDraft(d => ({ ...d, title: e.target.value }))}
+                          onChange={e => setEditDraft(d => ({ ...d, title: e.target.value }))}
                           onKeyDown={e => { if (e.key === 'Enter') { handleSaveAssignedTaskEdit(task); setEditingTask(null); } if (e.key === 'Escape') setEditingTask(null); }}
                           style={{ flex: '1 1 180px', fontSize: 13, padding: '5px 10px', fontWeight: 600 }}
                           placeholder="Task title"
@@ -1131,13 +1139,13 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                         <div>
                           <Lbl>Due date</Lbl>
                           <input type="date" value={editTaskDraft.due_date} onChange={e => {
-                            setEditTaskDraft(d => ({ ...d, due_date: e.target.value }));
+                            setEditDraft(d => ({ ...d, due_date: e.target.value }));
                           }} style={{ fontSize: 12, padding: '4px 8px', width: 'auto' }} />
                         </div>
                         <div>
                           <Lbl>Assigned to</Lbl>
                           <select value={editTaskDraft.assigned_to} onChange={e => {
-                            setEditTaskDraft(d => ({ ...d, assigned_to: e.target.value }));
+                            setEditDraft(d => ({ ...d, assigned_to: e.target.value }));
                           }} style={{ fontSize: 12, padding: '4px 8px', width: 'auto' }}>
                             <option value="">—</option>
                             {owners.map(o => <option key={o} value={o}>{o}</option>)}
@@ -1764,7 +1772,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                                   type="text"
                                   autoFocus
                                   value={editTaskDraft.title}
-                                  onChange={e => setEditTaskDraft(d => ({ ...d, title: e.target.value }))}
+                                  onChange={e => setEditDraft(d => ({ ...d, title: e.target.value }))}
                                   onKeyDown={e => { if (e.key === 'Enter') { handleSaveTaskEdit(task); setEditingTask(null); } if (e.key === 'Escape') setEditingTask(null); }}
                                   style={{ flex: '1 1 180px', fontSize: 13, padding: '5px 10px', fontWeight: 600 }}
                                   placeholder="Task title"
@@ -1774,7 +1782,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                                   <input
                                     type="date"
                                     value={editTaskDraft.due_date}
-                                    onChange={e => setEditTaskDraft(d => ({ ...d, due_date: e.target.value }))}
+                                    onChange={e => setEditDraft(d => ({ ...d, due_date: e.target.value }))}
                                     style={{ fontSize: 12, padding: '4px 8px', width: 'auto' }}
                                   />
                                 </div>
@@ -1782,7 +1790,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                                   <Lbl>Assigned to</Lbl>
                                   <select
                                     value={editTaskDraft.assigned_to}
-                                    onChange={e => setEditTaskDraft(d => ({ ...d, assigned_to: e.target.value }))}
+                                    onChange={e => setEditDraft(d => ({ ...d, assigned_to: e.target.value }))}
                                     style={{ fontSize: 12, padding: '4px 8px', width: 'auto' }}
                                   >
                                     <option value="">—</option>
@@ -1796,7 +1804,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                                     min="0"
                                     step="0.5"
                                     value={editTaskDraft.estimated_hours}
-                                    onChange={e => setEditTaskDraft(d => ({ ...d, estimated_hours: e.target.value }))}
+                                    onChange={e => setEditDraft(d => ({ ...d, estimated_hours: e.target.value }))}
                                     placeholder="—"
                                     style={{ fontSize: 12, padding: '4px 8px', width: 70 }}
                                   />
