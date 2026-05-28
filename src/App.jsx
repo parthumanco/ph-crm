@@ -20,7 +20,7 @@ const NAV = [
   { id: 'signals',  label: 'Rate & Review',      icon: '🌡️' },
   { id: 'chat',     label: 'Little Stevie',      icon: '💬' },
   { divider: true },
-  { id: 'settings', label: 'ICP Settings',       icon: '⚙️'  },
+  { id: 'settings', label: 'Settings',            icon: '⚙️'  },
   { id: 'support',  label: 'Support',            icon: '🎧' },
 ];
 
@@ -33,7 +33,7 @@ const PAGE_TITLES = {
   discover: { title: 'Find New Companies',  sub: 'Find new companies to add to your watch list' },
   report:   { title: 'Weekly Outreach',      sub: 'AI briefing & draft outreach' },
   chat:     { title: 'Little Stevie',       sub: 'Ask anything about your pipeline' },
-  settings: { title: 'ICP Settings',        sub: 'Ideal customer profile & outreach voice' },
+  settings: { title: 'Settings',             sub: 'ICP, team, billing rates & notifications' },
 };
 
 // Keeps a page mounted but invisible so background work (scans, report generation) isn't interrupted.
