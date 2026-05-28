@@ -1120,6 +1120,8 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                         style={{ display: 'flex', flexWrap: 'wrap', gap: 8, padding: '10px 16px', alignItems: 'center', background: 'var(--bg)', borderLeft: '3px solid var(--accent)' }}
                         onBlur={e => {
                           if (!e.currentTarget.contains(e.relatedTarget)) {
+                            const numInput = e.currentTarget.querySelector('input[type="number"]');
+                            if (numInput) editTaskDraftRef.current = { ...editTaskDraftRef.current, estimated_hours: numInput.value };
                             handleSaveAssignedTaskEdit(task);
                             setEditingTask(null);
                           }
@@ -1766,6 +1768,9 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                                 style={{ display: 'flex', flexWrap: 'wrap', gap: 8, padding: '10px 16px 10px 48px', alignItems: 'center', background: 'var(--bg)', borderLeft: '3px solid var(--accent)' }}
                                 onBlur={e => {
                                   if (!e.currentTarget.contains(e.relatedTarget)) {
+                                    // Read number input directly from the DOM — avoids any React batching / stale-closure issues
+                                    const numInput = e.currentTarget.querySelector('input[type="number"]');
+                                    if (numInput) editTaskDraftRef.current = { ...editTaskDraftRef.current, estimated_hours: numInput.value };
                                     handleSaveTaskEdit(task);
                                     setEditingTask(null);
                                   }
