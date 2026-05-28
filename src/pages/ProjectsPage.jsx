@@ -1117,7 +1117,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                           value={editTaskDraft.title}
                           onChange={e => setEditTaskDraft(d => ({ ...d, title: e.target.value }))}
                           onKeyDown={e => { if (e.key === 'Enter') { handleSaveAssignedTaskEdit(task); setEditingTask(null); } if (e.key === 'Escape') setEditingTask(null); }}
-                          onBlur={() => handleSaveAssignedTaskEdit(task)}
+                          onBlur={() => { handleSaveAssignedTaskEdit(task); setEditingTask(null); }}
                           style={{ flex: '1 1 180px', fontSize: 13, padding: '5px 10px', fontWeight: 600 }}
                           placeholder="Task title"
                         />
@@ -1127,6 +1127,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                             const val = e.target.value;
                             setEditTaskDraft(d => ({ ...d, due_date: val }));
                             handleSaveAssignedTaskEdit(task, { due_date: val });
+                            setEditingTask(null);
                           }} style={{ fontSize: 12, padding: '4px 8px', width: 'auto' }} />
                         </div>
                         <div>
@@ -1135,13 +1136,11 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                             const val = e.target.value;
                             setEditTaskDraft(d => ({ ...d, assigned_to: val }));
                             handleSaveAssignedTaskEdit(task, { assigned_to: val });
+                            setEditingTask(null);
                           }} style={{ fontSize: 12, padding: '4px 8px', width: 'auto' }}>
                             <option value="">—</option>
                             {owners.map(o => <option key={o} value={o}>{o}</option>)}
                           </select>
-                        </div>
-                        <div style={{ marginLeft: 'auto' }}>
-                          <button onClick={() => setEditingTask(null)} style={{ padding: '5px 10px', borderRadius: 5, border: '1px solid var(--border)', background: 'transparent', cursor: 'pointer', fontSize: 12 }}>Done</button>
                         </div>
                       </div>
                     ) : (
@@ -1758,7 +1757,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                                   value={editTaskDraft.title}
                                   onChange={e => setEditTaskDraft(d => ({ ...d, title: e.target.value }))}
                                   onKeyDown={e => { if (e.key === 'Enter') { handleSaveTaskEdit(task); setEditingTask(null); } if (e.key === 'Escape') setEditingTask(null); }}
-                                  onBlur={() => handleSaveTaskEdit(task)}
+                                  onBlur={() => { handleSaveTaskEdit(task); setEditingTask(null); }}
                                   style={{ flex: '1 1 180px', fontSize: 13, padding: '5px 10px', fontWeight: 600 }}
                                   placeholder="Task title"
                                 />
@@ -1771,6 +1770,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                                       const val = e.target.value;
                                       setEditTaskDraft(d => ({ ...d, due_date: val }));
                                       handleSaveTaskEdit(task, { due_date: val });
+                                      setEditingTask(null);
                                     }}
                                     style={{ fontSize: 12, padding: '4px 8px', width: 'auto' }}
                                   />
@@ -1783,6 +1783,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                                       const val = e.target.value;
                                       setEditTaskDraft(d => ({ ...d, assigned_to: val }));
                                       handleSaveTaskEdit(task, { assigned_to: val });
+                                      setEditingTask(null);
                                     }}
                                     style={{ fontSize: 12, padding: '4px 8px', width: 'auto' }}
                                   >
@@ -1800,14 +1801,15 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                                     onChange={e => {
                                       const val = e.target.value;
                                       setEditTaskDraft(d => ({ ...d, estimated_hours: val }));
+                                    }}
+                                    onBlur={e => {
+                                      const val = e.target.value;
                                       handleSaveTaskEdit(task, { estimated_hours: val });
+                                      setEditingTask(null);
                                     }}
                                     placeholder="—"
                                     style={{ fontSize: 12, padding: '4px 8px', width: 70 }}
                                   />
-                                </div>
-                                <div style={{ marginLeft: 'auto' }}>
-                                  <button onClick={() => setEditingTask(null)} style={{ padding: '5px 10px', borderRadius: 5, border: '1px solid var(--border)', background: 'transparent', cursor: 'pointer', fontSize: 12 }}>Done</button>
                                 </div>
                               </div>
                             ) : (
