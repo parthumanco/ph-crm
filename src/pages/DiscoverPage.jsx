@@ -327,7 +327,7 @@ export default function DiscoverPage({ icp, refreshKey = 0 }) {
           </button>
 
           <p style={{ margin: 0, fontSize: 12, color: 'var(--text-muted)', textAlign: 'center' }}>
-            Claude will suggest up to 50 companies based on your ICP and search criteria
+            Claude will suggest up to 25 companies based on your ICP and search criteria
           </p>
         </form>
       </div>

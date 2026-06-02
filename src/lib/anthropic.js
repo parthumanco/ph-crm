@@ -738,7 +738,7 @@ Each object schema:
 {"name":"str","website":"https://... or null","hq":"City, ST","description":"1 sentence about what they do","whyItFits":"1 sentence on why they match the criteria","fundingStage":"Seed|Series A|Series B|Series C|Series D+|Unknown","employeeCount":integer_or_null}
 
 Rules:
-- Return up to 50 companies (or fewer if genuinely hard to find strong matches).
+- Return up to 25 high-quality matches (fewer if genuinely hard to find strong fits).
 - Only include real, verifiable companies.
 - website: only include if you are confident it is correct. Set to null if unsure.
 - employeeCount: your best estimate as an integer, or null if unknown.
@@ -750,12 +750,12 @@ Rules:
 SEARCH CRITERIA:
 ${criteria}
 
-Suggest up to 50 real companies that match both the ICP above and the search criteria. Return ONLY the JSON array.`;
+Suggest up to 25 real companies that match both the ICP above and the search criteria. Return ONLY the JSON array.`;
 
   const data = await withTimeout(
     callClaude({
       model: 'claude-sonnet-4-6',
-      max_tokens: 16000,
+      max_tokens: 7000,
       system,
       messages: [{ role: 'user', content: userMsg }],
     }),
