@@ -134,6 +134,7 @@ export default function DealsPage({ refreshKey = 0 }) {
   const [wonAnim,  setWonAnim]        = useState(null); // null | {dealId, phase:'plant'|'celebrate'}
   const [showLostPanel, setShowLostPanel] = useState(false);
   const [wonToast, setWonToast]         = useState(null); // project name string
+  const [wonError, setWonError]         = useState(null); // project creation error
   const dragDealId = useRef(null);
 
   const load = useCallback(async () => {
@@ -200,20 +201,21 @@ export default function DealsPage({ refreshKey = 0 }) {
   // ── Drag and drop ──────────────────────────────────────────────────────────
   // ── Auto-create project when a deal is won ────────────────────────────────
   const createProjectFromDeal = async (deal) => {
+    setWonError(null);
     try {
       const today = new Date().toISOString().slice(0, 10);
       const proj = await upsertProject({
-        name:         deal.company_name || 'New Project',
-        client_name:  deal.company_name || '',
-        contact_name: deal.contact_name || '',
-        status:       'active',
-        start_date:   today,
-        description:  deal.description || '',
+        name:        deal.company_name || 'New Project',
+        client_name: deal.company_name || '',
+        status:      'active',
+        start_date:  today,
       });
       setWonToast(proj.name || deal.company_name);
-      setTimeout(() => setWonToast(null), 4000);
+      setTimeout(() => setWonToast(null), 5000);
     } catch (e) {
       console.error('Auto-create project failed:', e.message);
+      setWonError(e.message);
+      setTimeout(() => setWonError(null), 6000);
     }
   };
 
@@ -323,7 +325,7 @@ export default function DealsPage({ refreshKey = 0 }) {
 
   return (
     <>
-      {/* Won → Project toast */}
+      {/* Won → Project created toast */}
       {wonToast && (
         <div style={{
           position: 'fixed', bottom: 28, left: '50%', transform: 'translateX(-50%)',
@@ -333,7 +335,21 @@ export default function DealsPage({ refreshKey = 0 }) {
           fontSize: 14, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 10,
           animation: 'fadeInUp .3s ease',
         }}>
-          🗂️ Project created for <span style={{ fontWeight: 800 }}>{wonToast}</span>
+          🗂️ Project created for <span style={{ fontWeight: 800 }}>{wonToast}</span> — switch to Projects to see it
+        </div>
+      )}
+
+      {/* Won → Project creation error toast */}
+      {wonError && (
+        <div style={{
+          position: 'fixed', bottom: 28, left: '50%', transform: 'translateX(-50%)',
+          zIndex: 999, background: '#dc2626', color: '#fff',
+          padding: '12px 22px', borderRadius: 10,
+          boxShadow: '0 4px 20px rgba(220,38,38,0.4)',
+          fontSize: 14, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 10,
+          animation: 'fadeInUp .3s ease',
+        }}>
+          ⚠️ Project creation failed: {wonError}
         </div>
       )}
 
