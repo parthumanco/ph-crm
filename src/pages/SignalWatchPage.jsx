@@ -1507,6 +1507,14 @@ export default function SignalWatchPage({ onNavigate, icp, refreshKey = 0 }) {
                   </div>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', whiteSpace: 'nowrap' }}>Entry Point</span>
+                  <div style={{ display: 'flex', gap: 4 }}>
+                    {[['all','All'],['Sprint','Sprint'],['Foundation','Foundation'],['Growth','Growth'],['Acceleration','Accel.'],['Enterprise','Enterprise']].map(([v,l]) => (
+                      <button key={v} className={`filter-btn${filters.engagement === v ? ' active' : ''}`} style={{ padding: '4px 9px', fontSize: 11 }} onClick={() => setFilter('engagement', v)}>{l}</button>
+                    ))}
+                  </div>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                   <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', whiteSpace: 'nowrap' }}>SIG Score</span>
                   <div style={{ display: 'flex', gap: 4 }}>
                     {[['all','All'],['7','7+'],['5','5+'],['3','3+']].map(([v,l]) => (
@@ -1551,21 +1559,6 @@ export default function SignalWatchPage({ onNavigate, icp, refreshKey = 0 }) {
                     <option value="Hospitality & Food">Hospitality &amp; Food</option>
                     <option value="Other Services">Other Services</option>
                     <option value="Government">Government</option>
-                  </select>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', whiteSpace: 'nowrap' }}>Entry Point</span>
-                  <select
-                    value={filters.engagement}
-                    onChange={e => setFilter('engagement', e.target.value)}
-                    style={{ fontSize: 12, padding: '4px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface)', color: filters.engagement !== 'all' ? 'var(--accent)' : 'var(--text)', fontWeight: filters.engagement !== 'all' ? 700 : 400, cursor: 'pointer' }}
-                  >
-                    <option value="all">All Entry Points</option>
-                    <option value="Sprint">Sprint</option>
-                    <option value="Foundation">Foundation</option>
-                    <option value="Growth">Growth</option>
-                    <option value="Acceleration">Acceleration</option>
-                    <option value="Enterprise">Enterprise</option>
                   </select>
                 </div>
                 <input
