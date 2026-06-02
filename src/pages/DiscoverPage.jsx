@@ -380,6 +380,18 @@ export default function DiscoverPage({ icp, refreshKey = 0 }) {
             )}
 
             <button
+              onClick={() => { setResults([]); setSelected(new Set()); setSuccessMsg(''); setError(''); }}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 6,
+                padding: '8px 18px', borderRadius: 8, border: '1px solid var(--border)',
+                background: 'var(--surface)', color: 'var(--text-muted)',
+                fontWeight: 600, fontSize: 14, cursor: 'pointer',
+              }}
+            >
+              ↩ New Search
+            </button>
+
+            <button
               onClick={handleAddSelected}
               disabled={selected.size === 0 || adding}
               style={{
