@@ -658,6 +658,16 @@ export async function syncMilestoneStatusForTask(taskId) {
   } catch { /* non-fatal */ }
 }
 
+// Called when PM sends a revision — clears rejection fields so the portal resets
+// to "awaiting approval" state. History is preserved in review_chain.
+export async function clearRejectionFields(taskId) {
+  const { error } = await supabase.from('project_tasks')
+    .update({ rejected_at: null, rejected_by: null, rejection_notes: null })
+    .eq('id', taskId);
+  if (error) throw new Error(error.message);
+  await syncMilestoneStatusForTask(taskId);
+}
+
 export async function saveRejectionResponse(taskId, response) {
   const { error } = await supabase.from('project_tasks')
     .update({ rejection_response: response })

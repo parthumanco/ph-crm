@@ -4,7 +4,7 @@ import { generateProjectSummary, generateRejectionResponse } from '../lib/anthro
 import {
   fetchProjects, fetchArchivedProjects, upsertProject, archiveProject, restoreProject, deleteProject,
   fetchMilestones, fetchArchivedMilestones, upsertMilestone, archiveMilestone, restoreMilestone, deleteMilestone,
-  fetchProjectTasks, upsertProjectTask, toggleTask, deleteProjectTask, rejectTask, approveTask, saveRejectionResponse, addToReviewChain,
+  fetchProjectTasks, upsertProjectTask, toggleTask, deleteProjectTask, rejectTask, approveTask, saveRejectionResponse, addToReviewChain, clearRejectionFields,
   fetchProjectFiles, uploadProjectFile, deleteProjectFile, addExternalLink,
   restoreProjectTask, fetchAllTasksByOwner,
   bulkInsertMilestones, bulkInsertTasks, parseProposalWithAI,
@@ -2962,10 +2962,14 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                       try {
                         await navigator.clipboard.write([new ClipboardItem({ 'text/html': new Blob([htmlBody], { type: 'text/html' }), 'text/plain': new Blob([body], { type: 'text/plain' }) })]);
                       } catch { /* skip */ }
-                      // Record "revised_sent" event in chain
+                      // Record "revised_sent" event in chain, then clear rejection fields
+                      // so the portal resets to "awaiting approval" for the revised work.
                       try {
                         const chain = await addToReviewChain(task.id, { type: 'revised_sent', by: 'Part Human', response: task.rejection_response });
-                        const patchTask = t => t.id === task.id ? { ...t, review_chain: chain } : t;
+                        await clearRejectionFields(task.id);
+                        const patchTask = t => t.id === task.id
+                          ? { ...t, review_chain: chain, rejected_at: null, rejected_by: null, rejection_notes: null }
+                          : t;
                         setTasks(prev => prev.map(patchTask));
                         setAllTasks(prev => {
                           const pid = project?.id;
