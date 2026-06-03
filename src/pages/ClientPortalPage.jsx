@@ -687,10 +687,23 @@ export default function ClientPortalPage({ token }) {
       const now = new Date().toISOString();
       const name = approveName.trim();
       if (approveModal.task) {
-        const updatedChain = await approveTask(approveModal.task.id, name);
-        setTasks(prev => prev.map(t =>
-          t.id === approveModal.task.id ? { ...t, approved_at: now, approved_by: name, rejected_at: null, rejected_by: null, review_chain: updatedChain } : t
-        ));
+        const approvedTask = approveModal.task;
+        const updatedChain = await approveTask(approvedTask.id, name);
+        setTasks(prev => {
+          const next = prev.map(t =>
+            t.id === approvedTask.id ? { ...t, approved_at: now, approved_by: name, rejected_at: null, rejected_by: null, review_chain: updatedChain } : t
+          );
+          // Recalculate milestone status locally from updated task list
+          if (approvedTask.milestone_id) {
+            const msTasks = next.filter(t => t.milestone_id === approvedTask.milestone_id);
+            const allDone     = msTasks.length > 0 && msTasks.every(t => t.completed);
+            const allApproved = msTasks.every(t => t.approved_at);
+            const noneRejected = msTasks.every(t => !t.rejected_at);
+            const newStatus = allDone && allApproved && noneRejected ? 'completed' : 'in_progress';
+            setMilestones(ms => ms.map(m => m.id === approvedTask.milestone_id ? { ...m, status: newStatus } : m));
+          }
+          return next;
+        });
         setApproveModal(null);
         setShowHighFive(true);
       } else if (approveModal.milestone) {
@@ -723,8 +736,11 @@ export default function ClientPortalPage({ token }) {
           ? { ...t, rejected_at: now, rejected_by: name, rejection_notes: notes, approved_at: null, approved_by: null, review_chain: updatedChain }
           : t
       ));
-      // Auto-expand the milestone so the rejection is immediately visible
-      if (rejectedTask.milestone_id) setExpanded(e => ({ ...e, [rejectedTask.milestone_id]: true }));
+      // Push milestone back to in_progress locally (DB already updated via syncMilestoneStatusForTask)
+      if (rejectedTask.milestone_id) {
+        setMilestones(ms => ms.map(m => m.id === rejectedTask.milestone_id ? { ...m, status: 'in_progress' } : m));
+        setExpanded(e => ({ ...e, [rejectedTask.milestone_id]: true }));
+      }
       setRejectModal(null);
       setRejectName('');
       setRejectNotes('');
