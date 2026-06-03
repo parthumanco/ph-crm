@@ -103,6 +103,96 @@ function StatusBadge({ status }) {
   );
 }
 
+function PortalGantt({ milestones, projectStart, projectEnd }) {
+  if (!projectStart || !projectEnd || !milestones.length) return null;
+  const daysBetween = (a, b) => Math.round((new Date(b) - new Date(a)) / 86400000);
+  const totalDays = daysBetween(projectStart, projectEnd);
+  if (totalDays <= 0) return null;
+
+  const todayStr  = new Date().toISOString().slice(0, 10);
+  const todayPct  = Math.min(100, Math.max(0, daysBetween(projectStart, todayStr) / totalDays * 100));
+  const showToday = todayStr >= projectStart && todayStr <= projectEnd;
+
+  const LABEL_W = 160;
+
+  // Month label ticks
+  const months = [];
+  const d = new Date(projectStart);
+  d.setDate(1);
+  while (d.toISOString().slice(0, 10) <= projectEnd) {
+    const pct = daysBetween(projectStart, d.toISOString().slice(0, 10)) / totalDays * 100;
+    if (pct >= 0 && pct <= 102) {
+      months.push({ label: d.toLocaleString('en-US', { month: 'short', day: 'numeric', year: '2-digit' }), pct: Math.max(0, pct) });
+    }
+    d.setMonth(d.getMonth() + 1);
+  }
+
+  return (
+    <div style={{ overflowX: 'auto', marginBottom: 24 }}>
+      <div style={{ minWidth: 520, position: 'relative' }}>
+        {/* Month labels */}
+        <div style={{ display: 'flex', marginBottom: 8 }}>
+          <div style={{ width: LABEL_W, flexShrink: 0 }} />
+          <div style={{ flex: 1, position: 'relative', height: 18 }}>
+            {months.map((m, i) => (
+              <span key={i} style={{
+                position: 'absolute', left: `${m.pct}%`,
+                fontSize: 11, color: '#9ca3af', fontWeight: 600,
+                transform: 'translateX(-50%)', whiteSpace: 'nowrap',
+              }}>{m.label}</span>
+            ))}
+          </div>
+        </div>
+
+        {/* Rows */}
+        <div style={{ position: 'relative' }}>
+          {/* Today line */}
+          {showToday && (
+            <div style={{
+              position: 'absolute',
+              left: `calc(${LABEL_W}px + (100% - ${LABEL_W}px) * ${todayPct / 100})`,
+              top: -4, bottom: 0, width: 2,
+              background: '#ef4444', zIndex: 4, pointerEvents: 'none',
+            }}>
+              <span style={{
+                position: 'absolute', top: -16, left: '50%', transform: 'translateX(-50%)',
+                fontSize: 9, fontWeight: 800, color: '#ef4444', whiteSpace: 'nowrap', letterSpacing: '.04em',
+              }}>TODAY</span>
+            </div>
+          )}
+
+          {milestones.map(ms => {
+            if (!ms.start_date || !ms.due_date) return null;
+            const lPct = daysBetween(projectStart, ms.start_date) / totalDays * 100;
+            const wPct = daysBetween(ms.start_date, ms.due_date)  / totalDays * 100;
+            const color = STATUS_COLORS[ms.status] || '#94a3b8';
+            return (
+              <div key={ms.id} style={{ display: 'flex', alignItems: 'center', marginBottom: 8, height: 32 }}>
+                <div style={{
+                  width: LABEL_W, flexShrink: 0, paddingRight: 12,
+                  fontSize: 12, fontWeight: 600, color: '#374151',
+                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                }} title={ms.title}>{ms.title}</div>
+                <div style={{ flex: 1, height: '100%', background: '#f3f4f6', borderRadius: 6, position: 'relative' }}>
+                  <div style={{
+                    position: 'absolute',
+                    left:  `${Math.max(0, lPct)}%`,
+                    width: `${Math.min(wPct, 100 - Math.max(0, lPct))}%`,
+                    minWidth: 6, height: '100%',
+                    background: color,
+                    borderRadius: 6,
+                    opacity: ms.status === 'completed' ? 0.55 : 0.85,
+                  }} />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ProgressBar({ pct, color = ACCENT, height = 6 }) {
   return (
     <div style={{ height, background: '#e5e7eb', borderRadius: height, overflow: 'hidden' }}>
@@ -762,6 +852,16 @@ export default function ClientPortalPage({ token }) {
             <div style={{ fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.06em', color: '#9ca3af', marginBottom: 14 }}>
               Project Timeline
             </div>
+            {/* Gantt chart */}
+            {(project.start_date || milestones.some(m => m.start_date)) && (
+              <div style={{ background: '#fff', borderRadius: 12, border: '1px solid #e5e7eb', padding: '18px 20px', marginBottom: 16, boxShadow: '0 1px 6px rgba(0,0,0,0.04)' }}>
+                <PortalGantt
+                  milestones={milestones}
+                  projectStart={project.start_date || milestones.filter(m => m.start_date).map(m => m.start_date).sort()[0]}
+                  projectEnd={project.end_date || milestones.filter(m => m.due_date).map(m => m.due_date).sort().at(-1)}
+                />
+              </div>
+            )}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               {milestones.map(ms => {
                 const msTasks = (tasksByMs[ms.id] || [])
