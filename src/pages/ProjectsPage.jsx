@@ -4,7 +4,7 @@ import { generateProjectSummary, generateRejectionResponse } from '../lib/anthro
 import {
   fetchProjects, fetchArchivedProjects, upsertProject, archiveProject, restoreProject, deleteProject,
   fetchMilestones, fetchArchivedMilestones, upsertMilestone, archiveMilestone, restoreMilestone, deleteMilestone,
-  fetchProjectTasks, upsertProjectTask, toggleTask, deleteProjectTask, rejectTask, saveRejectionResponse, addToReviewChain,
+  fetchProjectTasks, upsertProjectTask, toggleTask, deleteProjectTask, rejectTask, approveTask, saveRejectionResponse, addToReviewChain,
   fetchProjectFiles, uploadProjectFile, deleteProjectFile, addExternalLink,
   restoreProjectTask, fetchAllTasksByOwner,
   bulkInsertMilestones, bulkInsertTasks, parseProposalWithAI,
@@ -2730,15 +2730,26 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                       <div style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.55, marginBottom: 24 }}>
                         Would you like to email <strong style={{ color: 'var(--text)' }}>{clientName}</strong> to let them know it's ready for approval?
                       </div>
-                      <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+                      <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+                        <button
+                          onClick={async () => {
+                            await approveTask(task.id, 'Internal');
+                            const now = new Date().toISOString();
+                            const patch = t => t.id === task.id ? { ...t, approved_at: now, approved_by: 'Internal' } : t;
+                            setTasks(prev => prev.map(patch));
+                            setAllTasks(prev => ({ ...prev, [project.id]: (prev[project.id] || []).map(patch) }));
+                            setTaskCompleteEmail(null);
+                          }}
+                          style={{ padding: '9px 16px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-muted)', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}
+                        >Skip — mark approved</button>
                         <button
                           onClick={() => setTaskCompleteEmail(null)}
-                          style={{ padding: '9px 18px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}
-                        >No thanks</button>
+                          style={{ padding: '9px 16px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}
+                        >Not now</button>
                         <button
                           onClick={() => setTaskCompleteEmail(prev => ({ ...prev, showDraft: true }))}
                           style={{ padding: '9px 20px', borderRadius: 8, border: 'none', background: 'var(--accent)', color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
-                        >Yes, email client →</button>
+                        >Email client →</button>
                       </div>
                     </>
                   ) : (
@@ -2746,7 +2757,18 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                       <div style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 20, padding: '8px 12px', background: 'var(--surface)', borderRadius: 7, border: '1px solid var(--border)' }}>
                         💡 Set up a client portal on this project to enable email notifications.
                       </div>
-                      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                      <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+                        <button
+                          onClick={async () => {
+                            await approveTask(task.id, 'Internal');
+                            const now = new Date().toISOString();
+                            const patch = t => t.id === task.id ? { ...t, approved_at: now, approved_by: 'Internal' } : t;
+                            setTasks(prev => prev.map(patch));
+                            setAllTasks(prev => ({ ...prev, [project.id]: (prev[project.id] || []).map(patch) }));
+                            setTaskCompleteEmail(null);
+                          }}
+                          style={{ padding: '9px 16px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-muted)', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}
+                        >Skip — mark approved</button>
                         <button
                           onClick={() => setTaskCompleteEmail(null)}
                           style={{ padding: '9px 20px', borderRadius: 8, border: 'none', background: 'var(--accent)', color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
