@@ -10,9 +10,16 @@ import '@fontsource/playfair-display/700.css'
 import '@fontsource/playfair-display/800.css'
 import './index.css'
 import App from './App.jsx'
+import ClientPortalPage from './pages/ClientPortalPage.jsx'
+
+const pathname = window.location.pathname;
+const portalMatch = pathname.match(/^\/portal\/([^/]+)/);
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>
-    <App />
+    {portalMatch
+      ? <ClientPortalPage token={portalMatch[1]} />
+      : <App />
+    }
   </StrictMode>,
 )

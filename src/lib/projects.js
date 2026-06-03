@@ -573,6 +573,21 @@ export async function deleteProjectFile(id, storagePath) {
   if (error) throw new Error(error.message);
 }
 
+export async function fetchProjectByToken(token) {
+  const { data, error } = await supabase
+    .from('projects').select('*').eq('share_token', token).single();
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+export async function approveMilestone(milestoneId, approvedBy) {
+  const now = new Date().toISOString();
+  const { error } = await supabase.from('milestones')
+    .update({ approved_at: now, approved_by: approvedBy })
+    .eq('id', milestoneId);
+  if (error) throw new Error(error.message);
+}
+
 export async function addExternalLink(projectId, url, name, milestoneId = null, taskId = null) {
   const { data, error } = await supabase
     .from('project_files')

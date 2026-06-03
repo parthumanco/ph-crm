@@ -10,6 +10,19 @@ import {
   projColor, projLabel, msColor, msLabel,
   daysBetween, addDays, projectProgress, fmtDate,
 } from '../lib/projects';
+
+async function sendPortalNotification(project, subject, bodyHtml) {
+  try {
+    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+    await fetch(`${supabaseUrl}/functions/v1/project-notification`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ to: project.client_email, subject, html: bodyHtml }),
+    });
+  } catch (e) {
+    console.warn('Portal notification failed:', e.message);
+  }
+}
 import { fetchDeals } from '../lib/deals';
 import ProposalImporter from '../components/ProposalImporter';
 
@@ -405,6 +418,13 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
   const [showLinkModal, setShowLinkModal]         = useState(null); // { projectId, milestoneId, taskId }
   const [linkUrl, setLinkUrl]                     = useState('');
   const [linkName, setLinkName]                   = useState('');
+  const [showShareModal, setShowShareModal]       = useState(false);
+  const [shareToken, setShareToken]               = useState('');
+  const [sharePassword, setSharePassword]         = useState('');
+  const [shareClientEmail, setShareClientEmail]   = useState('');
+  const [shareSaving, setShareSaving]             = useState(false);
+  const [shareSaved, setShareSaved]               = useState(false);
+  const [shareCopied, setShareCopied]             = useState(false);
   const [editingTask, setEditingTask]             = useState(null); // task id
   const [editTaskDraft, setEditTaskDraft]         = useState({});   // { title, due_date, assigned_to, estimated_hours }
   const editTaskDraftRef                          = useRef({});     // always-current mirror of editTaskDraft (avoids stale closures)
@@ -514,6 +534,9 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
     setMilestones([]);
     setTasks([]);
     setProjectFiles([]);
+    setShareToken(project.share_token || '');
+    setSharePassword(project.portal_password || '');
+    setShareClientEmail(project.client_email || '');
     try {
       const [ms, ts, files] = await Promise.all([
         fetchMilestones(project.id),
@@ -575,6 +598,22 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
     setProjects(prev => prev.map(p => p.id === saved.id ? saved : p));
   };
 
+  // ── Save share / portal settings ─────────────────────────────────────────
+  const handleSaveShare = async () => {
+    setShareSaving(true);
+    try {
+      const token = shareToken || crypto.randomUUID().replace(/-/g, '');
+      if (!shareToken) setShareToken(token);
+      const updated = { ...activeProject, share_token: token, portal_password: sharePassword || null, client_email: shareClientEmail || null };
+      await upsertProject(updated);
+      setActiveProject(updated);
+      setProjects(prev => prev.map(p => p.id === updated.id ? updated : p));
+      setShareSaved(true);
+      setTimeout(() => setShareSaved(false), 2500);
+    } catch (e) { alert('Save failed: ' + e.message); }
+    finally { setShareSaving(false); }
+  };
+
   // ── Archive / restore project ─────────────────────────────────────────────
   const handleArchiveProject = async () => {
     if (!confirmDeleteProj) { setConfirmDeleteProj(true); return; }
@@ -608,9 +647,18 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
 
   // ── Milestone edits ───────────────────────────────────────────────────────
   const handleSaveMilestone = async (ms) => {
+    const prevMs = milestones.find(m => m.id === ms.id);
     const saved = await upsertMilestone(ms);
     setMilestones(prev => prev.map(m => m.id === saved.id ? saved : m));
     setEditingMs(null);
+    // Notify client if milestone just became complete
+    if (saved.status === 'completed' && prevMs?.status !== 'completed' && activeProject?.client_email) {
+      sendPortalNotification(
+        activeProject,
+        `Phase complete: ${saved.title}`,
+        `<p>Hi,</p><p>The phase <strong>${saved.title}</strong> has been marked complete on your project <strong>${activeProject.name}</strong>.</p><p>View your project portal to review and approve this phase.</p>`,
+      );
+    }
   };
 
   const handleArchiveMilestone = async (ms) => {
@@ -1002,6 +1050,14 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
         setProjectFiles(prev => [saved, ...prev]);
       }
       setCardFiles(prev => ({ ...prev, [projectId]: [saved, ...(prev[projectId] || [])] }));
+      // Notify client if email is set
+      if (activeProject?.id === projectId && activeProject?.client_email) {
+        sendPortalNotification(
+          activeProject,
+          `New file added: ${file.name}`,
+          `<p>Hi,</p><p>A new file <strong>${file.name}</strong> has been added to your project <strong>${activeProject.name}</strong>.</p><p>Visit your project portal to view it.</p>`,
+        );
+      }
     } catch (err) {
       console.error('Upload failed:', err.message);
       alert(`Upload failed: ${err.message}`);
@@ -1505,6 +1561,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
           <button className="btn" style={{ fontSize: 13 }} onClick={() => triggerFileUpload(activeProject.id)}>📎 Upload File</button>
           <button className="btn" style={{ fontSize: 13 }} onClick={() => openLinkModal(activeProject.id)}>🔗 Add Link</button>
           <button className="btn" style={{ fontSize: 13 }} onClick={() => setShowImporter(true)}>📋 Import Proposal</button>
+          <button className="btn" style={{ fontSize: 13 }} onClick={() => setShowShareModal(true)}>🌐 Client Portal</button>
           <button className="btn btn-primary" onClick={handleAddMilestone}>+ Milestone</button>
         </div>
       </div>
@@ -2321,6 +2378,109 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
           onImported={handleImported}
           onClose={() => setShowImporter(false)}
         />
+      )}
+
+      {/* Client Portal share modal */}
+      {showShareModal && activeProject && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 900, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.35)' }} onClick={() => setShowShareModal(false)} />
+          <div style={{ position: 'relative', zIndex: 1, background: 'var(--bg)', borderRadius: 14, padding: 28, width: 500, maxWidth: '95vw', boxShadow: '0 16px 48px rgba(0,0,0,0.18)' }}>
+            <button
+              onClick={() => setShowShareModal(false)}
+              style={{ position: 'absolute', top: 16, right: 16, background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: 'var(--text-muted)', lineHeight: 1, padding: '2px 6px' }}
+            >✕</button>
+
+            <h3 style={{ fontSize: 16, fontWeight: 800, marginBottom: 6 }}>🔗 Client Portal</h3>
+            <p style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 20, lineHeight: 1.5 }}>
+              Share a read-only project view with your client. They'll see the timeline, milestones, tasks, and files — nothing internal.
+            </p>
+
+            {/* Portal URL */}
+            <div style={{ marginBottom: 16 }}>
+              <Lbl>Portal URL</Lbl>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'stretch' }}>
+                <div style={{
+                  flex: 1, padding: '8px 12px', borderRadius: 6, border: '1px solid var(--border)',
+                  background: 'var(--surface-2)', fontFamily: 'monospace', fontSize: 12,
+                  color: shareToken ? 'var(--text)' : 'var(--text-faint)',
+                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                  display: 'flex', alignItems: 'center',
+                }}>
+                  {shareToken
+                    ? `${window.location.origin}/portal/${shareToken}`
+                    : `${window.location.origin}/portal/[save to generate]`}
+                </div>
+                <button
+                  onClick={() => {
+                    if (!shareToken) return;
+                    navigator.clipboard.writeText(`${window.location.origin}/portal/${shareToken}`);
+                    setShareCopied(true);
+                    setTimeout(() => setShareCopied(false), 2000);
+                  }}
+                  disabled={!shareToken}
+                  style={{
+                    padding: '8px 14px', borderRadius: 6, border: '1px solid var(--border)',
+                    background: shareCopied ? '#d1fae5' : 'var(--surface)',
+                    color: shareCopied ? '#10b981' : 'var(--text-muted)',
+                    cursor: shareToken ? 'pointer' : 'default',
+                    fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap', flexShrink: 0,
+                    transition: 'all .15s',
+                  }}
+                >{shareCopied ? '✓ Copied!' : 'Copy Link'}</button>
+              </div>
+            </div>
+
+            {/* Password */}
+            <div style={{ marginBottom: 16 }}>
+              <Lbl>Password (optional)</Lbl>
+              <input
+                type="text"
+                value={sharePassword}
+                onChange={e => setSharePassword(e.target.value)}
+                placeholder="Leave blank for link-only access"
+                style={{ width: '100%' }}
+              />
+            </div>
+
+            {/* Client email */}
+            <div style={{ marginBottom: 24 }}>
+              <Lbl>Client email</Lbl>
+              <input
+                type="email"
+                value={shareClientEmail}
+                onChange={e => setShareClientEmail(e.target.value)}
+                placeholder="client@company.com"
+                style={{ width: '100%' }}
+              />
+            </div>
+
+            {/* Actions */}
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+              {shareToken && (
+                <a
+                  href={`${window.location.origin}/portal/${shareToken}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ fontSize: 13, color: 'var(--accent)', fontWeight: 600, textDecoration: 'none', marginRight: 'auto' }}
+                >
+                  ↗ Open Portal
+                </a>
+              )}
+              <button
+                onClick={() => setShowShareModal(false)}
+                style={{ padding: '8px 16px', borderRadius: 6, border: '1px solid var(--border)', background: 'transparent', cursor: 'pointer', fontSize: 13 }}
+              >Cancel</button>
+              <button
+                className="btn btn-primary"
+                onClick={handleSaveShare}
+                disabled={shareSaving}
+                style={{ minWidth: 90 }}
+              >
+                {shareSaving ? 'Saving…' : shareSaved ? '✓ Saved!' : 'Save'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </>
   );
