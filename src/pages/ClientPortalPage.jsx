@@ -845,9 +845,9 @@ export default function ClientPortalPage({ token }) {
                             </span>
                             <div style={{ flex: 1, minWidth: 0 }}>
                               <span style={{
-                                fontSize: 14, color: task.completed ? '#9ca3af' : '#374151',
-                                fontWeight: task.completed ? 400 : 500,
-                                textDecoration: task.completed ? 'line-through' : 'none',
+                                fontSize: 14, color: task.approved_at ? '#9ca3af' : '#374151',
+                                fontWeight: task.approved_at ? 400 : 500,
+                                textDecoration: task.approved_at ? 'line-through' : 'none',
                                 textDecorationColor: '#9ca3af',
                               }}>
                                 {task.title}

@@ -1371,7 +1371,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                               <span style={{ fontSize: 10, fontWeight: 800, color: '#ef4444', background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: 4, padding: '1px 6px', whiteSpace: 'nowrap', letterSpacing: '.03em' }}>🔴 DUE NOW</span>
                             )}
                             <span
-                              style={{ fontSize: 13, fontWeight: task.rejected_at ? 800 : 600, color: task.completed && !task.rejected_at ? 'var(--text-faint)' : 'var(--text)', textDecoration: task.completed && !task.rejected_at ? 'line-through' : 'none', textDecorationColor: '#ef4444', cursor: 'text' }}
+                              style={{ fontSize: 13, fontWeight: task.rejected_at ? 800 : 600, color: task.approved_at ? 'var(--text-faint)' : 'var(--text)', textDecoration: task.approved_at ? 'line-through' : 'none', textDecorationColor: '#ef4444', cursor: 'text' }}
                               onDoubleClick={() => startEditTask(task)}
                               title="Double-click to edit"
                             >{task.title}</span>
@@ -2177,9 +2177,9 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                                   <span
                                     style={{
                                       fontSize: 13,
-                                      color: hasOpenRejection ? '#92400e' : 'var(--text)',
+                                      color: hasOpenRejection ? '#92400e' : task.approved_at ? 'var(--text-faint)' : 'var(--text)',
                                       fontWeight: hasOpenRejection ? 600 : 400,
-                                      textDecoration: task.completed && !hasOpenRejection ? 'line-through' : 'none',
+                                      textDecoration: task.approved_at ? 'line-through' : 'none',
                                       textDecorationColor: '#ef4444',
                                       cursor: 'text',
                                     }}
