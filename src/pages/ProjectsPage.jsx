@@ -882,12 +882,14 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
     } catch (e) {
       console.error('toggleTask failed:', e);
     }
-    const updated = tasks.map(t => t.id === task.id ? {
+    const patch = t => t.id === task.id ? {
       ...t, completed: nowComplete,
       ...(nowComplete ? {} : { approved_at: null, approved_by: null, rejected_at: null, rejected_by: null, rejection_notes: null, rejection_response: null }),
-    } : t);
+    } : t;
+    const updated = tasks.map(patch);
     setTasks(updated);
     setAllTasks(prev => ({ ...prev, [activeProject.id]: updated }));
+    setAssignedTasks(prev => prev.map(patch));
     if (task.milestone_id) await syncMilestoneStatus(task.milestone_id, updated);
     if (nowComplete) {
       setTaskCompleteEmail({ task, project: activeProject });
@@ -1041,14 +1043,22 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
   };
 
   const handleToggleAssignedTask = async (task) => {
-    await toggleTask(task.id, !task.completed);
-    setAssignedTasks(prev => prev.map(t =>
-      t.id === task.id ? { ...t, completed: !t.completed, completed_at: !task.completed ? new Date().toISOString() : null } : t
-    ));
+    const nowComplete = !task.completed;
+    await toggleTask(task.id, nowComplete);
+    const patch = t => t.id === task.id ? {
+      ...t, completed: nowComplete,
+      completed_at: nowComplete ? new Date().toISOString() : null,
+      ...(nowComplete ? {} : { approved_at: null, approved_by: null, rejected_at: null, rejected_by: null, rejection_notes: null, rejection_response: null }),
+    } : t;
+    setAssignedTasks(prev => prev.map(patch));
+    if (task.project_id) {
+      setAllTasks(prev => ({
+        ...prev,
+        [task.project_id]: (prev[task.project_id] || []).map(patch),
+      }));
+    }
     if (task.milestone_id && task.project_id) {
-      const projectTasks = (allTasks[task.project_id] || []).map(t =>
-        t.id === task.id ? { ...t, completed: !t.completed } : t
-      );
+      const projectTasks = (allTasks[task.project_id] || []).map(patch);
       await syncMilestoneStatus(task.milestone_id, projectTasks);
     }
   };
@@ -2741,6 +2751,13 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
         const subject      = `Task complete: ${task.title}`;
         const companyLabel = project.client_name || project.name;
         const body         = `Hi ${clientName},\n\nA task on your project has been completed and is ready for your review.\n\nTask: ${task.title}\n\n${portalUrl ? `Please visit your project dashboard to review and approve it:\n${portalUrl}\n\n` : ''}Best,\nPart Human`;
+        const htmlBody     = [
+          `<p style="font-family:sans-serif;font-size:14px;">Hi ${clientName},</p>`,
+          `<p style="font-family:sans-serif;font-size:14px;">A task on your project has been completed and is ready for your review.</p>`,
+          `<p style="font-family:sans-serif;font-size:14px;"><strong>Task:</strong> ${task.title}</p>`,
+          portalUrl ? `<p style="font-family:sans-serif;font-size:14px;">Please visit your project dashboard to review and approve it:</p><p><a href="${portalUrl}" style="display:inline-block;background:#fbbf24;color:#111;font-weight:800;font-size:13px;padding:6px 14px;border-radius:20px;text-decoration:none;font-family:sans-serif;">PH &times; ${companyLabel}</a></p>` : '',
+          `<p style="font-family:sans-serif;font-size:14px;">Best,<br>Part Human</p>`,
+        ].join('');
         const gmailUrl     = toEmail ? `https://mail.google.com/mail/?view=cm&to=${encodeURIComponent(toEmail)}&su=${encodeURIComponent(subject)}` : null;
 
         return (
@@ -2776,6 +2793,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                             const patch = t => t.id === task.id ? { ...t, approved_at: now, approved_by: 'Internal' } : t;
                             setTasks(prev => prev.map(patch));
                             setAllTasks(prev => ({ ...prev, [project.id]: (prev[project.id] || []).map(patch) }));
+                            setAssignedTasks(prev => prev.map(patch));
                             setTaskCompleteEmail(null);
                           }}
                           style={{ padding: '9px 16px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-muted)', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}
@@ -2803,6 +2821,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                             const patch = t => t.id === task.id ? { ...t, approved_at: now, approved_by: 'Internal' } : t;
                             setTasks(prev => prev.map(patch));
                             setAllTasks(prev => ({ ...prev, [project.id]: (prev[project.id] || []).map(patch) }));
+                            setAssignedTasks(prev => prev.map(patch));
                             setTaskCompleteEmail(null);
                           }}
                           style={{ padding: '9px 16px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-muted)', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}
@@ -2869,13 +2888,6 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                   <div style={{ display: 'flex', gap: 10, marginTop: 8, justifyContent: 'flex-end' }}>
                     <button
                       onClick={async () => {
-                        const htmlBody = [
-                          `<p style="font-family:sans-serif;font-size:14px;">Hi ${clientName},</p>`,
-                          `<p style="font-family:sans-serif;font-size:14px;">A task on your project has been completed and is ready for your review.</p>`,
-                          `<p style="font-family:sans-serif;font-size:14px;"><strong>Task:</strong> ${task.title}</p>`,
-                          portalUrl ? `<p style="font-family:sans-serif;font-size:14px;">Please visit your project dashboard to review and approve it:</p><p><a href="${portalUrl}" style="display:inline-block;background:#fbbf24;color:#111;font-weight:800;font-size:13px;padding:6px 14px;border-radius:20px;text-decoration:none;font-family:sans-serif;">PH &times; ${companyLabel}</a></p>` : '',
-                          `<p style="font-family:sans-serif;font-size:14px;">Best,<br>Part Human</p>`,
-                        ].join('');
                         try {
                           await navigator.clipboard.write([
                             new ClipboardItem({
@@ -2891,13 +2903,6 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                     >Copy</button>
                     <button
                       onClick={async () => {
-                        const htmlBody = [
-                          `<p style="font-family:sans-serif;font-size:14px;">Hi ${clientName},</p>`,
-                          `<p style="font-family:sans-serif;font-size:14px;">A task on your project has been completed and is ready for your review.</p>`,
-                          `<p style="font-family:sans-serif;font-size:14px;"><strong>Task:</strong> ${task.title}</p>`,
-                          portalUrl ? `<p style="font-family:sans-serif;font-size:14px;">Please visit your project dashboard to review and approve it:</p><p><a href="${portalUrl}" style="display:inline-block;background:#fbbf24;color:#111;font-weight:800;font-size:13px;padding:6px 14px;border-radius:20px;text-decoration:none;font-family:sans-serif;">PH &times; ${companyLabel}</a></p>` : '',
-                          `<p style="font-family:sans-serif;font-size:14px;">Best,<br>Part Human</p>`,
-                        ].join('');
                         try {
                           await navigator.clipboard.write([
                             new ClipboardItem({
