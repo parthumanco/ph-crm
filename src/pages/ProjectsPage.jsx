@@ -2643,7 +2643,25 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
 
                   <div style={{ display: 'flex', gap: 10, marginTop: 18, justifyContent: 'flex-end' }}>
                     <button
-                      onClick={() => navigator.clipboard.writeText(body)}
+                      onClick={async () => {
+                        const htmlBody = [
+                          `<p style="font-family:sans-serif;font-size:14px;">Hi ${clientName},</p>`,
+                          `<p style="font-family:sans-serif;font-size:14px;">A task on your project has been completed and is ready for your review.</p>`,
+                          `<p style="font-family:sans-serif;font-size:14px;"><strong>Task:</strong> ${task.title}</p>`,
+                          portalUrl ? `<p style="font-family:sans-serif;font-size:14px;">Please visit your project dashboard to review and approve it:</p><p><a href="${portalUrl}" style="display:inline-block;background:#fbbf24;color:#111;font-weight:800;font-size:13px;padding:6px 14px;border-radius:20px;text-decoration:none;font-family:sans-serif;">PH &times; ${companyLabel}</a></p>` : '',
+                          `<p style="font-family:sans-serif;font-size:14px;">Best,<br>Part Human</p>`,
+                        ].join('');
+                        try {
+                          await navigator.clipboard.write([
+                            new ClipboardItem({
+                              'text/html': new Blob([htmlBody], { type: 'text/html' }),
+                              'text/plain': new Blob([body], { type: 'text/plain' }),
+                            }),
+                          ]);
+                        } catch {
+                          navigator.clipboard.writeText(body);
+                        }
+                      }}
                       style={{ padding: '9px 16px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}
                     >Copy</button>
                     <button
