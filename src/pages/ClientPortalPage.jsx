@@ -775,7 +775,11 @@ export default function ClientPortalPage({ token }) {
                   });
                 const msColor = STATUS_COLORS[ms.status] || '#94a3b8';
                 const isOpen = expanded[ms.id];
-                const isComplete = ms.status === 'completed' && msTasks.length > 0 && msTasks.every(t => t.completed);
+                const isComplete = ms.status === 'completed'
+                  && msTasks.length > 0
+                  && msTasks.every(t => t.completed)
+                  && msTasks.every(t => t.approved_at)   // all tasks must be individually approved
+                  && msTasks.every(t => !t.rejected_at); // no open change requests
                 const msFiles = milestoneFiles(ms.id);
 
                 return (
