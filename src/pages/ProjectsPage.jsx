@@ -2324,6 +2324,11 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                                                     {ev.notes}
                                                   </div>
                                                 )}
+                                                {ev.type === 'revised_sent' && ev.response && (
+                                                  <div style={{ marginTop: 4, marginLeft: 18, padding: '5px 9px', background: 'var(--surface)', border: '1px solid var(--border-light)', borderRadius: 5, fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.6, whiteSpace: 'pre-wrap', fontStyle: 'italic' }}>
+                                                    "{ev.response}"
+                                                  </div>
+                                                )}
                                               </div>
                                             );
                                           })}
@@ -2900,11 +2905,14 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
         const portalUrl    = project?.share_token ? `${window.location.origin}/portal/${project.share_token}?task=${task.id}` : null;
         const revNum       = ((task.review_chain || []).filter(e => e.type === 'revised_sent').length) + 1;
         const subject      = `Revision ${revNum} ready: ${task.title}`;
-        const body         = `Hi ${clientName},\n\nA revision has been made to your project. Please click the link below to review and approve it.\n\nTask: ${task.title}\n\n${portalUrl ? `${portalUrl}\n\n` : ''}Best,\nPart Human`;
+        const aiResponse   = task.rejection_response || '';
+        const messageBody  = aiResponse
+          ? `${aiResponse} Please click the link below to review.`
+          : `A revision has been made to your project. Please click the link below to review and approve it.`;
+        const body         = `Hi ${clientName},\n\n${messageBody}\n\n${portalUrl ? `${portalUrl}\n\n` : ''}Best,\nPart Human`;
         const htmlBody     = [
           `<p style="font-family:sans-serif;font-size:14px;">Hi ${clientName},</p>`,
-          `<p style="font-family:sans-serif;font-size:14px;">A revision has been made to your project. Please click the link below to review and approve it.</p>`,
-          `<p style="font-family:sans-serif;font-size:14px;"><strong>Task:</strong> ${task.title}</p>`,
+          `<p style="font-family:sans-serif;font-size:14px;">${messageBody.replace(/\n/g, '<br>')}</p>`,
           portalUrl ? `<p><a href="${portalUrl}" style="display:inline-block;background:#fbbf24;color:#111;font-weight:800;font-size:13px;padding:6px 14px;border-radius:20px;text-decoration:none;font-family:sans-serif;">PH &times; ${companyLabel}</a></p>` : '',
           `<p style="font-family:sans-serif;font-size:14px;">Best,<br>Part Human</p>`,
         ].join('');
@@ -2932,7 +2940,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                 <div>
                   <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 4 }}>Message</div>
                   <div style={{ fontSize: 12, padding: '10px 12px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 7, color: 'var(--text-muted)', lineHeight: 1.65 }}>
-                    <div style={{ whiteSpace: 'pre-wrap' }}>{`Hi ${clientName},\n\nA revision has been made to your project. Please click the link below to review and approve it.\n\nTask: ${task.title}\n\n`}</div>
+                    <div style={{ whiteSpace: 'pre-wrap' }}>{`Hi ${clientName},\n\n${messageBody}\n\n`}</div>
                     {portalUrl ? (
                       <a href={portalUrl} target="_blank" rel="noopener noreferrer" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: '#fbbf24', color: '#111', fontWeight: 800, fontSize: 12, padding: '5px 12px', borderRadius: 20, textDecoration: 'none', margin: '2px 0 8px' }}>
                         <span style={{ fontWeight: 900, fontSize: 13 }}>PH</span><span>×</span><span>{companyLabel}</span>
@@ -2965,7 +2973,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                       // Record "revised_sent" event in chain, then clear rejection fields
                       // so the portal resets to "awaiting approval" for the revised work.
                       try {
-                        const chain = await addToReviewChain(task.id, { type: 'revised_sent', by: 'Part Human', response: task.rejection_response });
+                        const chain = await addToReviewChain(task.id, { type: 'revised_sent', by: 'Part Human', response: messageBody });
                         await clearRejectionFields(task.id);
                         const patchTask = t => t.id === task.id
                           ? { ...t, review_chain: chain, rejected_at: null, rejected_by: null, rejection_notes: null }

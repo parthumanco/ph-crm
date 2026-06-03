@@ -965,6 +965,11 @@ export default function ClientPortalPage({ token }) {
                                                     {ev.notes}
                                                   </div>
                                                 )}
+                                                {ev.type === 'revised_sent' && ev.response && (
+                                                  <div style={{ marginTop: 4, marginLeft: 18, padding: '5px 9px', background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: 5, fontSize: 11, color: '#6b7280', lineHeight: 1.6, whiteSpace: 'pre-wrap', fontStyle: 'italic' }}>
+                                                    "{ev.response}"
+                                                  </div>
+                                                )}
                                               </div>
                                             );
                                           })}

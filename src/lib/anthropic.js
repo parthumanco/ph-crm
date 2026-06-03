@@ -927,10 +927,10 @@ export async function generateRejectionResponse(taskTitle, projectName, rejectio
   const data = await withTimeout(
     callClaude({
       model: 'claude-haiku-4-5-20251001',
-      max_tokens: 200,
+      max_tokens: 150,
       messages: [{
         role: 'user',
-        content: `You are a project manager responding to a client's change request. The client reviewed the task "${taskTitle}" on project "${projectName}" and left this feedback:\n\n"${rejectionNotes}"\n\nWrite a brief, professional response (2–3 sentences) that: acknowledges their specific feedback, confirms the revisions will be made, and indicates next steps. Warm but concise — no subject line, no sign-off.`,
+        content: `You are a project manager sending a client an update that their revision is ready. The task was "${taskTitle}" and the client's feedback was:\n\n"${rejectionNotes}"\n\nWrite 1–2 sentences confirming the specific issue has been addressed — e.g. "We've adjusted the [specific thing] per your feedback." Past tense. Specific. No greeting, no sign-off, no "please review" — just what was done. Keep it under 30 words.`,
       }],
     }),
     20000
