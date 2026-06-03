@@ -655,12 +655,17 @@ export default function ClientPortalPage({ token }) {
         setMilestones(ms);
         setTasks(ts);
         setFiles(fs);
-        // Auto-expand milestone containing the highlighted task
+        // Auto-expand: highlighted task + any milestone with an open rejection
         const hid = new URLSearchParams(window.location.search).get('task');
+        const autoExpand = {};
         if (hid) {
           const ht = ts.find(t => t.id === hid);
-          if (ht?.milestone_id) setExpanded(e => ({ ...e, [ht.milestone_id]: true }));
+          if (ht?.milestone_id) autoExpand[ht.milestone_id] = true;
         }
+        ts.filter(t => t.rejected_at).forEach(t => {
+          if (t.milestone_id) autoExpand[t.milestone_id] = true;
+        });
+        if (Object.keys(autoExpand).length) setExpanded(e => ({ ...e, ...autoExpand }));
       } catch (e) {
         setError(e.message || 'Project not found');
       } finally {
@@ -712,11 +717,14 @@ export default function ClientPortalPage({ token }) {
       const notes = rejectNotes.trim();
       const now   = new Date().toISOString();
       const updatedChain = await rejectTask(rejectModal.task.id, name, notes);
+      const rejectedTask = rejectModal.task;
       setTasks(prev => prev.map(t =>
-        t.id === rejectModal.task.id
+        t.id === rejectedTask.id
           ? { ...t, rejected_at: now, rejected_by: name, rejection_notes: notes, approved_at: null, approved_by: null, review_chain: updatedChain }
           : t
       ));
+      // Auto-expand the milestone so the rejection is immediately visible
+      if (rejectedTask.milestone_id) setExpanded(e => ({ ...e, [rejectedTask.milestone_id]: true }));
       setRejectModal(null);
       setRejectName('');
       setRejectNotes('');
@@ -787,7 +795,8 @@ export default function ClientPortalPage({ token }) {
   // ── Files grouped ─────────────────────────────────────────────────────────
 
   const generalFiles = files.filter(f => !f.milestone_id && !f.task_id);
-  const milestoneFiles = (msId) => files.filter(f => f.milestone_id === msId);
+  const milestoneFiles = (msId) => files.filter(f => f.milestone_id === msId && !f.task_id);
+  const taskFiles = (taskId) => files.filter(f => f.task_id === taskId);
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -1080,6 +1089,22 @@ export default function ClientPortalPage({ token }) {
                                 </div>
                               );
                             })()}
+                            {/* Task-level files — always visible, no expand needed */}
+                            {taskFiles(task.id).map(f => (
+                              <div key={f.id} style={{
+                                display: 'flex', alignItems: 'center', gap: 8,
+                                padding: '6px 18px 6px 44px',
+                                borderTop: '1px solid #f3f4f6',
+                                background: '#fafafa',
+                              }}>
+                                <span style={{ fontSize: 13, flexShrink: 0, opacity: 0.7 }}>{fileIcon(f.mime_type)}</span>
+                                <a href={f.url} target="_blank" rel="noopener noreferrer" style={{
+                                  flex: 1, fontSize: 12, fontWeight: 500, color: ACCENT,
+                                  textDecoration: 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                                }}>{f.name}</a>
+                                {f.size && <span style={{ fontSize: 10, color: '#9ca3af', flexShrink: 0 }}>{fmtFileSize(f.size)}</span>}
+                              </div>
+                            ))}
                           </div>
                         ))}
 
