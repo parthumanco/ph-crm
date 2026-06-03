@@ -564,7 +564,13 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
         fetchProjectTasks(project.id),
         fetchProjectFiles(project.id).catch(() => []),
       ]);
-      setMilestones(ms);
+      // Fix milestone statuses: if any task has an open rejection, milestone
+      // should be in_progress regardless of what's stored in the DB.
+      const rejectedMsIds = new Set(ts.filter(t => t.rejected_at).map(t => t.milestone_id).filter(Boolean));
+      const fixedMs = rejectedMsIds.size > 0
+        ? ms.map(m => rejectedMsIds.has(m.id) && m.status === 'completed' ? { ...m, status: 'in_progress' } : m)
+        : ms;
+      setMilestones(fixedMs);
       setTasks(ts);
       setProjectFiles(files);
     } catch (e) {
@@ -2098,8 +2104,9 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                         const pendingDelete = confirmDeleteTask === task.id;
                         const isEditingThis = editingTask === task.id;
 
+                        const hasOpenRejection = task.completed && task.rejected_at;
                         return (
-                          <div key={task.id} style={{ borderBottom: '1px solid var(--border-light)', background: 'var(--surface)' }}>
+                          <div key={task.id} style={{ borderBottom: '1px solid var(--border-light)', background: hasOpenRejection ? '#fffbeb' : 'var(--surface)', borderLeft: hasOpenRejection ? '3px solid #f59e0b' : 'none' }}>
 
                             {isEditingThis ? (
                               /* ── Edit mode ───────────────────────────────── */
@@ -2164,14 +2171,15 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                                   type="checkbox"
                                   checked={task.completed}
                                   onChange={() => handleToggleTask(task)}
-                                  style={{ width: 15, height: 15, accentColor: color, cursor: 'pointer', flexShrink: 0 }}
+                                  style={{ width: 15, height: 15, accentColor: hasOpenRejection ? '#f59e0b' : color, cursor: 'pointer', flexShrink: 0 }}
                                 />
                                 <div style={{ flex: 1, minWidth: 0 }}>
                                   <span
                                     style={{
                                       fontSize: 13,
-                                      color: 'var(--text)',
-                                      textDecoration: task.completed ? 'line-through' : 'none',
+                                      color: hasOpenRejection ? '#92400e' : 'var(--text)',
+                                      fontWeight: hasOpenRejection ? 600 : 400,
+                                      textDecoration: task.completed && !hasOpenRejection ? 'line-through' : 'none',
                                       textDecorationColor: '#ef4444',
                                       cursor: 'text',
                                     }}
@@ -2181,8 +2189,8 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                                     {task.title}
                                   </span>
                                   {task.completed && task.completed_at && (
-                                    <div style={{ fontSize: 10, color: 'var(--text-faint)', marginTop: 2 }}>
-                                      ✓ Completed {fmtDate(task.completed_at)}
+                                    <div style={{ fontSize: 10, color: hasOpenRejection ? '#f59e0b' : 'var(--text-faint)', fontWeight: hasOpenRejection ? 700 : 400, marginTop: 2 }}>
+                                      {hasOpenRejection ? '⟳ In Progress — changes requested' : `✓ Completed ${fmtDate(task.completed_at)}`}
                                     </div>
                                   )}
                                 </div>
