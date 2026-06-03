@@ -916,28 +916,65 @@ export default function ClientPortalPage({ token }) {
                               >📄 proposal</button>
                             )}
                             </div>{/* end flex row */}
-                            {task.approved_at && (
-                              <div style={{
-                                marginTop: 5, marginLeft: 28,
-                                fontSize: 11, color: '#10b981', fontWeight: 600,
-                              }}>
-                                Approved by {task.approved_by} on {fmtDate(task.approved_at)}
-                              </div>
-                            )}
-                            {task.rejected_at && expandedRejections.has(task.id) && (
-                              <div style={{
-                                marginTop: 8, marginLeft: 28, padding: '10px 12px',
-                                background: '#fef2f2', border: '1px solid #fca5a5',
-                                borderRadius: 8,
-                              }}>
-                                <div style={{ fontSize: 11, fontWeight: 700, color: '#ef4444', marginBottom: 4 }}>
-                                  Changes requested by {task.rejected_by} · {fmtDate(task.rejected_at)}
+                            {/* ── Chain of custody (read-only on portal) ── */}
+                            {(() => {
+                              const chain = task.review_chain || [];
+                              const hasApproval = task.approved_at;
+                              if (chain.length === 0 && !hasApproval) return null;
+
+                              const isExpanded  = expandedChains.has(task.id);
+                              const toggleChain = () => setExpandedChains(s => { const n = new Set(s); n.has(task.id) ? n.delete(task.id) : n.add(task.id); return n; });
+
+                              let rn = 0;
+                              const displayChain = chain.map(ev => ev.type === 'revised_sent' ? { ...ev, revNum: ++rn } : ev);
+
+                              const eventLabel = ev => {
+                                if (ev.type === 'sent')         return { icon: '📤', text: 'Sent for review',            color: '#9ca3af' };
+                                if (ev.type === 'rejected')     return { icon: '⚠',  text: `Changes requested by ${ev.by}`, color: '#ef4444' };
+                                if (ev.type === 'revised_sent') return { icon: '📤', text: `Revision ${ev.revNum} sent`,  color: '#9ca3af' };
+                                if (ev.type === 'approved')     return { icon: '✓',  text: `Approved by ${ev.by}`,        color: '#10b981' };
+                                return { icon: '·', text: ev.type, color: '#9ca3af' };
+                              };
+
+                              return (
+                                <div style={{ margin: '6px 0 2px 28px', display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                  {hasApproval && chain.length === 0 && (
+                                    <div style={{ fontSize: 11, color: '#10b981', fontWeight: 600 }}>
+                                      ✓ Approved by {task.approved_by} on {fmtDate(task.approved_at)}
+                                    </div>
+                                  )}
+                                  {chain.length > 0 && (
+                                    <>
+                                      <button
+                                        onClick={toggleChain}
+                                        style={{ alignSelf: 'flex-start', fontSize: 11, fontWeight: 600, color: '#9ca3af', background: 'none', border: 'none', padding: 0, cursor: 'pointer', textDecoration: 'underline', textUnderlineOffset: 2, fontFamily: 'Inter, sans-serif' }}
+                                      >{isExpanded ? '▲ Hide' : '▼ Show'} review history ({chain.length})</button>
+                                      {isExpanded && (
+                                        <div style={{ borderLeft: '2px solid #e5e7eb', paddingLeft: 12, display: 'flex', flexDirection: 'column', gap: 8, marginTop: 4 }}>
+                                          {displayChain.map((ev, i) => {
+                                            const lbl = eventLabel(ev);
+                                            return (
+                                              <div key={i} style={{ fontSize: 12 }}>
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                                  <span style={{ color: lbl.color, fontWeight: 700 }}>{lbl.icon}</span>
+                                                  <span style={{ color: lbl.color, fontWeight: ev.type === 'rejected' ? 700 : 500 }}>{lbl.text}</span>
+                                                  <span style={{ color: '#d1d5db', fontSize: 11 }}>· {fmtDate(ev.at)}</span>
+                                                </div>
+                                                {ev.type === 'rejected' && ev.notes && (
+                                                  <div style={{ marginTop: 4, marginLeft: 18, padding: '5px 9px', background: '#fef2f2', borderRadius: 5, fontSize: 11, color: '#374151', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>
+                                                    {ev.notes}
+                                                  </div>
+                                                )}
+                                              </div>
+                                            );
+                                          })}
+                                        </div>
+                                      )}
+                                    </>
+                                  )}
                                 </div>
-                                <div style={{ fontSize: 12, color: '#374151', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>
-                                  {task.rejection_notes}
-                                </div>
-                              </div>
-                            )}
+                              );
+                            })()}
                           </div>
                         ))}
 
