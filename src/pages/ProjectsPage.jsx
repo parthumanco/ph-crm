@@ -850,14 +850,18 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
   // ── Task edits ────────────────────────────────────────────────────────────
 
   // Auto-update milestone status based on task completion:
-  //   0 done  → not_started | some done → in_progress | all done → completed
+  //   any rejected (open change request) → in_progress
+  //   0 done       → not_started
+  //   some done    → in_progress
+  //   all done (no rejections) → completed
   const syncMilestoneStatus = async (milestoneId, allProjectTasks) => {
     const msTasks = allProjectTasks.filter(t => t.milestone_id === milestoneId);
     if (!msTasks.length) return;
-    const doneCount = msTasks.filter(t => t.completed).length;
-    const newStatus = doneCount === msTasks.length ? 'completed'
-                    : doneCount > 0               ? 'in_progress'
-                    :                               'not_started';
+    const hasRejected = msTasks.some(t => t.rejected_at);
+    const doneCount   = msTasks.filter(t => t.completed && !t.rejected_at).length;
+    const newStatus   = hasRejected || doneCount < msTasks.length
+                        ? (doneCount > 0 || hasRejected ? 'in_progress' : 'not_started')
+                        : 'completed';
     const ms = milestones.find(m => m.id === milestoneId);
     if (!ms || ms.status === newStatus) return;
     const newMs = { ...ms, status: newStatus };

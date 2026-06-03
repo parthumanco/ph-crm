@@ -619,7 +619,9 @@ export async function approveTask(taskId, approvedBy) {
     .update({ approved_at: now, approved_by: approvedBy, rejected_at: null, rejected_by: null, rejection_notes: null, rejection_response: null })
     .eq('id', taskId);
   if (error) throw new Error(error.message);
-  return addToReviewChain(taskId, { type: 'approved', by: approvedBy, at: now });
+  const chain = await addToReviewChain(taskId, { type: 'approved', by: approvedBy, at: now });
+  await syncMilestoneStatusForTask(taskId);
+  return chain;
 }
 
 export async function rejectTask(taskId, rejectedBy, notes) {
@@ -628,7 +630,32 @@ export async function rejectTask(taskId, rejectedBy, notes) {
     .update({ rejected_at: now, rejected_by: rejectedBy, rejection_notes: notes, approved_at: null, approved_by: null })
     .eq('id', taskId);
   if (error) throw new Error(error.message);
-  return addToReviewChain(taskId, { type: 'rejected', by: rejectedBy, notes, at: now });
+  const chain = await addToReviewChain(taskId, { type: 'rejected', by: rejectedBy, notes, at: now });
+  // Push milestone back to in_progress so it no longer shows "Completed"
+  await syncMilestoneStatusForTask(taskId);
+  return chain;
+}
+
+// Recalculate and save milestone status based on current tasks in DB.
+// Called after portal-side events (reject/approve) where the PM isn't online.
+export async function syncMilestoneStatusForTask(taskId) {
+  try {
+    const { data: task } = await supabase.from('project_tasks').select('milestone_id').eq('id', taskId).single();
+    if (!task?.milestone_id) return;
+    const msId = task.milestone_id;
+
+    const { data: msTasks } = await supabase.from('project_tasks').select('completed,rejected_at').eq('milestone_id', msId).is('deleted_at', null);
+    const tasks = msTasks || [];
+    if (!tasks.length) return;
+
+    const hasRejected = tasks.some(t => t.rejected_at);
+    const doneCount   = tasks.filter(t => t.completed && !t.rejected_at).length;
+    const newStatus   = hasRejected || doneCount < tasks.length
+                        ? (doneCount > 0 || hasRejected ? 'in_progress' : 'not_started')
+                        : 'completed';
+
+    await supabase.from('milestones').update({ status: newStatus }).eq('id', msId);
+  } catch { /* non-fatal */ }
 }
 
 export async function saveRejectionResponse(taskId, response) {
