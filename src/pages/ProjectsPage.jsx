@@ -4,7 +4,7 @@ import { generateProjectSummary, generateRejectionResponse } from '../lib/anthro
 import {
   fetchProjects, fetchArchivedProjects, upsertProject, archiveProject, restoreProject, deleteProject,
   fetchMilestones, fetchArchivedMilestones, upsertMilestone, archiveMilestone, restoreMilestone, deleteMilestone,
-  fetchProjectTasks, upsertProjectTask, toggleTask, deleteProjectTask, rejectTask, saveRejectionResponse,
+  fetchProjectTasks, upsertProjectTask, toggleTask, deleteProjectTask, rejectTask, saveRejectionResponse, addToReviewChain,
   fetchProjectFiles, uploadProjectFile, deleteProjectFile, addExternalLink,
   restoreProjectTask, fetchAllTasksByOwner,
   bulkInsertMilestones, bulkInsertTasks, parseProposalWithAI,
@@ -887,11 +887,17 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
   const handleGenerateResponse = async (task) => {
     setGeneratingResponse(task.id);
     try {
-      const response = await generateRejectionResponse(task.title, activeProject?.name || '', task.rejection_notes);
+      const projectName = activeProject?.name || task._project?.name || '';
+      const response = await generateRejectionResponse(task.title, projectName, task.rejection_notes);
       await saveRejectionResponse(task.id, response);
-      const updated = tasks.map(t => t.id === task.id ? { ...t, rejection_response: response } : t);
-      setTasks(updated);
-      setAllTasks(prev => ({ ...prev, [activeProject.id]: updated }));
+      const patch = t => t.id === task.id ? { ...t, rejection_response: response } : t;
+      setTasks(prev => prev.map(patch));
+      setAllTasks(prev => {
+        const pid = activeProject?.id;
+        if (!pid) return prev;
+        return { ...prev, [pid]: (prev[pid] || []).map(patch) };
+      });
+      setAssignedTasks(prev => prev.map(patch));
     } catch (e) {
       console.error('Generate response failed:', e.message);
     } finally {
@@ -2245,45 +2251,88 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                               </div>
                             )}
 
-                            {/* Rejection / approval chain of custody */}
-                            {task.completed && task.rejected_at && (
-                              <div style={{ margin: '0 16px 8px 48px' }}>
-                                <button
-                                  onClick={() => setExpandedRejections(s => { const n = new Set(s); n.has(task.id) ? n.delete(task.id) : n.add(task.id); return n; })}
-                                  style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 700, color: '#ef4444', background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: 5, padding: '3px 10px', cursor: 'pointer' }}
-                                >
-                                  ⚠ Changes Requested by {task.rejected_by} · {fmtDate(task.rejected_at)} {expandedRejections.has(task.id) ? '▲' : '▼'}
-                                </button>
-                                {expandedRejections.has(task.id) && (
-                                  <div style={{ marginTop: 6, padding: '10px 12px', background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: 8 }}>
-                                    <div style={{ fontSize: 12, color: '#374151', lineHeight: 1.6, whiteSpace: 'pre-wrap', marginBottom: 10 }}>
-                                      <strong style={{ color: '#ef4444' }}>Client notes:</strong> {task.rejection_notes}
+                            {/* ── Chain of custody ── */}
+                            {(() => {
+                              const chain = task.review_chain || [];
+                              const isExpanded = expandedRejections.has(task.id);
+                              const toggleChain = () => setExpandedRejections(s => { const n = new Set(s); n.has(task.id) ? n.delete(task.id) : n.add(task.id); return n; });
+                              const lastEvent = chain[chain.length - 1];
+                              const hasRejection = task.rejected_at;
+                              if (chain.length === 0 && !hasRejection && !task.approved_at) return null;
+                              const eventLabel = ev => {
+                                if (ev.type === 'sent')         return { icon: '📤', text: `Sent to client`, color: 'var(--text-muted)' };
+                                if (ev.type === 'rejected')     return { icon: '⚠', text: `Not approved by ${ev.by}`, color: '#ef4444' };
+                                if (ev.type === 'revised_sent') return { icon: '📤', text: `Revision sent`, color: 'var(--text-muted)' };
+                                if (ev.type === 'approved')     return { icon: '✓', text: `Approved by ${ev.by}`, color: '#10b981' };
+                                return { icon: '·', text: ev.type, color: 'var(--text-faint)' };
+                              };
+                              // Count revisions
+                              let revNum = 0;
+                              const displayChain = chain.map(ev => {
+                                if (ev.type === 'revised_sent') { revNum++; return { ...ev, revNum }; }
+                                return ev;
+                              });
+                              return (
+                                <div style={{ margin: '4px 16px 8px 48px' }}>
+                                  <button
+                                    onClick={toggleChain}
+                                    style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 700,
+                                      color: hasRejection ? '#ef4444' : '#10b981',
+                                      background: hasRejection ? '#fef2f2' : '#f0fdf4',
+                                      border: `1px solid ${hasRejection ? '#fca5a5' : '#bbf7d0'}`,
+                                      borderRadius: 5, padding: '3px 10px', cursor: 'pointer' }}
+                                  >
+                                    {hasRejection ? '⚠ Changes Requested' : '✓ Approved'} · {chain.length} event{chain.length !== 1 ? 's' : ''} {isExpanded ? '▲' : '▼'}
+                                  </button>
+                                  {isExpanded && (
+                                    <div style={{ marginTop: 6, borderLeft: '2px solid var(--border)', paddingLeft: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                                      {displayChain.map((ev, i) => {
+                                        const lbl = eventLabel(ev);
+                                        const isRej = ev.type === 'rejected';
+                                        const isRevSent = ev.type === 'revised_sent';
+                                        const isLastRej = isRej && i === displayChain.length - 1;
+                                        return (
+                                          <div key={i} style={{ fontSize: 12 }}>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                              <span style={{ color: lbl.color, fontWeight: 700 }}>{lbl.icon}</span>
+                                              <span style={{ color: lbl.color, fontWeight: isRej ? 700 : 500 }}>
+                                                {isRevSent ? `Revision ${ev.revNum} sent` : lbl.text}
+                                              </span>
+                                              <span style={{ color: 'var(--text-faint)', fontSize: 11 }}>· {fmtDate(ev.at)}</span>
+                                            </div>
+                                            {isRej && ev.notes && (
+                                              <div style={{ marginTop: 4, marginLeft: 18, padding: '6px 10px', background: '#fef2f2', borderRadius: 6, fontSize: 11, color: '#374151', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>
+                                                {ev.notes}
+                                              </div>
+                                            )}
+                                            {isRevSent && ev.response && (
+                                              <div style={{ marginTop: 4, marginLeft: 18, padding: '6px 10px', background: 'var(--surface)', borderRadius: 6, fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>
+                                                {ev.response}
+                                              </div>
+                                            )}
+                                            {isLastRej && (
+                                              <div style={{ marginTop: 6, marginLeft: 18, display: 'flex', gap: 8 }}>
+                                                {task.rejection_response ? (
+                                                  <button onClick={() => setResendEmail({ task, project: activeProject })}
+                                                    style={{ fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 5, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer' }}>
+                                                    📬 Send revised update
+                                                  </button>
+                                                ) : (
+                                                  <button onClick={() => handleGenerateResponse(task)} disabled={generatingResponse === task.id}
+                                                    style={{ fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 5, border: '1px solid var(--border)', background: 'var(--surface)', color: generatingResponse === task.id ? 'var(--text-faint)' : 'var(--text)', cursor: generatingResponse === task.id ? 'default' : 'pointer' }}>
+                                                    {generatingResponse === task.id ? '✦ Generating…' : '✦ Auto-generate response'}
+                                                  </button>
+                                                )}
+                                              </div>
+                                            )}
+                                          </div>
+                                        );
+                                      })}
                                     </div>
-                                    {task.rejection_response ? (
-                                      <>
-                                        <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 4 }}>Your response</div>
-                                        <div style={{ fontSize: 12, color: 'var(--text)', lineHeight: 1.6, whiteSpace: 'pre-wrap', marginBottom: 10 }}>{task.rejection_response}</div>
-                                        <button
-                                          onClick={() => setResendEmail({ task, project: activeProject })}
-                                          style={{ fontSize: 11, fontWeight: 700, padding: '4px 12px', borderRadius: 6, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer' }}
-                                        >📬 Send revised update to client</button>
-                                      </>
-                                    ) : (
-                                      <button
-                                        onClick={() => handleGenerateResponse(task)}
-                                        disabled={generatingResponse === task.id}
-                                        style={{ fontSize: 11, fontWeight: 700, padding: '4px 12px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface)', color: generatingResponse === task.id ? 'var(--text-faint)' : 'var(--text)', cursor: generatingResponse === task.id ? 'default' : 'pointer' }}
-                                      >{generatingResponse === task.id ? '✦ Generating response…' : '✦ Auto-generate response'}</button>
-                                    )}
-                                  </div>
-                                )}
-                              </div>
-                            )}
-                            {task.completed && task.approved_at && (
-                              <div style={{ margin: '0 16px 6px 48px', fontSize: 11, color: '#10b981', fontWeight: 600 }}>
-                                ✓ Approved by {task.approved_by} · {fmtDate(task.approved_at)}
-                              </div>
-                            )}
+                                  )}
+                                </div>
+                              );
+                            })()}
 
                             {/* Task-level attached files */}
                             {taskFiles.length > 0 && (
@@ -2796,6 +2845,15 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                             }),
                           ]);
                         } catch { /* clipboard not available, skip */ }
+                        // Record "sent" event in chain
+                        try {
+                          const chain = await addToReviewChain(task.id, { type: 'sent', by: 'Part Human' });
+                          setTasks(prev => prev.map(t => t.id === task.id ? { ...t, review_chain: chain } : t));
+                          setAllTasks(prev => {
+                            const updated = (prev[project.id] || []).map(t => t.id === task.id ? { ...t, review_chain: chain } : t);
+                            return { ...prev, [project.id]: updated };
+                          });
+                        } catch { /* non-fatal */ }
                         window.open(gmailUrl, '_blank');
                         setTaskCompleteEmail(null);
                       }}
@@ -2881,6 +2939,18 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                       try {
                         await navigator.clipboard.write([new ClipboardItem({ 'text/html': new Blob([htmlBody], { type: 'text/html' }), 'text/plain': new Blob([body], { type: 'text/plain' }) })]);
                       } catch { /* skip */ }
+                      // Record "revised_sent" event in chain
+                      try {
+                        const chain = await addToReviewChain(task.id, { type: 'revised_sent', by: 'Part Human', response: task.rejection_response });
+                        const patchTask = t => t.id === task.id ? { ...t, review_chain: chain } : t;
+                        setTasks(prev => prev.map(patchTask));
+                        setAllTasks(prev => {
+                          const pid = project?.id;
+                          if (!pid) return prev;
+                          return { ...prev, [pid]: (prev[pid] || []).map(patchTask) };
+                        });
+                        setAssignedTasks(prev => prev.map(patchTask));
+                      } catch { /* non-fatal */ }
                       window.open(gmailUrl, '_blank');
                       setResendEmail(null);
                     }}

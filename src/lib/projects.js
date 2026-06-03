@@ -598,12 +598,28 @@ export async function approveMilestone(milestoneId, approvedBy) {
   if (error) throw new Error(error.message);
 }
 
+// ── Review chain helpers ──────────────────────────────────────────────────────
+
+export async function addToReviewChain(taskId, event) {
+  const now = new Date().toISOString();
+  const { data, error } = await supabase
+    .from('project_tasks').select('review_chain').eq('id', taskId).single();
+  if (error) throw new Error(error.message);
+  const chain = Array.isArray(data?.review_chain) ? data.review_chain : [];
+  const updated = [...chain, { ...event, at: event.at || now }];
+  const { error: err2 } = await supabase
+    .from('project_tasks').update({ review_chain: updated }).eq('id', taskId);
+  if (err2) throw new Error(err2.message);
+  return updated;
+}
+
 export async function approveTask(taskId, approvedBy) {
   const now = new Date().toISOString();
   const { error } = await supabase.from('project_tasks')
     .update({ approved_at: now, approved_by: approvedBy, rejected_at: null, rejected_by: null, rejection_notes: null, rejection_response: null })
     .eq('id', taskId);
   if (error) throw new Error(error.message);
+  return addToReviewChain(taskId, { type: 'approved', by: approvedBy, at: now });
 }
 
 export async function rejectTask(taskId, rejectedBy, notes) {
@@ -612,6 +628,7 @@ export async function rejectTask(taskId, rejectedBy, notes) {
     .update({ rejected_at: now, rejected_by: rejectedBy, rejection_notes: notes, approved_at: null, approved_by: null })
     .eq('id', taskId);
   if (error) throw new Error(error.message);
+  return addToReviewChain(taskId, { type: 'rejected', by: rejectedBy, notes, at: now });
 }
 
 export async function saveRejectionResponse(taskId, response) {

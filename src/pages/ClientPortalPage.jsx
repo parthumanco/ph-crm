@@ -536,7 +536,9 @@ export default function ClientPortalPage({ token }) {
   const [rejectName, setRejectName]     = useState('');
   const [rejectNotes, setRejectNotes]   = useState('');
   const [rejecting, setRejecting]       = useState(false);
+  const [rejectError, setRejectError]   = useState('');
   const [expandedRejections, setExpandedRejections] = useState(new Set());
+  const [expandedChains, setExpandedChains] = useState(new Set());
   const highlightTaskId = new URLSearchParams(window.location.search).get('task');
 
   useEffect(() => {
@@ -590,9 +592,9 @@ export default function ClientPortalPage({ token }) {
       const now = new Date().toISOString();
       const name = approveName.trim();
       if (approveModal.task) {
-        await approveTask(approveModal.task.id, name);
+        const updatedChain = await approveTask(approveModal.task.id, name);
         setTasks(prev => prev.map(t =>
-          t.id === approveModal.task.id ? { ...t, approved_at: now, approved_by: name } : t
+          t.id === approveModal.task.id ? { ...t, approved_at: now, approved_by: name, rejected_at: null, rejected_by: null, review_chain: updatedChain } : t
         ));
         setApproveModal(null);
         setShowHighFive(true);
@@ -614,21 +616,22 @@ export default function ClientPortalPage({ token }) {
   const handleRejectSubmit = async () => {
     if (!rejectName.trim() || !rejectNotes.trim()) return;
     setRejecting(true);
+    setRejectError('');
     try {
       const name  = rejectName.trim();
       const notes = rejectNotes.trim();
-      await rejectTask(rejectModal.task.id, name, notes);
-      const now = new Date().toISOString();
+      const now   = new Date().toISOString();
+      const updatedChain = await rejectTask(rejectModal.task.id, name, notes);
       setTasks(prev => prev.map(t =>
         t.id === rejectModal.task.id
-          ? { ...t, rejected_at: now, rejected_by: name, rejection_notes: notes, approved_at: null, approved_by: null }
+          ? { ...t, rejected_at: now, rejected_by: name, rejection_notes: notes, approved_at: null, approved_by: null, review_chain: updatedChain }
           : t
       ));
       setRejectModal(null);
       setRejectName('');
       setRejectNotes('');
     } catch (e) {
-      console.error('Reject failed:', e.message);
+      setRejectError(e.message || 'Something went wrong — please try again.');
     } finally {
       setRejecting(false);
     }
@@ -1088,9 +1091,14 @@ export default function ClientPortalPage({ token }) {
                 style={{ width: '100%', fontSize: 13, padding: '9px 12px', borderRadius: 8, border: '1px solid #d1d5db', fontFamily: 'Inter, sans-serif', resize: 'vertical', lineHeight: 1.6, boxSizing: 'border-box' }}
               />
             </div>
+            {rejectError && (
+              <div style={{ fontSize: 12, color: '#ef4444', background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: 6, padding: '8px 12px', marginBottom: 12 }}>
+                ⚠ {rejectError}
+              </div>
+            )}
             <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
               <button
-                onClick={() => setRejectModal(null)}
+                onClick={() => { setRejectModal(null); setRejectError(''); }}
                 style={{ padding: '9px 18px', borderRadius: 8, border: '1px solid #e5e7eb', background: '#f9fafb', color: '#374151', fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'Inter, sans-serif' }}
               >Cancel</button>
               <button
