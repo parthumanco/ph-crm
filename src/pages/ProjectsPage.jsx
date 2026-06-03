@@ -2542,8 +2542,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
         const portalUrl    = hasPortal ? `${window.location.origin}/portal/${project.share_token}?task=${task.id}` : null;
         const subject      = `Task complete: ${task.title}`;
         const companyLabel = project.client_name || project.name;
-        const portalPill   = portalUrl ? `Part Human × ${companyLabel}\n${portalUrl}` : null;
-        const body         = `Hi ${clientName},\n\nA task on your project ${project.name} has been completed and is ready for your review.\n\nTask: ${task.title}\n\n${portalPill ? `Please visit your project dashboard to review and approve it:\n${portalPill}\n\n` : ''}Best,\nPart Human`;
+        const body         = `Hi ${clientName},\n\nA task on your project has been completed and is ready for your review.\n\nTask: ${task.title}\n\n${portalUrl ? `Please visit your project dashboard to review and approve it:\n${portalUrl}\n\n` : ''}Best,\nPart Human`;
         const gmailUrl     = toEmail ? `https://mail.google.com/mail/?view=cm&to=${encodeURIComponent(toEmail)}&su=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}` : null;
 
         return (
@@ -2618,7 +2617,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                     <div>
                       <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 4 }}>Message</div>
                       <div style={{ fontSize: 12, padding: '10px 12px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 7, color: 'var(--text-muted)', lineHeight: 1.65, maxHeight: 220, overflowY: 'auto' }}>
-                        <div style={{ whiteSpace: 'pre-wrap' }}>{`Hi ${clientName},\n\nA task on your project ${project.name} has been completed and is ready for your review.\n\nTask: ${task.title}\n\n${portalUrl ? 'Please visit your project dashboard to review and approve it:\n' : ''}` }</div>
+                        <div style={{ whiteSpace: 'pre-wrap' }}>{`Hi ${clientName},\n\nA task on your project has been completed and is ready for your review.\n\nTask: ${task.title}\n\n${portalUrl ? 'Please visit your project dashboard to review and approve it:\n' : ''}` }</div>
                         {portalUrl && (
                           <a
                             href={portalUrl}
