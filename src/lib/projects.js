@@ -662,7 +662,7 @@ export async function syncMilestoneStatusForTask(taskId) {
 // to "awaiting approval" state. History is preserved in review_chain.
 export async function clearRejectionFields(taskId) {
   const { error } = await supabase.from('project_tasks')
-    .update({ rejected_at: null, rejected_by: null, rejection_notes: null })
+    .update({ rejected_at: null, rejected_by: null, rejection_notes: null, rejection_response: null })
     .eq('id', taskId);
   if (error) throw new Error(error.message);
   await syncMilestoneStatusForTask(taskId);

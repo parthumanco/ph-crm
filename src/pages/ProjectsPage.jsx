@@ -916,30 +916,35 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
     }
   };
 
-  // Opens Send Revision modal, auto-generating AI response if none exists yet
+  // Opens Send Revision modal and always regenerates AI response from the
+  // latest rejection notes so stale responses from prior cycles are never reused.
   const openResendModal = async (task, project) => {
     setResendEmail({ task, project });
-    if (!task.rejection_response && task.rejection_notes) {
-      setGeneratingResponse(task.id);
-      try {
-        const projectName = project?.name || '';
-        const response = await generateRejectionResponse(task.title, projectName, task.rejection_notes);
-        await saveRejectionResponse(task.id, response);
-        const patch = t => t.id === task.id ? { ...t, rejection_response: response } : t;
-        setTasks(prev => prev.map(patch));
-        setAllTasks(prev => {
-          const pid = project?.id;
-          if (!pid) return prev;
-          return { ...prev, [pid]: (prev[pid] || []).map(patch) };
-        });
-        setAssignedTasks(prev => prev.map(patch));
-        // Update the modal's task reference so the email body reflects the new response
-        setResendEmail({ task: { ...task, rejection_response: response }, project });
-      } catch (e) {
-        console.error('Auto-generate response failed:', e.message);
-      } finally {
-        setGeneratingResponse(null);
-      }
+    // Get the latest rejection notes — prefer the flat field, fall back to
+    // the most recent 'rejected' event in the chain (in case flat field was cleared).
+    const latestNotes = task.rejection_notes
+      || [...(task.review_chain || [])].reverse().find(e => e.type === 'rejected')?.notes
+      || '';
+    if (!latestNotes) return;
+    setGeneratingResponse(task.id);
+    try {
+      const projectName = project?.name || '';
+      const response = await generateRejectionResponse(task.title, projectName, latestNotes);
+      await saveRejectionResponse(task.id, response);
+      const patch = t => t.id === task.id ? { ...t, rejection_response: response } : t;
+      setTasks(prev => prev.map(patch));
+      setAllTasks(prev => {
+        const pid = project?.id;
+        if (!pid) return prev;
+        return { ...prev, [pid]: (prev[pid] || []).map(patch) };
+      });
+      setAssignedTasks(prev => prev.map(patch));
+      // Update the modal's task reference so the email body reflects the fresh response
+      setResendEmail({ task: { ...task, rejection_response: response, rejection_notes: latestNotes }, project });
+    } catch (e) {
+      console.error('Auto-generate response failed:', e.message);
+    } finally {
+      setGeneratingResponse(null);
     }
   };
 
