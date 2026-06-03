@@ -2254,81 +2254,70 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                             {/* ── Chain of custody ── */}
                             {(() => {
                               const chain = task.review_chain || [];
-                              const isExpanded = expandedRejections.has(task.id);
-                              const toggleChain = () => setExpandedRejections(s => { const n = new Set(s); n.has(task.id) ? n.delete(task.id) : n.add(task.id); return n; });
-                              const lastEvent = chain[chain.length - 1];
                               const hasRejection = task.rejected_at;
-                              if (chain.length === 0 && !hasRejection && !task.approved_at) return null;
+                              const hasApproval  = task.approved_at;
+                              if (chain.length === 0 && !hasRejection && !hasApproval) return null;
+
+                              const revisionsSent = chain.filter(e => e.type === 'revised_sent').length;
+                              const nextRevNum    = revisionsSent + 1;
+                              const isExpanded    = expandedRejections.has(task.id);
+                              const toggleChain   = () => setExpandedRejections(s => { const n = new Set(s); n.has(task.id) ? n.delete(task.id) : n.add(task.id); return n; });
+
                               const eventLabel = ev => {
-                                if (ev.type === 'sent')         return { icon: '📤', text: `Sent to client`, color: 'var(--text-muted)' };
-                                if (ev.type === 'rejected')     return { icon: '⚠', text: `Not approved by ${ev.by}`, color: '#ef4444' };
-                                if (ev.type === 'revised_sent') return { icon: '📤', text: `Revision sent`, color: 'var(--text-muted)' };
-                                if (ev.type === 'approved')     return { icon: '✓', text: `Approved by ${ev.by}`, color: '#10b981' };
+                                if (ev.type === 'sent')         return { icon: '📤', text: 'Sent to client',            color: 'var(--text-muted)' };
+                                if (ev.type === 'rejected')     return { icon: '⚠',  text: `Not approved by ${ev.by}`, color: '#ef4444' };
+                                if (ev.type === 'revised_sent') return { icon: '📤', text: `Revision ${ev.revNum} sent`, color: 'var(--text-muted)' };
+                                if (ev.type === 'approved')     return { icon: '✓',  text: `Approved by ${ev.by}`,     color: '#10b981' };
                                 return { icon: '·', text: ev.type, color: 'var(--text-faint)' };
                               };
-                              // Count revisions
-                              let revNum = 0;
-                              const displayChain = chain.map(ev => {
-                                if (ev.type === 'revised_sent') { revNum++; return { ...ev, revNum }; }
-                                return ev;
-                              });
+
+                              let rn = 0;
+                              const displayChain = chain.map(ev => ev.type === 'revised_sent' ? { ...ev, revNum: ++rn } : ev);
+
                               return (
-                                <div style={{ margin: '4px 16px 8px 48px' }}>
-                                  <button
-                                    onClick={toggleChain}
-                                    style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 700,
-                                      color: hasRejection ? '#ef4444' : '#10b981',
-                                      background: hasRejection ? '#fef2f2' : '#f0fdf4',
-                                      border: `1px solid ${hasRejection ? '#fca5a5' : '#bbf7d0'}`,
-                                      borderRadius: 5, padding: '3px 10px', cursor: 'pointer' }}
-                                  >
-                                    {hasRejection ? '⚠ Changes Requested' : '✓ Approved'} · {chain.length} event{chain.length !== 1 ? 's' : ''} {isExpanded ? '▲' : '▼'}
-                                  </button>
-                                  {isExpanded && (
-                                    <div style={{ marginTop: 6, borderLeft: '2px solid var(--border)', paddingLeft: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
-                                      {displayChain.map((ev, i) => {
-                                        const lbl = eventLabel(ev);
-                                        const isRej = ev.type === 'rejected';
-                                        const isRevSent = ev.type === 'revised_sent';
-                                        const isLastRej = isRej && i === displayChain.length - 1;
-                                        return (
-                                          <div key={i} style={{ fontSize: 12 }}>
-                                            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                                              <span style={{ color: lbl.color, fontWeight: 700 }}>{lbl.icon}</span>
-                                              <span style={{ color: lbl.color, fontWeight: isRej ? 700 : 500 }}>
-                                                {isRevSent ? `Revision ${ev.revNum} sent` : lbl.text}
-                                              </span>
-                                              <span style={{ color: 'var(--text-faint)', fontSize: 11 }}>· {fmtDate(ev.at)}</span>
-                                            </div>
-                                            {isRej && ev.notes && (
-                                              <div style={{ marginTop: 4, marginLeft: 18, padding: '6px 10px', background: '#fef2f2', borderRadius: 6, fontSize: 11, color: '#374151', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>
-                                                {ev.notes}
-                                              </div>
-                                            )}
-                                            {isRevSent && ev.response && (
-                                              <div style={{ marginTop: 4, marginLeft: 18, padding: '6px 10px', background: 'var(--surface)', borderRadius: 6, fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>
-                                                {ev.response}
-                                              </div>
-                                            )}
-                                            {isLastRej && (
-                                              <div style={{ marginTop: 6, marginLeft: 18, display: 'flex', gap: 8 }}>
-                                                {task.rejection_response ? (
-                                                  <button onClick={() => setResendEmail({ task, project: activeProject })}
-                                                    style={{ fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 5, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer' }}>
-                                                    📬 Send revised update
-                                                  </button>
-                                                ) : (
-                                                  <button onClick={() => handleGenerateResponse(task)} disabled={generatingResponse === task.id}
-                                                    style={{ fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 5, border: '1px solid var(--border)', background: 'var(--surface)', color: generatingResponse === task.id ? 'var(--text-faint)' : 'var(--text)', cursor: generatingResponse === task.id ? 'default' : 'pointer' }}>
-                                                    {generatingResponse === task.id ? '✦ Generating…' : '✦ Auto-generate response'}
-                                                  </button>
+                                <div style={{ margin: '4px 16px 8px 48px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                  {/* ── Always-visible CTA when there's an open rejection ── */}
+                                  {hasRejection && (
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                      <button
+                                        onClick={() => setResendEmail({ task, project: activeProject })}
+                                        style={{ fontSize: 12, fontWeight: 700, padding: '5px 14px', borderRadius: 6, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                                      >📤 Send Revision {nextRevNum} →</button>
+                                      <span style={{ fontSize: 11, color: '#ef4444', fontWeight: 600 }}>
+                                        ⚠ Changes requested by {task.rejected_by}
+                                      </span>
+                                    </div>
+                                  )}
+
+                                  {/* ── History toggle ── */}
+                                  {chain.length > 0 && (
+                                    <>
+                                      <button
+                                        onClick={toggleChain}
+                                        style={{ alignSelf: 'flex-start', fontSize: 11, fontWeight: 600, color: 'var(--text-faint)', background: 'none', border: 'none', padding: 0, cursor: 'pointer', textDecoration: 'underline', textUnderlineOffset: 2 }}
+                                      >{isExpanded ? '▲ Hide' : '▼ View'} review history ({chain.length})</button>
+                                      {isExpanded && (
+                                        <div style={{ borderLeft: '2px solid var(--border)', paddingLeft: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                                          {displayChain.map((ev, i) => {
+                                            const lbl = eventLabel(ev);
+                                            return (
+                                              <div key={i} style={{ fontSize: 12 }}>
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                                  <span style={{ color: lbl.color, fontWeight: 700 }}>{lbl.icon}</span>
+                                                  <span style={{ color: lbl.color, fontWeight: ev.type === 'rejected' ? 700 : 500 }}>{lbl.text}</span>
+                                                  <span style={{ color: 'var(--text-faint)', fontSize: 11 }}>· {fmtDate(ev.at)}</span>
+                                                </div>
+                                                {ev.type === 'rejected' && ev.notes && (
+                                                  <div style={{ marginTop: 4, marginLeft: 18, padding: '5px 9px', background: '#fef2f2', borderRadius: 5, fontSize: 11, color: '#374151', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>
+                                                    {ev.notes}
+                                                  </div>
                                                 )}
                                               </div>
-                                            )}
-                                          </div>
-                                        );
-                                      })}
-                                    </div>
+                                            );
+                                          })}
+                                        </div>
+                                      )}
+                                    </>
                                   )}
                                 </div>
                               );
@@ -2875,14 +2864,14 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
         const toEmail      = primaryContact?.email || project?.client_email || '';
         const companyLabel = project?.client_name || project?.name || '';
         const portalUrl    = project?.share_token ? `${window.location.origin}/portal/${project.share_token}?task=${task.id}` : null;
-        const subject      = `Update on: ${task.title}`;
-        const body         = `Hi ${clientName},\n\nThank you for your feedback on the task — we've made the requested revisions and it's ready for your review.\n\nTask: ${task.title}\n\n${task.rejection_response ? `${task.rejection_response}\n\n` : ''}${portalUrl ? `Please visit your project dashboard to review:\n${portalUrl}\n\n` : ''}Best,\nPart Human`;
+        const revNum       = ((task.review_chain || []).filter(e => e.type === 'revised_sent').length) + 1;
+        const subject      = `Revision ${revNum} ready: ${task.title}`;
+        const body         = `Hi ${clientName},\n\nA revision has been made to your project. Please click the link below to review and approve it.\n\nTask: ${task.title}\n\n${portalUrl ? `${portalUrl}\n\n` : ''}Best,\nPart Human`;
         const htmlBody     = [
           `<p style="font-family:sans-serif;font-size:14px;">Hi ${clientName},</p>`,
-          `<p style="font-family:sans-serif;font-size:14px;">Thank you for your feedback — we've made the requested revisions and it's ready for your review.</p>`,
+          `<p style="font-family:sans-serif;font-size:14px;">A revision has been made to your project. Please click the link below to review and approve it.</p>`,
           `<p style="font-family:sans-serif;font-size:14px;"><strong>Task:</strong> ${task.title}</p>`,
-          task.rejection_response ? `<p style="font-family:sans-serif;font-size:14px;">${task.rejection_response}</p>` : '',
-          portalUrl ? `<p style="font-family:sans-serif;font-size:14px;">Please visit your project dashboard to review:</p><p><a href="${portalUrl}" style="display:inline-block;background:#fbbf24;color:#111;font-weight:800;font-size:13px;padding:6px 14px;border-radius:20px;text-decoration:none;font-family:sans-serif;">PH &times; ${companyLabel}</a></p>` : '',
+          portalUrl ? `<p><a href="${portalUrl}" style="display:inline-block;background:#fbbf24;color:#111;font-weight:800;font-size:13px;padding:6px 14px;border-radius:20px;text-decoration:none;font-family:sans-serif;">PH &times; ${companyLabel}</a></p>` : '',
           `<p style="font-family:sans-serif;font-size:14px;">Best,<br>Part Human</p>`,
         ].join('');
         const gmailUrl = toEmail ? `https://mail.google.com/mail/?view=cm&to=${encodeURIComponent(toEmail)}&su=${encodeURIComponent(subject)}` : null;
@@ -2892,7 +2881,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
             <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.4)' }} onClick={() => setResendEmail(null)} />
             <div style={{ position: 'relative', zIndex: 1, background: 'var(--bg)', borderRadius: 14, padding: '28px 28px 24px', width: 500, maxWidth: '95vw', boxShadow: '0 20px 60px rgba(0,0,0,0.22)' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
-                <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--text)' }}>📬 Revised update to client</div>
+                <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--text)' }}>📤 Send Revision {revNum}</div>
                 <button onClick={() => setResendEmail(null)} style={{ background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: 'var(--text-muted)', padding: '2px 4px' }}>✕</button>
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -2908,13 +2897,13 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                 </div>
                 <div>
                   <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 4 }}>Message</div>
-                  <div style={{ fontSize: 12, padding: '10px 12px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 7, color: 'var(--text-muted)', lineHeight: 1.65, maxHeight: 220, overflowY: 'auto' }}>
-                    <div style={{ whiteSpace: 'pre-wrap' }}>{`Hi ${clientName},\n\nThank you for your feedback — we've made the requested revisions and it's ready for your review.\n\nTask: ${task.title}\n\n${task.rejection_response ? `${task.rejection_response}\n\n` : ''}${portalUrl ? 'Please visit your project dashboard to review:\n' : ''}`}</div>
-                    {portalUrl && (
-                      <a href={portalUrl} target="_blank" rel="noopener noreferrer" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: '#fbbf24', color: '#111', fontWeight: 800, fontSize: 12, padding: '5px 12px', borderRadius: 20, textDecoration: 'none', margin: '6px 0 8px' }}>
+                  <div style={{ fontSize: 12, padding: '10px 12px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 7, color: 'var(--text-muted)', lineHeight: 1.65 }}>
+                    <div style={{ whiteSpace: 'pre-wrap' }}>{`Hi ${clientName},\n\nA revision has been made to your project. Please click the link below to review and approve it.\n\nTask: ${task.title}\n\n`}</div>
+                    {portalUrl ? (
+                      <a href={portalUrl} target="_blank" rel="noopener noreferrer" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: '#fbbf24', color: '#111', fontWeight: 800, fontSize: 12, padding: '5px 12px', borderRadius: 20, textDecoration: 'none', margin: '2px 0 8px' }}>
                         <span style={{ fontWeight: 900, fontSize: 13 }}>PH</span><span>×</span><span>{companyLabel}</span>
                       </a>
-                    )}
+                    ) : <span style={{ color: 'var(--text-faint)', fontSize: 11 }}>No portal link — set up a client portal to enable this</span>}
                     <div style={{ whiteSpace: 'pre-wrap' }}>{`\nBest,\nPart Human`}</div>
                   </div>
                 </div>
