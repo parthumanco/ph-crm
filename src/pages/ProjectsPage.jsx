@@ -2641,7 +2641,12 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                     </div>
                   </div>
 
-                  <div style={{ display: 'flex', gap: 10, marginTop: 18, justifyContent: 'flex-end' }}>
+                  {portalUrl && (
+                    <div style={{ marginTop: 14, fontSize: 11, color: 'var(--text-faint)', textAlign: 'right' }}>
+                      💡 Once Gmail opens, select all &amp; paste to get the styled link
+                    </div>
+                  )}
+                  <div style={{ display: 'flex', gap: 10, marginTop: 8, justifyContent: 'flex-end' }}>
                     <button
                       onClick={async () => {
                         const htmlBody = [
@@ -2665,7 +2670,25 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                       style={{ padding: '9px 16px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}
                     >Copy</button>
                     <button
-                      onClick={() => { window.open(gmailUrl, '_blank'); setTaskCompleteEmail(null); }}
+                      onClick={async () => {
+                        const htmlBody = [
+                          `<p style="font-family:sans-serif;font-size:14px;">Hi ${clientName},</p>`,
+                          `<p style="font-family:sans-serif;font-size:14px;">A task on your project has been completed and is ready for your review.</p>`,
+                          `<p style="font-family:sans-serif;font-size:14px;"><strong>Task:</strong> ${task.title}</p>`,
+                          portalUrl ? `<p style="font-family:sans-serif;font-size:14px;">Please visit your project dashboard to review and approve it:</p><p><a href="${portalUrl}" style="display:inline-block;background:#fbbf24;color:#111;font-weight:800;font-size:13px;padding:6px 14px;border-radius:20px;text-decoration:none;font-family:sans-serif;">PH &times; ${companyLabel}</a></p>` : '',
+                          `<p style="font-family:sans-serif;font-size:14px;">Best,<br>Part Human</p>`,
+                        ].join('');
+                        try {
+                          await navigator.clipboard.write([
+                            new ClipboardItem({
+                              'text/html': new Blob([htmlBody], { type: 'text/html' }),
+                              'text/plain': new Blob([body], { type: 'text/plain' }),
+                            }),
+                          ]);
+                        } catch { /* clipboard not available, skip */ }
+                        window.open(gmailUrl, '_blank');
+                        setTaskCompleteEmail(null);
+                      }}
                       style={{ padding: '9px 20px', borderRadius: 8, border: 'none', background: 'var(--accent)', color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
                     >Open in Gmail ↗</button>
                   </div>
