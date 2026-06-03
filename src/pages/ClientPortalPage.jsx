@@ -109,35 +109,38 @@ function PortalGantt({ milestones, projectStart, projectEnd }) {
   const totalDays = daysBetween(projectStart, projectEnd);
   if (totalDays <= 0) return null;
 
+  const LABEL_W = 130;
+  const ROW_H   = 18;
+  const BAR_H   = 10;
+
   const todayStr  = new Date().toISOString().slice(0, 10);
   const todayPct  = Math.min(100, Math.max(0, daysBetween(projectStart, todayStr) / totalDays * 100));
   const showToday = todayStr >= projectStart && todayStr <= projectEnd;
 
-  const LABEL_W = 160;
-
-  // Month label ticks
+  // Month ticks — use short "Jun 26" style
   const months = [];
   const d = new Date(projectStart);
   d.setDate(1);
   while (d.toISOString().slice(0, 10) <= projectEnd) {
     const pct = daysBetween(projectStart, d.toISOString().slice(0, 10)) / totalDays * 100;
-    if (pct >= 0 && pct <= 102) {
-      months.push({ label: d.toLocaleString('en-US', { month: 'short', day: 'numeric', year: '2-digit' }), pct: Math.max(0, pct) });
-    }
+    if (pct >= 0 && pct <= 102)
+      months.push({ label: d.toLocaleString('en-US', { month: 'short', year: '2-digit' }), pct: Math.max(0, pct) });
     d.setMonth(d.getMonth() + 1);
   }
 
+  const visibleMs = milestones.filter(m => m.start_date && m.due_date);
+
   return (
-    <div style={{ overflowX: 'auto', marginBottom: 24 }}>
-      <div style={{ minWidth: 520, position: 'relative' }}>
-        {/* Month labels */}
-        <div style={{ display: 'flex', marginBottom: 8 }}>
+    <div style={{ overflowX: 'auto' }}>
+      <div style={{ minWidth: 440, position: 'relative' }}>
+        {/* Axis labels */}
+        <div style={{ display: 'flex', marginBottom: 6 }}>
           <div style={{ width: LABEL_W, flexShrink: 0 }} />
-          <div style={{ flex: 1, position: 'relative', height: 18 }}>
+          <div style={{ flex: 1, position: 'relative', height: 14 }}>
             {months.map((m, i) => (
               <span key={i} style={{
                 position: 'absolute', left: `${m.pct}%`,
-                fontSize: 11, color: '#9ca3af', fontWeight: 600,
+                fontSize: 10, color: '#b0b7c3', fontWeight: 600,
                 transform: 'translateX(-50%)', whiteSpace: 'nowrap',
               }}>{m.label}</span>
             ))}
@@ -146,42 +149,39 @@ function PortalGantt({ milestones, projectStart, projectEnd }) {
 
         {/* Rows */}
         <div style={{ position: 'relative' }}>
-          {/* Today line */}
           {showToday && (
             <div style={{
               position: 'absolute',
               left: `calc(${LABEL_W}px + (100% - ${LABEL_W}px) * ${todayPct / 100})`,
-              top: -4, bottom: 0, width: 2,
+              top: -2, bottom: 0, width: 1.5,
               background: '#ef4444', zIndex: 4, pointerEvents: 'none',
             }}>
               <span style={{
-                position: 'absolute', top: -16, left: '50%', transform: 'translateX(-50%)',
-                fontSize: 9, fontWeight: 800, color: '#ef4444', whiteSpace: 'nowrap', letterSpacing: '.04em',
+                position: 'absolute', top: -13, left: '50%', transform: 'translateX(-50%)',
+                fontSize: 8, fontWeight: 800, color: '#ef4444', whiteSpace: 'nowrap', letterSpacing: '.06em',
               }}>TODAY</span>
             </div>
           )}
 
-          {milestones.map(ms => {
-            if (!ms.start_date || !ms.due_date) return null;
+          {visibleMs.map(ms => {
             const lPct = daysBetween(projectStart, ms.start_date) / totalDays * 100;
             const wPct = daysBetween(ms.start_date, ms.due_date)  / totalDays * 100;
             const color = STATUS_COLORS[ms.status] || '#94a3b8';
             return (
-              <div key={ms.id} style={{ display: 'flex', alignItems: 'center', marginBottom: 8, height: 32 }}>
+              <div key={ms.id} style={{ display: 'flex', alignItems: 'center', height: ROW_H, marginBottom: 5 }}>
                 <div style={{
-                  width: LABEL_W, flexShrink: 0, paddingRight: 12,
-                  fontSize: 12, fontWeight: 600, color: '#374151',
+                  width: LABEL_W, flexShrink: 0, paddingRight: 10,
+                  fontSize: 11, fontWeight: 500, color: '#6b7280',
                   overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                 }} title={ms.title}>{ms.title}</div>
-                <div style={{ flex: 1, height: '100%', background: '#f3f4f6', borderRadius: 6, position: 'relative' }}>
+                <div style={{ flex: 1, height: BAR_H, background: '#f0f1f3', borderRadius: 4, position: 'relative' }}>
                   <div style={{
                     position: 'absolute',
                     left:  `${Math.max(0, lPct)}%`,
                     width: `${Math.min(wPct, 100 - Math.max(0, lPct))}%`,
-                    minWidth: 6, height: '100%',
-                    background: color,
-                    borderRadius: 6,
-                    opacity: ms.status === 'completed' ? 0.55 : 0.85,
+                    minWidth: 4, height: '100%',
+                    background: color, borderRadius: 4,
+                    opacity: ms.status === 'completed' ? 0.5 : 0.8,
                   }} />
                 </div>
               </div>
@@ -854,7 +854,7 @@ export default function ClientPortalPage({ token }) {
             </div>
             {/* Gantt chart */}
             {(project.start_date || milestones.some(m => m.start_date)) && (
-              <div style={{ background: '#fff', borderRadius: 12, border: '1px solid #e5e7eb', padding: '18px 20px', marginBottom: 16, boxShadow: '0 1px 6px rgba(0,0,0,0.04)' }}>
+              <div style={{ background: '#fff', borderRadius: 10, border: '1px solid #e5e7eb', padding: '14px 16px', marginBottom: 14, boxShadow: '0 1px 4px rgba(0,0,0,0.03)' }}>
                 <PortalGantt
                   milestones={milestones}
                   projectStart={project.start_date || milestones.filter(m => m.start_date).map(m => m.start_date).sort()[0]}
