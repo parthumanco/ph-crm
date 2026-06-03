@@ -2543,7 +2543,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
         const subject      = `Task complete: ${task.title}`;
         const companyLabel = project.client_name || project.name;
         const body         = `Hi ${clientName},\n\nA task on your project has been completed and is ready for your review.\n\nTask: ${task.title}\n\n${portalUrl ? `Please visit your project dashboard to review and approve it:\n${portalUrl}\n\n` : ''}Best,\nPart Human`;
-        const gmailUrl     = toEmail ? `https://mail.google.com/mail/?view=cm&to=${encodeURIComponent(toEmail)}&su=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}` : null;
+        const gmailUrl     = toEmail ? `https://mail.google.com/mail/?view=cm&to=${encodeURIComponent(toEmail)}&su=${encodeURIComponent(subject)}` : null;
 
         return (
           <div style={{ position: 'fixed', inset: 0, zIndex: 900, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -2643,7 +2643,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
 
                   {portalUrl && (
                     <div style={{ marginTop: 14, fontSize: 11, color: 'var(--text-faint)', textAlign: 'right' }}>
-                      💡 Once Gmail opens, select all &amp; paste to get the styled link
+                      💡 Once Gmail opens, just paste to drop in the styled message
                     </div>
                   )}
                   <div style={{ display: 'flex', gap: 10, marginTop: 8, justifyContent: 'flex-end' }}>
