@@ -903,3 +903,38 @@ If nothing found in the last ${scanWindow} days: {"found": false, "newTriggers":
   }
   return { found: false, newTriggers: [] };
 }
+
+export async function generateProjectSummary(proposalText) {
+  const trimmed = proposalText.slice(0, 12000);
+
+  const data = await withTimeout(
+    callClaude({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 350,
+      messages: [{
+        role: 'user',
+        content: `Based on the following project proposal, write a concise 3–4 sentence summary capturing: what the project is, the key deliverables, the overall scope and goal, and any notable approach. Plain prose only — no bullet points, no headers.\n\nProposal:\n${trimmed}`,
+      }],
+    }),
+    30000
+  );
+
+  const text = (data.content || []).find(b => b.type === 'text')?.text || '';
+  return text.trim();
+}
+
+export async function generateRejectionResponse(taskTitle, projectName, rejectionNotes) {
+  const data = await withTimeout(
+    callClaude({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 200,
+      messages: [{
+        role: 'user',
+        content: `You are a project manager responding to a client's change request. The client reviewed the task "${taskTitle}" on project "${projectName}" and left this feedback:\n\n"${rejectionNotes}"\n\nWrite a brief, professional response (2–3 sentences) that: acknowledges their specific feedback, confirms the revisions will be made, and indicates next steps. Warm but concise — no subject line, no sign-off.`,
+      }],
+    }),
+    20000
+  );
+  const text = (data.content || []).find(b => b.type === 'text')?.text || '';
+  return text.trim();
+}

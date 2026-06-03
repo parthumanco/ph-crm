@@ -1,10 +1,10 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from '../lib/supabase';
-import { generateProjectSummary } from '../lib/anthropic';
+import { generateProjectSummary, generateRejectionResponse } from '../lib/anthropic';
 import {
   fetchProjects, fetchArchivedProjects, upsertProject, archiveProject, restoreProject, deleteProject,
   fetchMilestones, fetchArchivedMilestones, upsertMilestone, archiveMilestone, restoreMilestone, deleteMilestone,
-  fetchProjectTasks, upsertProjectTask, toggleTask, deleteProjectTask,
+  fetchProjectTasks, upsertProjectTask, toggleTask, deleteProjectTask, rejectTask, saveRejectionResponse,
   fetchProjectFiles, uploadProjectFile, deleteProjectFile, addExternalLink,
   restoreProjectTask, fetchAllTasksByOwner,
   bulkInsertMilestones, bulkInsertTasks, parseProposalWithAI,
@@ -428,6 +428,9 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
   const [editingContactIdx, setEditingContactIdx] = useState(null);
   const [editContactDraft, setEditContactDraft]   = useState({ name: '', title: '', email: '' });
   const [summaryGenerating, setSummaryGenerating] = useState(false);
+  const [expandedRejections, setExpandedRejections] = useState(new Set());
+  const [generatingResponse, setGeneratingResponse] = useState(null); // taskId
+  const [resendEmail, setResendEmail]             = useState(null);   // { task, project }
   const [summaryError, setSummaryError]           = useState(null);
   const [shareToken, setShareToken]               = useState('');
   const [sharePassword, setSharePassword]         = useState('');
@@ -869,12 +872,30 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
     } catch (e) {
       console.error('toggleTask failed:', e);
     }
-    const updated = tasks.map(t => t.id === task.id ? { ...t, completed: nowComplete } : t);
+    const updated = tasks.map(t => t.id === task.id ? {
+      ...t, completed: nowComplete,
+      ...(nowComplete ? {} : { approved_at: null, approved_by: null, rejected_at: null, rejected_by: null, rejection_notes: null, rejection_response: null }),
+    } : t);
     setTasks(updated);
     setAllTasks(prev => ({ ...prev, [activeProject.id]: updated }));
     if (task.milestone_id) await syncMilestoneStatus(task.milestone_id, updated);
     if (nowComplete) {
       setTaskCompleteEmail({ task, project: activeProject });
+    }
+  };
+
+  const handleGenerateResponse = async (task) => {
+    setGeneratingResponse(task.id);
+    try {
+      const response = await generateRejectionResponse(task.title, activeProject?.name || '', task.rejection_notes);
+      await saveRejectionResponse(task.id, response);
+      const updated = tasks.map(t => t.id === task.id ? { ...t, rejection_response: response } : t);
+      setTasks(updated);
+      setAllTasks(prev => ({ ...prev, [activeProject.id]: updated }));
+    } catch (e) {
+      console.error('Generate response failed:', e.message);
+    } finally {
+      setGeneratingResponse(null);
     }
   };
 
@@ -1243,9 +1264,10 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
               <p>{assignedOwner === '__unassigned__' ? 'Unassigned tasks will appear here sorted by due date.' : `Tasks assigned to ${assignedOwner} will appear here sorted by due date.`}</p>
             </div>
           ) : (() => {
+            const rejectedTasks  = assignedTasks.filter(t => t.completed && t.rejected_at);
             const activeTasks    = assignedTasks.filter(t => !t.completed);
-            const completedTasks = assignedTasks.filter(t => t.completed);
-            const allSorted      = [...activeTasks, ...completedTasks];
+            const completedTasks = assignedTasks.filter(t => t.completed && !t.rejected_at);
+            const allSorted      = [...rejectedTasks, ...activeTasks, ...completedTasks];
             return (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 0, border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
               {allSorted.map((task, idx) => {
@@ -1254,10 +1276,22 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                 const taskFiles      = assignedFiles[task.id] || [];
                 const isOverdue      = !task.completed && task.due_date && task.due_date < today;
                 const msColor2       = task._milestone ? msColor(task._milestone.status) : 'var(--border)';
-                const isFirstDone    = task.completed && (idx === 0 || !allSorted[idx - 1].completed);
+                const isFirstDone      = task.completed && !task.rejected_at && (idx === 0 || !allSorted[idx - 1].completed || allSorted[idx - 1].rejected_at);
+                const isFirstRejected  = task.rejected_at && (idx === 0 || !allSorted[idx - 1]?.rejected_at);
+                const isFirstActive    = !task.completed && (idx === 0 || allSorted[idx - 1]?.rejected_at);
 
                 return (
                   <div key={task.id}>
+                  {isFirstRejected && rejectedTasks.length > 0 && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 16px', background: '#fef2f2', borderBottom: '1px solid #fca5a5' }}>
+                      <span style={{ fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.06em', color: '#ef4444' }}>🔴 Changes Requested · {rejectedTasks.length}</span>
+                    </div>
+                  )}
+                  {isFirstActive && activeTasks.length > 0 && rejectedTasks.length > 0 && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 16px', background: 'var(--surface)', borderTop: '1px solid var(--border-light)', borderBottom: '1px solid var(--border-light)' }}>
+                      <span style={{ fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.06em', color: 'var(--text-faint)' }}>Active · {activeTasks.length}</span>
+                    </div>
+                  )}
                   {isFirstDone && activeTasks.length > 0 && (
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 16px', background: 'var(--surface)', borderTop: '1px solid var(--border-light)', borderBottom: '1px solid var(--border-light)' }}>
                       <span style={{ fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.06em', color: 'var(--text-faint)' }}>Completed · {completedTasks.length}</span>
@@ -1266,7 +1300,8 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                   <div
                     style={{
                       borderBottom: idx < allSorted.length - 1 && !(allSorted[idx + 1]?.completed && !task.completed) ? '1px solid var(--border-light)' : 'none',
-                      background: task.completed ? 'var(--surface)' : 'var(--bg)',
+                      background: task.rejected_at ? '#fff5f5' : task.completed ? 'var(--surface)' : 'var(--bg)',
+                      borderLeft: task.rejected_at ? '3px solid #ef4444' : 'none',
                     }}
                   >
                     {isEditingThis ? (
@@ -1316,8 +1351,11 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                         />
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, flexWrap: 'wrap' }}>
+                            {task.rejected_at && (
+                              <span style={{ fontSize: 10, fontWeight: 800, color: '#ef4444', background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: 4, padding: '1px 6px', whiteSpace: 'nowrap', letterSpacing: '.03em' }}>🔴 DUE NOW</span>
+                            )}
                             <span
-                              style={{ fontSize: 13, fontWeight: 600, color: task.completed ? 'var(--text-faint)' : 'var(--text)', textDecoration: task.completed ? 'line-through' : 'none', textDecorationColor: '#ef4444', cursor: 'text' }}
+                              style={{ fontSize: 13, fontWeight: task.rejected_at ? 800 : 600, color: task.completed && !task.rejected_at ? 'var(--text-faint)' : 'var(--text)', textDecoration: task.completed && !task.rejected_at ? 'line-through' : 'none', textDecorationColor: '#ef4444', cursor: 'text' }}
                               onDoubleClick={() => startEditTask(task)}
                               title="Double-click to edit"
                             >{task.title}</span>
@@ -1376,6 +1414,38 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                             flexShrink: 0, whiteSpace: 'nowrap', transition: 'all .15s',
                           }}
                         >{pendingDelete ? 'Delete?' : '✕'}</button>
+                      </div>
+                    )}
+                    {task.rejected_at && (
+                      <div style={{ margin: '2px 16px 8px 41px' }}>
+                        <button
+                          onClick={() => setExpandedRejections(s => { const n = new Set(s); n.has(task.id) ? n.delete(task.id) : n.add(task.id); return n; })}
+                          style={{ fontSize: 11, fontWeight: 700, color: '#ef4444', background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}
+                        >{expandedRejections.has(task.id) ? '▲ Hide' : '▼ View'} client feedback</button>
+                        {expandedRejections.has(task.id) && (
+                          <div style={{ marginTop: 6, padding: '10px 12px', background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: 8 }}>
+                            <div style={{ fontSize: 11, fontWeight: 700, color: '#ef4444', marginBottom: 4 }}>
+                              From {task.rejected_by} · {fmtDate(task.rejected_at)}
+                            </div>
+                            <div style={{ fontSize: 12, color: '#374151', lineHeight: 1.6, whiteSpace: 'pre-wrap', marginBottom: 10 }}>{task.rejection_notes}</div>
+                            {task.rejection_response ? (
+                              <>
+                                <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 4 }}>Your response</div>
+                                <div style={{ fontSize: 12, color: 'var(--text)', lineHeight: 1.6, whiteSpace: 'pre-wrap', marginBottom: 8 }}>{task.rejection_response}</div>
+                                <button
+                                  onClick={() => setResendEmail({ task, project: task._project })}
+                                  style={{ fontSize: 11, fontWeight: 700, padding: '4px 12px', borderRadius: 6, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer' }}
+                                >📬 Send revised update to client</button>
+                              </>
+                            ) : (
+                              <button
+                                onClick={() => handleGenerateResponse(task)}
+                                disabled={generatingResponse === task.id}
+                                style={{ fontSize: 11, fontWeight: 700, padding: '4px 12px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface)', color: generatingResponse === task.id ? 'var(--text-faint)' : 'var(--text)', cursor: generatingResponse === task.id ? 'default' : 'pointer' }}
+                              >{generatingResponse === task.id ? '✦ Generating…' : '✦ Auto-generate response'}</button>
+                            )}
+                          </div>
+                        )}
                       </div>
                     )}
                     {taskFiles.length > 0 && (
@@ -2175,6 +2245,46 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                               </div>
                             )}
 
+                            {/* Rejection / approval chain of custody */}
+                            {task.completed && task.rejected_at && (
+                              <div style={{ margin: '0 16px 8px 48px' }}>
+                                <button
+                                  onClick={() => setExpandedRejections(s => { const n = new Set(s); n.has(task.id) ? n.delete(task.id) : n.add(task.id); return n; })}
+                                  style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 700, color: '#ef4444', background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: 5, padding: '3px 10px', cursor: 'pointer' }}
+                                >
+                                  ⚠ Changes Requested by {task.rejected_by} · {fmtDate(task.rejected_at)} {expandedRejections.has(task.id) ? '▲' : '▼'}
+                                </button>
+                                {expandedRejections.has(task.id) && (
+                                  <div style={{ marginTop: 6, padding: '10px 12px', background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: 8 }}>
+                                    <div style={{ fontSize: 12, color: '#374151', lineHeight: 1.6, whiteSpace: 'pre-wrap', marginBottom: 10 }}>
+                                      <strong style={{ color: '#ef4444' }}>Client notes:</strong> {task.rejection_notes}
+                                    </div>
+                                    {task.rejection_response ? (
+                                      <>
+                                        <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 4 }}>Your response</div>
+                                        <div style={{ fontSize: 12, color: 'var(--text)', lineHeight: 1.6, whiteSpace: 'pre-wrap', marginBottom: 10 }}>{task.rejection_response}</div>
+                                        <button
+                                          onClick={() => setResendEmail({ task, project: activeProject })}
+                                          style={{ fontSize: 11, fontWeight: 700, padding: '4px 12px', borderRadius: 6, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer' }}
+                                        >📬 Send revised update to client</button>
+                                      </>
+                                    ) : (
+                                      <button
+                                        onClick={() => handleGenerateResponse(task)}
+                                        disabled={generatingResponse === task.id}
+                                        style={{ fontSize: 11, fontWeight: 700, padding: '4px 12px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface)', color: generatingResponse === task.id ? 'var(--text-faint)' : 'var(--text)', cursor: generatingResponse === task.id ? 'default' : 'pointer' }}
+                                      >{generatingResponse === task.id ? '✦ Generating response…' : '✦ Auto-generate response'}</button>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                            {task.completed && task.approved_at && (
+                              <div style={{ margin: '0 16px 6px 48px', fontSize: 11, color: '#10b981', fontWeight: 600 }}>
+                                ✓ Approved by {task.approved_by} · {fmtDate(task.approved_at)}
+                              </div>
+                            )}
+
                             {/* Task-level attached files */}
                             {taskFiles.length > 0 && (
                               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, padding: '4px 16px 8px 64px' }}>
@@ -2694,6 +2804,90 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                   </div>
                 </>
               )}
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Resend revised update modal */}
+      {resendEmail && (() => {
+        const { task, project } = resendEmail;
+        const primaryContact = (project?.contacts || [])[0];
+        const clientName   = primaryContact?.name || project?.client_name || 'there';
+        const toEmail      = primaryContact?.email || project?.client_email || '';
+        const companyLabel = project?.client_name || project?.name || '';
+        const portalUrl    = project?.share_token ? `${window.location.origin}/portal/${project.share_token}?task=${task.id}` : null;
+        const subject      = `Update on: ${task.title}`;
+        const body         = `Hi ${clientName},\n\nThank you for your feedback on the task — we've made the requested revisions and it's ready for your review.\n\nTask: ${task.title}\n\n${task.rejection_response ? `${task.rejection_response}\n\n` : ''}${portalUrl ? `Please visit your project dashboard to review:\n${portalUrl}\n\n` : ''}Best,\nPart Human`;
+        const htmlBody     = [
+          `<p style="font-family:sans-serif;font-size:14px;">Hi ${clientName},</p>`,
+          `<p style="font-family:sans-serif;font-size:14px;">Thank you for your feedback — we've made the requested revisions and it's ready for your review.</p>`,
+          `<p style="font-family:sans-serif;font-size:14px;"><strong>Task:</strong> ${task.title}</p>`,
+          task.rejection_response ? `<p style="font-family:sans-serif;font-size:14px;">${task.rejection_response}</p>` : '',
+          portalUrl ? `<p style="font-family:sans-serif;font-size:14px;">Please visit your project dashboard to review:</p><p><a href="${portalUrl}" style="display:inline-block;background:#fbbf24;color:#111;font-weight:800;font-size:13px;padding:6px 14px;border-radius:20px;text-decoration:none;font-family:sans-serif;">PH &times; ${companyLabel}</a></p>` : '',
+          `<p style="font-family:sans-serif;font-size:14px;">Best,<br>Part Human</p>`,
+        ].join('');
+        const gmailUrl = toEmail ? `https://mail.google.com/mail/?view=cm&to=${encodeURIComponent(toEmail)}&su=${encodeURIComponent(subject)}` : null;
+
+        return (
+          <div style={{ position: 'fixed', inset: 0, zIndex: 900, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.4)' }} onClick={() => setResendEmail(null)} />
+            <div style={{ position: 'relative', zIndex: 1, background: 'var(--bg)', borderRadius: 14, padding: '28px 28px 24px', width: 500, maxWidth: '95vw', boxShadow: '0 20px 60px rgba(0,0,0,0.22)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
+                <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--text)' }}>📬 Revised update to client</div>
+                <button onClick={() => setResendEmail(null)} style={{ background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: 'var(--text-muted)', padding: '2px 4px' }}>✕</button>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <div>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 4 }}>To</div>
+                  <div style={{ fontSize: 13, padding: '8px 12px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 7, color: 'var(--text-muted)' }}>
+                    {primaryContact ? `${primaryContact.name}${primaryContact.email ? ` <${primaryContact.email}>` : ''}` : toEmail || '—'}
+                  </div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 4 }}>Subject</div>
+                  <div style={{ fontSize: 13, padding: '8px 12px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 7, color: 'var(--text-muted)' }}>{subject}</div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 4 }}>Message</div>
+                  <div style={{ fontSize: 12, padding: '10px 12px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 7, color: 'var(--text-muted)', lineHeight: 1.65, maxHeight: 220, overflowY: 'auto' }}>
+                    <div style={{ whiteSpace: 'pre-wrap' }}>{`Hi ${clientName},\n\nThank you for your feedback — we've made the requested revisions and it's ready for your review.\n\nTask: ${task.title}\n\n${task.rejection_response ? `${task.rejection_response}\n\n` : ''}${portalUrl ? 'Please visit your project dashboard to review:\n' : ''}`}</div>
+                    {portalUrl && (
+                      <a href={portalUrl} target="_blank" rel="noopener noreferrer" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: '#fbbf24', color: '#111', fontWeight: 800, fontSize: 12, padding: '5px 12px', borderRadius: 20, textDecoration: 'none', margin: '6px 0 8px' }}>
+                        <span style={{ fontWeight: 900, fontSize: 13 }}>PH</span><span>×</span><span>{companyLabel}</span>
+                      </a>
+                    )}
+                    <div style={{ whiteSpace: 'pre-wrap' }}>{`\nBest,\nPart Human`}</div>
+                  </div>
+                </div>
+              </div>
+              {portalUrl && (
+                <div style={{ marginTop: 14, fontSize: 11, color: 'var(--text-faint)', textAlign: 'right' }}>
+                  💡 Once Gmail opens, just paste to drop in the styled message
+                </div>
+              )}
+              <div style={{ display: 'flex', gap: 10, marginTop: 8, justifyContent: 'flex-end' }}>
+                <button
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.write([new ClipboardItem({ 'text/html': new Blob([htmlBody], { type: 'text/html' }), 'text/plain': new Blob([body], { type: 'text/plain' }) })]);
+                    } catch { navigator.clipboard.writeText(body); }
+                  }}
+                  style={{ padding: '9px 16px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}
+                >Copy</button>
+                {gmailUrl && (
+                  <button
+                    onClick={async () => {
+                      try {
+                        await navigator.clipboard.write([new ClipboardItem({ 'text/html': new Blob([htmlBody], { type: 'text/html' }), 'text/plain': new Blob([body], { type: 'text/plain' }) })]);
+                      } catch { /* skip */ }
+                      window.open(gmailUrl, '_blank');
+                      setResendEmail(null);
+                    }}
+                    style={{ padding: '9px 20px', borderRadius: 8, border: 'none', background: 'var(--accent)', color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
+                  >Open in Gmail ↗</button>
+                )}
+              </div>
             </div>
           </div>
         );

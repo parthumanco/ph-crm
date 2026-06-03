@@ -172,10 +172,20 @@ export async function upsertProjectTask(t) {
 }
 
 export async function toggleTask(id, completed) {
-  const { error } = await supabase.from('project_tasks').update({
+  const update = {
     completed,
     completed_at: completed ? new Date().toISOString() : null,
-  }).eq('id', id);
+  };
+  // Unchecking resets the entire review chain
+  if (!completed) {
+    update.approved_at        = null;
+    update.approved_by        = null;
+    update.rejected_at        = null;
+    update.rejected_by        = null;
+    update.rejection_notes    = null;
+    update.rejection_response = null;
+  }
+  const { error } = await supabase.from('project_tasks').update(update).eq('id', id);
   if (error) throw new Error(error.message);
 }
 
@@ -585,6 +595,29 @@ export async function approveMilestone(milestoneId, approvedBy) {
   const { error } = await supabase.from('milestones')
     .update({ approved_at: now, approved_by: approvedBy })
     .eq('id', milestoneId);
+  if (error) throw new Error(error.message);
+}
+
+export async function approveTask(taskId, approvedBy) {
+  const now = new Date().toISOString();
+  const { error } = await supabase.from('project_tasks')
+    .update({ approved_at: now, approved_by: approvedBy, rejected_at: null, rejected_by: null, rejection_notes: null, rejection_response: null })
+    .eq('id', taskId);
+  if (error) throw new Error(error.message);
+}
+
+export async function rejectTask(taskId, rejectedBy, notes) {
+  const now = new Date().toISOString();
+  const { error } = await supabase.from('project_tasks')
+    .update({ rejected_at: now, rejected_by: rejectedBy, rejection_notes: notes, approved_at: null, approved_by: null })
+    .eq('id', taskId);
+  if (error) throw new Error(error.message);
+}
+
+export async function saveRejectionResponse(taskId, response) {
+  const { error } = await supabase.from('project_tasks')
+    .update({ rejection_response: response })
+    .eq('id', taskId);
   if (error) throw new Error(error.message);
 }
 
