@@ -908,10 +908,38 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
         return { ...prev, [pid]: (prev[pid] || []).map(patch) };
       });
       setAssignedTasks(prev => prev.map(patch));
+      return response;
     } catch (e) {
       console.error('Generate response failed:', e.message);
     } finally {
       setGeneratingResponse(null);
+    }
+  };
+
+  // Opens Send Revision modal, auto-generating AI response if none exists yet
+  const openResendModal = async (task, project) => {
+    setResendEmail({ task, project });
+    if (!task.rejection_response && task.rejection_notes) {
+      setGeneratingResponse(task.id);
+      try {
+        const projectName = project?.name || '';
+        const response = await generateRejectionResponse(task.title, projectName, task.rejection_notes);
+        await saveRejectionResponse(task.id, response);
+        const patch = t => t.id === task.id ? { ...t, rejection_response: response } : t;
+        setTasks(prev => prev.map(patch));
+        setAllTasks(prev => {
+          const pid = project?.id;
+          if (!pid) return prev;
+          return { ...prev, [pid]: (prev[pid] || []).map(patch) };
+        });
+        setAssignedTasks(prev => prev.map(patch));
+        // Update the modal's task reference so the email body reflects the new response
+        setResendEmail({ task: { ...task, rejection_response: response }, project });
+      } catch (e) {
+        console.error('Auto-generate response failed:', e.message);
+      } finally {
+        setGeneratingResponse(null);
+      }
     }
   };
 
@@ -1449,7 +1477,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                                 <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 4 }}>Your response</div>
                                 <div style={{ fontSize: 12, color: 'var(--text)', lineHeight: 1.6, whiteSpace: 'pre-wrap', marginBottom: 8 }}>{task.rejection_response}</div>
                                 <button
-                                  onClick={() => setResendEmail({ task, project: task._project })}
+                                  onClick={() => openResendModal(task, task._project)}
                                   style={{ fontSize: 11, fontWeight: 700, padding: '4px 12px', borderRadius: 6, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer' }}
                                 >📬 Send revised update to client</button>
                               </>
@@ -2292,7 +2320,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                                   {hasRejection && (
                                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                                       <button
-                                        onClick={() => setResendEmail({ task, project: activeProject })}
+                                        onClick={() => openResendModal(task, activeProject)}
                                         style={{ fontSize: 12, fontWeight: 700, padding: '5px 14px', borderRadius: 6, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer', whiteSpace: 'nowrap' }}
                                       >📤 Send Revision {nextRevNum} →</button>
                                       <span style={{ fontSize: 11, color: '#ef4444', fontWeight: 600 }}>
@@ -2938,7 +2966,12 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                   <div style={{ fontSize: 13, padding: '8px 12px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 7, color: 'var(--text-muted)' }}>{subject}</div>
                 </div>
                 <div>
-                  <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 4 }}>Message</div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em' }}>Message</div>
+                    {generatingResponse === task.id && (
+                      <span style={{ fontSize: 11, color: 'var(--accent)', fontWeight: 600 }}>✦ Writing response…</span>
+                    )}
+                  </div>
                   <div style={{ fontSize: 12, padding: '10px 12px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 7, color: 'var(--text-muted)', lineHeight: 1.65 }}>
                     <div style={{ whiteSpace: 'pre-wrap' }}>{`Hi ${clientName},\n\n${messageBody}\n\n`}</div>
                     {portalUrl ? (
