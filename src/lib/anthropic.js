@@ -305,7 +305,7 @@ export async function weeklyRescanBatch(companies, icp = DEFAULT_ICP) {
   }
 }
 
-export async function scanDeepDive(company, icp = DEFAULT_ICP, existingEngagementType = null, researchItems = []) {
+export async function scanDeepDive(company, icp = DEFAULT_ICP, existingEngagementType = null, clientDetail = {}) {
   const contacts = company.contacts || [];
   const contactStr = contacts
     .map(ct => {
@@ -326,9 +326,49 @@ export async function scanDeepDive(company, icp = DEFAULT_ICP, existingEngagemen
 
   const websiteKnown = !!company.website;
 
-  // Build research notes context from client_items
-  const researchContext = researchItems.length > 0
-    ? ` INTERNAL RESEARCH NOTES (use these as additional context — factor them into your analysis, recommended angle, and triggers):\n${researchItems.map(it => it.type === 'note' ? `- Note: ${it.body || it.title}` : `- Link: ${it.title}${it.url ? ` (${it.url})` : ''}${it.body ? ` — ${it.body}` : ''}`).join('\n')}`
+  // ── Build full internal context from clientDetail ──────────────────────────
+  const ctxLines = [];
+
+  // Research notes & links
+  const items = clientDetail.items || [];
+  if (items.length > 0) {
+    ctxLines.push('RESEARCH NOTES & LINKS:');
+    items.forEach(it => {
+      if (it.type === 'note') ctxLines.push(`  - Note: ${it.body || it.title}`);
+      else ctxLines.push(`  - Link: ${it.title}${it.url ? ` (${it.url})` : ''}${it.body ? ` — ${it.body}` : ''}`);
+    });
+  }
+
+  // Projects
+  const projects = clientDetail.projects || [];
+  if (projects.length > 0) {
+    ctxLines.push('PROJECTS WE\'VE RUN FOR THEM:');
+    projects.forEach(p => {
+      ctxLines.push(`  - ${p.name} (${p.archived_at ? 'archived' : p.status}) started ${p.start_date || 'unknown'}${p.description ? `: ${p.description}` : ''}`);
+    });
+  }
+
+  // Meetings
+  const meetings = clientDetail.meetings || [];
+  if (meetings.length > 0) {
+    ctxLines.push('MEETING HISTORY:');
+    meetings.slice(0, 10).forEach(m => {
+      ctxLines.push(`  - [${m.meeting_date || 'no date'}] ${m.title || 'Meeting'}${m.summary ? `: ${m.summary}` : ''}`);
+      if (m.transcript) ctxLines.push(`    Transcript excerpt: ${m.transcript.slice(0, 400)}…`);
+    });
+  }
+
+  // Activities
+  const activities = clientDetail.activities || [];
+  if (activities.length > 0) {
+    ctxLines.push('ACTIVITY HISTORY (calls, emails, notes):');
+    activities.slice(0, 15).forEach(a => {
+      ctxLines.push(`  - [${a.activity_date}] ${a.type}${a.assigned_to ? ` (${a.assigned_to})` : ''}: ${a.summary}`);
+    });
+  }
+
+  const internalContext = ctxLines.length > 0
+    ? `\n\nINTERNAL CONTEXT (use this to inform your analysis — factor into summary, recommended angle, triggers, and contact angles):\n${ctxLines.join('\n')}`
     : '';
 
   const data = await withTimeout(
@@ -336,10 +376,20 @@ export async function scanDeepDive(company, icp = DEFAULT_ICP, existingEngagemen
       model: 'claude-sonnet-4-6',
       max_tokens: 4000,
       system: buildDeepSystem(icp),
-      tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 2 }],
+      tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 6 }],
       messages: [{
         role: 'user',
-        content: `Search for recent signals about ${company.name}${company.website ? ` (${company.website})` : ''}. Check: company news, LinkedIn company page, Twitter/X, job boards (brand/marketing/comms roles).${linkedInClause}${nameSearchClause} Look for posts about growth, brand, team changes, or challenges. Find up to 3 trigger events from the last 90 days.${contactStr ? ` For each contact, also find their LinkedIn profile URL (linkedin.com/in/...) — include it in contactAngles.linkedinUrl if found with confidence. Contacts: ${contactStr}.` : ''} Do 1-2 searches max.${!websiteKnown ? ' Also find their website.' : ''}${existingEngagementType ? ` The engagement type is already set to "${existingEngagementType}" — write recommendedAngle and contactAngles for that engagement tier unless the company profile clearly warrants a different one.` : ''}${researchContext} Return JSON only.`,
+        content: `Do a deep scan on ${company.name}${company.website ? ` (${company.website})` : ''}.
+
+STEP 1 — FIND LEADERSHIP CONTACTS: Search "${company.name} leadership team" or "${company.name} about us" or their website team page. Find the CEO, CMO, VP Marketing, Head of Brand, or equivalent decision-makers. For each person found, record their name, title, and LinkedIn URL (linkedin.com/in/...). Add them to the contactAngles array with a tailored outreach angle. This step is mandatory even if we have no contacts on file.
+
+STEP 2 — TRIGGER EVENTS: Check company news, LinkedIn company page, Twitter/X, and job boards (brand/marketing/comms roles). Find up to 3 trigger events from the last 90 days — growth, brand changes, team changes, or challenges.${linkedInClause}${nameSearchClause}
+
+STEP 3 — ENRICH EXISTING CONTACTS: ${contactStr ? `For these known contacts, find/confirm their LinkedIn URL: ${contactStr}.` : 'No existing contacts — rely on Step 1 discoveries.'}
+
+${!websiteKnown ? 'Also find their website URL.' : ''}${existingEngagementType ? ` Engagement type is already "${existingEngagementType}" — keep it unless the profile clearly warrants a change.` : ''}${internalContext}
+
+Return JSON only.`,
       }],
     }),
     TIMEOUT_MS
