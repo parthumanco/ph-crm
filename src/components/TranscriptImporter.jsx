@@ -1,0 +1,275 @@
+import { useState } from 'react';
+import { parseMeetingWithAI, saveProjectMeeting, OWNERS } from '../lib/projects';
+
+const today = new Date().toISOString().slice(0, 10);
+
+/**
+ * TranscriptImporter
+ *
+ * Props:
+ *   projectId     — string
+ *   milestones    — array of { id, title }
+ *   owners        — string[] (team members)
+ *   defaultMsId   — optional pre-selected milestone id (for per-milestone entry point)
+ *   onImported    — fn({ meeting, tasks }) called after save
+ *   onClose       — fn()
+ */
+export default function TranscriptImporter({ projectId, milestones, owners = OWNERS, defaultMsId, onImported, onClose }) {
+  const [step, setStep]             = useState('paste');   // paste | parsing | preview | saving
+  const [transcript, setTranscript] = useState('');
+  const [error, setError]           = useState('');
+  const [parsed, setParsed]         = useState(null);      // raw AI output
+
+  // Editable task list derived from parsed
+  const [items, setItems] = useState([]);   // { ...action_item, selected, milestoneId, owner }
+
+  // ── Step 1: Parse ─────────────────────────────────────────────────────────
+  const handleParse = async () => {
+    if (!transcript.trim()) { setError('Please paste a meeting transcript.'); return; }
+    setError('');
+    setStep('parsing');
+    try {
+      const result = await parseMeetingWithAI(transcript);
+      setParsed(result);
+      setItems(
+        (result.action_items || []).map(ai => ({
+          ...ai,
+          selected:    true,
+          milestoneId: defaultMsId || (milestones[0]?.id ?? ''),
+          owner:       ai.owner && owners.includes(ai.owner) ? ai.owner : '',
+        }))
+      );
+      setStep('preview');
+    } catch (e) {
+      setError(e.message || 'Failed to parse transcript');
+      setStep('paste');
+    }
+  };
+
+  // ── Step 2: Save ─────────────────────────────────────────────────────────
+  const handleSave = async () => {
+    setStep('saving');
+    try {
+      const selectedItems = items.filter(it => it.selected);
+
+      // Build tasks for each selected action item
+      const now = new Date().toISOString();
+      const tasks = selectedItems.map(it => ({
+        id:           crypto.randomUUID(),
+        project_id:   projectId,
+        milestone_id: it.milestoneId || null,
+        title:        it.title,
+        assigned_to:  it.owner || null,
+        due_date:     it.due_date || null,
+        notes:        it.notes || null,
+        completed:    false,
+        order_index:  999,
+        created_at:   now,
+      }));
+
+      // Save meeting record
+      const meeting = await saveProjectMeeting({
+        projectId,
+        title:       parsed.title || 'Meeting',
+        meetingDate: parsed.meeting_date || null,
+        summary:     parsed.summary || null,
+        transcript,
+        actionItems: selectedItems.map(({ title, owner, due_date, notes }) => ({ title, owner, due_date, notes })),
+      });
+
+      onImported({ meeting, tasks, milestoneId: defaultMsId });
+    } catch (e) {
+      setError(e.message || 'Failed to save');
+      setStep('preview');
+    }
+  };
+
+  const updateItem = (i, patch) => setItems(prev => prev.map((it, idx) => idx === i ? { ...it, ...patch } : it));
+
+  // ── Render ────────────────────────────────────────────────────────────────
+  return (
+    <div style={{ position: 'fixed', inset: 0, zIndex: 900, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.4)' }} onClick={step === 'parsing' || step === 'saving' ? undefined : onClose} />
+      <div style={{ position: 'relative', zIndex: 1, background: 'var(--bg)', borderRadius: 14, padding: '28px 28px 24px', width: 600, maxWidth: '95vw', maxHeight: '90vh', display: 'flex', flexDirection: 'column', boxShadow: '0 20px 60px rgba(0,0,0,0.22)' }}>
+
+        {/* Header */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20, flexShrink: 0 }}>
+          <div>
+            <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--text)' }}>📝 Import from transcript</div>
+            <div style={{ fontSize: 12, color: 'var(--text-faint)', marginTop: 3 }}>
+              {step === 'paste'   && 'Paste a Granola (or any meeting) transcript'}
+              {step === 'parsing' && 'Analyzing transcript…'}
+              {step === 'preview' && 'Review extracted tasks before adding to the project'}
+              {step === 'saving'  && 'Saving…'}
+            </div>
+          </div>
+          {step !== 'parsing' && step !== 'saving' && (
+            <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: 'var(--text-muted)', padding: '2px 4px', flexShrink: 0 }}>✕</button>
+          )}
+        </div>
+
+        {/* Body */}
+        <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
+
+          {/* ── Paste step ── */}
+          {(step === 'paste' || step === 'parsing') && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <textarea
+                value={transcript}
+                onChange={e => setTranscript(e.target.value)}
+                placeholder="Paste your Granola transcript or any meeting notes here…"
+                rows={14}
+                disabled={step === 'parsing'}
+                style={{ width: '100%', resize: 'vertical', fontSize: 12, lineHeight: 1.6, fontFamily: 'inherit', padding: '10px 12px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', outline: 'none', opacity: step === 'parsing' ? 0.6 : 1 }}
+              />
+              {error && <div style={{ fontSize: 12, color: '#ef4444', padding: '8px 12px', background: '#fef2f2', borderRadius: 6, border: '1px solid #fecaca' }}>{error}</div>}
+            </div>
+          )}
+
+          {/* ── Preview step ── */}
+          {(step === 'preview' || step === 'saving') && parsed && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+
+              {/* Meeting meta */}
+              <div style={{ padding: '14px 16px', background: 'var(--surface)', borderRadius: 10, border: '1px solid var(--border)' }}>
+                <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--text)', marginBottom: 4 }}>{parsed.title}</div>
+                {parsed.meeting_date && (
+                  <div style={{ fontSize: 11, color: 'var(--text-faint)', marginBottom: 8 }}>
+                    {new Date(parsed.meeting_date + 'T12:00:00').toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
+                  </div>
+                )}
+                {parsed.summary && (
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6 }}>{parsed.summary}</div>
+                )}
+              </div>
+
+              {/* Action items */}
+              {items.length === 0 ? (
+                <div style={{ fontSize: 13, color: 'var(--text-faint)', textAlign: 'center', padding: '24px 0' }}>
+                  No action items found in this transcript.<br />
+                  <span style={{ fontSize: 11 }}>The meeting summary will still be saved.</span>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em' }}>
+                    Action items ({items.filter(i => i.selected).length} of {items.length} selected)
+                  </div>
+                  {items.map((it, i) => (
+                    <div key={i} style={{ display: 'flex', gap: 10, padding: '12px 14px', background: it.selected ? 'var(--surface)' : 'transparent', border: `1px solid ${it.selected ? 'var(--border)' : 'var(--border-light)'}`, borderRadius: 8, opacity: it.selected ? 1 : 0.45, transition: 'all .15s' }}>
+
+                      {/* Checkbox */}
+                      <input
+                        type="checkbox"
+                        checked={it.selected}
+                        onChange={e => updateItem(i, { selected: e.target.checked })}
+                        style={{ marginTop: 3, flexShrink: 0, cursor: 'pointer', accentColor: 'var(--accent)' }}
+                      />
+
+                      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        {/* Task title */}
+                        <input
+                          value={it.title}
+                          onChange={e => updateItem(i, { title: e.target.value })}
+                          disabled={!it.selected}
+                          style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)', background: 'none', border: 'none', outline: 'none', padding: 0, width: '100%' }}
+                        />
+
+                        {it.notes && (
+                          <div style={{ fontSize: 11, color: 'var(--text-faint)', lineHeight: 1.5 }}>{it.notes}</div>
+                        )}
+
+                        {/* Milestone + Owner + Due date row */}
+                        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+
+                          {/* Milestone picker */}
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                            <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em' }}>Milestone</label>
+                            <select
+                              value={it.milestoneId}
+                              onChange={e => updateItem(i, { milestoneId: e.target.value })}
+                              disabled={!it.selected}
+                              style={{ fontSize: 12, padding: '4px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', cursor: 'pointer' }}
+                            >
+                              <option value="">— No milestone —</option>
+                              {milestones.map(ms => (
+                                <option key={ms.id} value={ms.id}>{ms.title}</option>
+                              ))}
+                            </select>
+                          </div>
+
+                          {/* Owner picker */}
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                            <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em' }}>Owner</label>
+                            <select
+                              value={it.owner}
+                              onChange={e => updateItem(i, { owner: e.target.value })}
+                              disabled={!it.selected}
+                              style={{ fontSize: 12, padding: '4px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', cursor: 'pointer' }}
+                            >
+                              <option value="">— Unassigned —</option>
+                              {owners.map(o => <option key={o} value={o}>{o}</option>)}
+                            </select>
+                          </div>
+
+                          {/* Due date */}
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                            <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em' }}>Due date</label>
+                            <input
+                              type="date"
+                              value={it.due_date || ''}
+                              onChange={e => updateItem(i, { due_date: e.target.value || null })}
+                              disabled={!it.selected}
+                              style={{ fontSize: 12, padding: '4px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)' }}
+                            />
+                          </div>
+
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {error && <div style={{ fontSize: 12, color: '#ef4444', padding: '8px 12px', background: '#fef2f2', borderRadius: 6, border: '1px solid #fecaca' }}>{error}</div>}
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div style={{ display: 'flex', gap: 10, marginTop: 20, justifyContent: 'flex-end', flexShrink: 0, borderTop: '1px solid var(--border-light)', paddingTop: 16 }}>
+          {step === 'paste' && (
+            <>
+              <button onClick={onClose} style={{ padding: '9px 16px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Cancel</button>
+              <button onClick={handleParse} disabled={!transcript.trim()} style={{ padding: '9px 20px', borderRadius: 8, border: 'none', background: 'var(--accent)', color: '#fff', fontSize: 13, fontWeight: 700, cursor: transcript.trim() ? 'pointer' : 'default', opacity: transcript.trim() ? 1 : 0.5 }}>Analyze transcript →</button>
+            </>
+          )}
+          {step === 'parsing' && (
+            <div style={{ fontSize: 13, color: 'var(--text-faint)', display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ display: 'inline-block', width: 14, height: 14, border: '2px solid var(--accent)', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} />
+              Extracting tasks…
+            </div>
+          )}
+          {step === 'preview' && (
+            <>
+              <button onClick={() => { setStep('paste'); setError(''); }} style={{ padding: '9px 16px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>← Back</button>
+              <button
+                onClick={handleSave}
+                style={{ padding: '9px 20px', borderRadius: 8, border: 'none', background: 'var(--accent)', color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
+              >
+                {items.filter(i => i.selected).length > 0
+                  ? `Add ${items.filter(i => i.selected).length} task${items.filter(i => i.selected).length !== 1 ? 's' : ''} + save meeting`
+                  : 'Save meeting only'}
+              </button>
+            </>
+          )}
+          {step === 'saving' && (
+            <div style={{ fontSize: 13, color: 'var(--text-faint)', display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ display: 'inline-block', width: 14, height: 14, border: '2px solid var(--accent)', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} />
+              Saving…
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}

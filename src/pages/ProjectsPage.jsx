@@ -8,12 +8,14 @@ import {
   fetchProjectFiles, uploadProjectFile, deleteProjectFile, addExternalLink,
   restoreProjectTask, fetchAllTasksByOwner,
   bulkInsertMilestones, bulkInsertTasks, parseProposalWithAI,
+  fetchProjectMeetings, deleteProjectMeeting,
   PROJECT_STATUSES, MILESTONE_STATUSES, OWNERS,
   projColor, projLabel, msColor, msLabel,
   daysBetween, addDays, projectProgress, fmtDate,
 } from '../lib/projects';
 import { fetchDeals } from '../lib/deals';
 import ProposalImporter from '../components/ProposalImporter';
+import TranscriptImporter from '../components/TranscriptImporter';
 
 async function sendPortalNotification(toEmail, subject, bodyHtml, ccEmails = []) {
   const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
@@ -421,6 +423,11 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
   const [expandedCoC, setExpandedCoC]               = useState(new Set()); // manual expand after approval
   const [generatingResponse, setGeneratingResponse] = useState(null); // taskId
   const [resendEmail, setResendEmail]             = useState(null);   // { task, project }
+  const [meetings, setMeetings]                   = useState([]);     // project meetings log
+  const [meetingsExpanded, setMeetingsExpanded]   = useState(false);
+  const [showTranscript, setShowTranscript]       = useState(null);   // meeting id
+  const [showTranscriptImporter, setShowTranscriptImporter] = useState(false);
+  const [transcriptDefaultMs, setTranscriptDefaultMs]       = useState(null); // ms id for per-milestone entry
   const [summaryError, setSummaryError]           = useState(null);
   const [shareToken, setShareToken]               = useState('');
   const [sharePassword, setSharePassword]         = useState('');
@@ -550,6 +557,9 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
     setMilestones([]);
     setTasks([]);
     setProjectFiles([]);
+    setMeetings([]);
+    setMeetingsExpanded(false);
+    setShowTranscript(null);
     setShareToken(project.share_token || '');
     setSharePassword(project.portal_password || '');
     setShareClientEmail(project.client_email || '');
@@ -562,10 +572,11 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
       });
     }
     try {
-      const [ms, ts, files] = await Promise.all([
+      const [ms, ts, files, mtgs] = await Promise.all([
         fetchMilestones(project.id),
         fetchProjectTasks(project.id),
         fetchProjectFiles(project.id).catch(() => []),
+        fetchProjectMeetings(project.id).catch(() => []),
       ]);
       // Fix milestone statuses: if any task has an open rejection, milestone
       // should be in_progress regardless of what's stored in the DB.
@@ -576,6 +587,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
       setMilestones(fixedMs);
       setTasks(ts);
       setProjectFiles(files);
+      setMeetings(mtgs);
     } catch (e) {
       console.error('Failed to load project detail:', e);
       // Try loading milestones and tasks independently so a single failure
@@ -1238,6 +1250,30 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
     }
   };
 
+  // ── Transcript import ─────────────────────────────────────────────────────
+  const handleTranscriptImported = async ({ meeting, tasks: newTasks }) => {
+    setShowTranscriptImporter(false);
+    setTranscriptDefaultMs(null);
+    // Prepend new meeting to log
+    setMeetings(prev => [meeting, ...prev]);
+    if (newTasks.length === 0) return;
+    // Insert tasks into DB
+    try {
+      const { data: inserted, error } = await supabase
+        .from('project_tasks')
+        .insert(newTasks)
+        .select();
+      if (error) throw error;
+      setTasks(prev => [...prev, ...(inserted || newTasks)]);
+      setAllTasks(prev => ({
+        ...prev,
+        [activeProject.id]: [...(prev[activeProject.id] || []), ...(inserted || newTasks)],
+      }));
+    } catch (e) {
+      console.error('Failed to insert transcript tasks:', e);
+    }
+  };
+
   // ── File uploads ──────────────────────────────────────────────────────────
   const triggerFileUpload = (projectId, milestoneId = null, e = null, taskId = null) => {
     if (e) e.stopPropagation();
@@ -1838,6 +1874,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
           <button className="btn" style={{ fontSize: 13 }} onClick={() => triggerFileUpload(activeProject.id)}>📎 Upload File</button>
           <button className="btn" style={{ fontSize: 13 }} onClick={() => openLinkModal(activeProject.id)}>🔗 Add Link</button>
           <button className="btn" style={{ fontSize: 13 }} onClick={() => setShowImporter(true)}>📋 Import Proposal</button>
+          <button className="btn" style={{ fontSize: 13 }} onClick={() => { setTranscriptDefaultMs(null); setShowTranscriptImporter(true); }}>📝 From Transcript</button>
           <button className="btn" style={{ fontSize: 13 }} onClick={() => setShowShareModal(true)}>🌐 Client Portal</button>
           <button className="btn btn-primary" onClick={handleAddMilestone}>+ Milestone</button>
         </div>
@@ -2535,12 +2572,21 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                           <button onClick={() => { setNewTaskMs(null); setNewTaskTitle(''); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-faint)' }}>✕</button>
                         </div>
                       ) : (
-                        <button
-                          onClick={() => { setNewTaskMs(ms.id); setNewTaskTitle(''); setEditingTask(null); setConfirmDeleteTask(null); }}
-                          style={{ width: '100%', padding: '8px 16px 8px 48px', background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, color: 'var(--text-faint)', textAlign: 'left' }}
-                        >
-                          + Add task
-                        </button>
+                        <div style={{ display: 'flex', alignItems: 'center' }}>
+                          <button
+                            onClick={() => { setNewTaskMs(ms.id); setNewTaskTitle(''); setEditingTask(null); setConfirmDeleteTask(null); }}
+                            style={{ flex: 1, padding: '8px 16px 8px 48px', background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, color: 'var(--text-faint)', textAlign: 'left' }}
+                          >
+                            + Add task
+                          </button>
+                          <button
+                            onClick={() => { setTranscriptDefaultMs(ms.id); setShowTranscriptImporter(true); }}
+                            style={{ padding: '8px 16px 8px 8px', background: 'none', border: 'none', cursor: 'pointer', fontSize: 11, color: 'var(--text-faint)', whiteSpace: 'nowrap', flexShrink: 0 }}
+                            title="Add tasks from a meeting transcript"
+                          >
+                            📝 From transcript
+                          </button>
+                        </div>
                       )}
 
                       {/* Attach file to milestone */}
@@ -2716,6 +2762,86 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                 open={showEstimate}
                 onToggle={() => setShowEstimate(o => !o)}
               />
+            )}
+
+            {/* ── Meetings log ──────────────────────────────────────── */}
+            {meetings.length > 0 && (
+              <div style={{ border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
+                {/* Header */}
+                <button
+                  onClick={() => setMeetingsExpanded(v => !v)}
+                  style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '14px 18px', background: 'var(--surface)', border: 'none', cursor: 'pointer', textAlign: 'left' }}
+                >
+                  <span style={{ fontSize: 14, fontWeight: 800, color: 'var(--text)', flex: 1 }}>
+                    📝 Meeting Log <span style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-faint)', marginLeft: 6 }}>{meetings.length} meeting{meetings.length !== 1 ? 's' : ''}</span>
+                  </span>
+                  <button
+                    onClick={e => { e.stopPropagation(); setTranscriptDefaultMs(null); setShowTranscriptImporter(true); }}
+                    style={{ fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text-muted)', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}
+                  >+ Add meeting</button>
+                  <span style={{ fontSize: 12, color: 'var(--text-faint)' }}>{meetingsExpanded ? '▲' : '▼'}</span>
+                </button>
+
+                {meetingsExpanded && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+                    {meetings.map((mtg, mi) => (
+                      <div key={mtg.id} style={{ padding: '16px 18px', borderTop: '1px solid var(--border-light)', background: 'var(--bg)' }}>
+                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: mtg.summary ? 8 : 0 }}>
+                          <div style={{ flex: 1 }}>
+                            <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>{mtg.title}</div>
+                            {mtg.meeting_date && (
+                              <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 2 }}>
+                                {new Date(mtg.meeting_date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'long', day: 'numeric', year: 'numeric' })}
+                              </div>
+                            )}
+                          </div>
+                          <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                            {mtg.transcript && (
+                              <button
+                                onClick={() => setShowTranscript(showTranscript === mtg.id ? null : mtg.id)}
+                                style={{ fontSize: 10, fontWeight: 700, padding: '3px 8px', borderRadius: 5, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-faint)', cursor: 'pointer' }}
+                              >{showTranscript === mtg.id ? 'Hide' : 'Transcript'}</button>
+                            )}
+                            <button
+                              onClick={async () => {
+                                await deleteProjectMeeting(mtg.id);
+                                setMeetings(prev => prev.filter(m => m.id !== mtg.id));
+                              }}
+                              style={{ fontSize: 10, padding: '3px 6px', borderRadius: 5, border: '1px solid var(--border)', background: 'none', color: 'var(--text-faint)', cursor: 'pointer' }}
+                              title="Delete meeting"
+                            >🗑</button>
+                          </div>
+                        </div>
+
+                        {mtg.summary && (
+                          <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6, marginBottom: (mtg.action_items?.length > 0 || showTranscript === mtg.id) ? 8 : 0 }}>
+                            {mtg.summary}
+                          </div>
+                        )}
+
+                        {/* Action items */}
+                        {mtg.action_items?.length > 0 && (
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: showTranscript === mtg.id ? 8 : 0 }}>
+                            {mtg.action_items.map((ai, ai_i) => (
+                              <span key={ai_i} style={{ fontSize: 11, padding: '2px 8px', borderRadius: 12, background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text-muted)' }}>
+                                {ai.owner && <span style={{ fontWeight: 700, color: 'var(--accent)', marginRight: 4 }}>{ai.owner}</span>}
+                                {ai.title}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Full transcript */}
+                        {showTranscript === mtg.id && mtg.transcript && (
+                          <div style={{ marginTop: 6, padding: '10px 12px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 7, fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.7, whiteSpace: 'pre-wrap', maxHeight: 280, overflowY: 'auto' }}>
+                            {mtg.transcript}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             )}
 
             {/* Add milestone footer */}
@@ -3233,6 +3359,18 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
           projectStart={activeProject.start_date}
           onImported={handleImported}
           onClose={() => setShowImporter(false)}
+        />
+      )}
+
+      {/* Transcript importer modal */}
+      {showTranscriptImporter && activeProject && (
+        <TranscriptImporter
+          projectId={activeProject.id}
+          milestones={milestones}
+          owners={owners}
+          defaultMsId={transcriptDefaultMs}
+          onImported={handleTranscriptImported}
+          onClose={() => { setShowTranscriptImporter(false); setTranscriptDefaultMs(null); }}
         />
       )}
 

@@ -675,6 +675,97 @@ export async function saveRejectionResponse(taskId, response) {
   if (error) throw new Error(error.message);
 }
 
+// ── Project meetings ──────────────────────────────────────────────────────────
+
+export async function fetchProjectMeetings(projectId) {
+  const { data, error } = await supabase
+    .from('project_meetings')
+    .select('*')
+    .eq('project_id', projectId)
+    .order('created_at', { ascending: false });
+  if (error) throw new Error(error.message);
+  return data || [];
+}
+
+export async function saveProjectMeeting({ projectId, title, meetingDate, summary, transcript, actionItems }) {
+  const { data, error } = await supabase
+    .from('project_meetings')
+    .insert({
+      project_id:   projectId,
+      title,
+      meeting_date: meetingDate || null,
+      summary:      summary || null,
+      transcript:   transcript || null,
+      action_items: actionItems || [],
+    })
+    .select()
+    .single();
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+export async function deleteProjectMeeting(id) {
+  const { error } = await supabase.from('project_meetings').delete().eq('id', id);
+  if (error) throw new Error(error.message);
+}
+
+export async function parseMeetingWithAI(transcript) {
+  const key = import.meta.env.VITE_ANTHROPIC_API_KEY;
+  if (!key) throw new Error('No API key configured');
+
+  const today = new Date().toISOString().slice(0, 10);
+
+  const prompt = `You are an expert project manager. Read this meeting transcript and extract a structured summary.
+
+Today's date: ${today}
+
+Return ONLY a valid JSON object with no markdown, no explanation, no code fences:
+{
+  "title": "Short descriptive meeting title (eg. 'Kickoff', 'Week 2 Check-in', 'Design Review')",
+  "meeting_date": "YYYY-MM-DD if a date is mentioned or implied, otherwise null",
+  "summary": "2-3 sentence summary of what was discussed and decided",
+  "action_items": [
+    {
+      "title": "Specific actionable task",
+      "owner": "Person responsible if mentioned, otherwise empty string",
+      "due_date": "YYYY-MM-DD if a deadline is mentioned, otherwise null",
+      "notes": "Any extra context for this task, or empty string"
+    }
+  ]
+}
+
+Rules:
+- Only extract genuine action items — things that need to be done, not things already completed
+- Keep task titles concise and actionable (start with a verb)
+- If no action items are mentioned, return an empty array
+- Return ONLY the raw JSON object, nothing else
+
+TRANSCRIPT:
+${transcript}`;
+
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': key,
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true',
+    },
+    body: JSON.stringify({
+      model: 'claude-opus-4-5',
+      max_tokens: 2000,
+      messages: [{ role: 'user', content: prompt }],
+    }),
+  });
+
+  if (!res.ok) throw new Error(`API error ${res.status}`);
+  const json = await res.json();
+  const text = json.content[0].text.trim();
+  const match = text.match(/\{[\s\S]*\}/);
+  if (!match) throw new Error('Could not parse AI response as JSON');
+  return JSON.parse(match[0]);
+}
+
 export async function addExternalLink(projectId, url, name, milestoneId = null, taskId = null) {
   const { data, error } = await supabase
     .from('project_files')
