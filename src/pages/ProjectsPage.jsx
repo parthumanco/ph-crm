@@ -477,6 +477,18 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
 
   useEffect(() => { loadAll(); }, [loadAll]);
 
+  // Auto-expand chain of custody for any task with an open rejection
+  useEffect(() => {
+    const rejectedIds = tasks.filter(t => t.rejected_at).map(t => t.id);
+    if (rejectedIds.length) {
+      setExpandedRejections(prev => {
+        const next = new Set(prev);
+        rejectedIds.forEach(id => next.add(id));
+        return next;
+      });
+    }
+  }, [tasks]);
+
   const loadAssigned = useCallback(async (owner) => {
     setLoadingAssigned(true);
     try {
@@ -2328,27 +2340,27 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                               const toggleChain   = () => setExpandedRejections(s => { const n = new Set(s); n.has(task.id) ? n.delete(task.id) : n.add(task.id); return n; });
 
                               const eventLabel = ev => {
-                                if (ev.type === 'sent')         return { icon: '📤', text: 'Sent to client',            color: 'var(--text-muted)' };
-                                if (ev.type === 'rejected')     return { icon: '⚠',  text: `Not approved by ${ev.by}`, color: '#ef4444' };
-                                if (ev.type === 'revised_sent') return { icon: '📤', text: `Revision ${ev.revNum} sent`, color: 'var(--text-muted)' };
-                                if (ev.type === 'approved')     return { icon: '✓',  text: `Approved by ${ev.by}`,     color: '#10b981' };
-                                return { icon: '·', text: ev.type, color: 'var(--text-faint)' };
+                                if (ev.type === 'sent')         return { dot: '#94a3b8', text: 'Sent to client',             weight: 500 };
+                                if (ev.type === 'rejected')     return { dot: '#ef4444', text: `Not approved by ${ev.by}`,   weight: 700 };
+                                if (ev.type === 'revised_sent') return { dot: '#94a3b8', text: `Revision ${ev.revNum} sent`, weight: 500 };
+                                if (ev.type === 'approved')     return { dot: '#10b981', text: `Approved by ${ev.by}`,       weight: 600 };
+                                return { dot: 'var(--border)', text: ev.type, weight: 400 };
                               };
 
                               let rn = 0;
                               const displayChain = chain.map(ev => ev.type === 'revised_sent' ? { ...ev, revNum: ++rn } : ev);
 
                               return (
-                                <div style={{ margin: '4px 16px 8px 48px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                <div style={{ margin: '2px 16px 10px 48px' }}>
                                   {/* ── Always-visible CTA when there's an open rejection ── */}
                                   {hasRejection && (
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
                                       <button
                                         onClick={() => openResendModal(task, activeProject)}
                                         style={{ fontSize: 12, fontWeight: 700, padding: '5px 14px', borderRadius: 6, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer', whiteSpace: 'nowrap' }}
                                       >📤 Send Revision {nextRevNum} →</button>
                                       <span style={{ fontSize: 11, color: '#ef4444', fontWeight: 600 }}>
-                                        ⚠ Changes requested by {task.rejected_by}
+                                        Changes requested by {task.rejected_by}
                                       </span>
                                     </div>
                                   )}
@@ -2358,29 +2370,38 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                                     <>
                                       <button
                                         onClick={toggleChain}
-                                        style={{ alignSelf: 'flex-start', fontSize: 11, fontWeight: 600, color: 'var(--text-faint)', background: 'none', border: 'none', padding: 0, cursor: 'pointer', textDecoration: 'underline', textUnderlineOffset: 2 }}
-                                      >{isExpanded ? '▲ Hide' : '▼ View'} review history ({chain.length})</button>
+                                        style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-faint)', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 4, padding: '2px 8px', cursor: 'pointer', marginBottom: isExpanded ? 10 : 0 }}
+                                      >{isExpanded ? '▲ Hide' : '▼ Show'} review history ({chain.length})</button>
+
                                       {isExpanded && (
-                                        <div style={{ borderLeft: '2px solid var(--border)', paddingLeft: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                                        <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
                                           {displayChain.map((ev, i) => {
                                             const lbl = eventLabel(ev);
+                                            const isLast = i === displayChain.length - 1;
                                             return (
-                                              <div key={i} style={{ fontSize: 12 }}>
-                                                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                                                  <span style={{ color: lbl.color, fontWeight: 700 }}>{lbl.icon}</span>
-                                                  <span style={{ color: lbl.color, fontWeight: ev.type === 'rejected' ? 700 : 500 }}>{lbl.text}</span>
-                                                  <span style={{ color: 'var(--text-faint)', fontSize: 11 }}>· {fmtDate(ev.at)}</span>
+                                              <div key={i} style={{ display: 'flex', gap: 10, position: 'relative' }}>
+                                                {/* Timeline spine */}
+                                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0, width: 14 }}>
+                                                  <div style={{ width: 8, height: 8, borderRadius: '50%', background: lbl.dot, flexShrink: 0, marginTop: 4, zIndex: 1 }} />
+                                                  {!isLast && <div style={{ width: 1, flex: 1, background: 'var(--border)', minHeight: 12 }} />}
                                                 </div>
-                                                {ev.type === 'rejected' && ev.notes && (
-                                                  <div style={{ marginTop: 4, marginLeft: 18, padding: '5px 9px', background: '#fef2f2', borderRadius: 5, fontSize: 11, color: '#374151', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>
-                                                    {ev.notes}
+                                                {/* Content */}
+                                                <div style={{ flex: 1, paddingBottom: isLast ? 0 : 10 }}>
+                                                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                                                    <span style={{ fontSize: 12, color: lbl.dot === '#ef4444' ? '#ef4444' : lbl.dot === '#10b981' ? '#10b981' : 'var(--text-muted)', fontWeight: lbl.weight }}>{lbl.text}</span>
+                                                    <span style={{ fontSize: 10, color: 'var(--text-faint)', whiteSpace: 'nowrap' }}>{fmtDate(ev.at)}</span>
                                                   </div>
-                                                )}
-                                                {ev.type === 'revised_sent' && ev.response && (
-                                                  <div style={{ marginTop: 4, marginLeft: 18, padding: '5px 9px', background: 'var(--surface)', border: '1px solid var(--border-light)', borderRadius: 5, fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.6, whiteSpace: 'pre-wrap', fontStyle: 'italic' }}>
-                                                    "{ev.response}"
-                                                  </div>
-                                                )}
+                                                  {ev.type === 'rejected' && ev.notes && (
+                                                    <div style={{ marginTop: 4, padding: '6px 10px', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 5, fontSize: 11, color: '#7f1d1d', lineHeight: 1.55, whiteSpace: 'pre-wrap' }}>
+                                                      {ev.notes}
+                                                    </div>
+                                                  )}
+                                                  {ev.type === 'revised_sent' && ev.response && (
+                                                    <div style={{ marginTop: 4, padding: '6px 10px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 5, fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.55, fontStyle: 'italic' }}>
+                                                      "{ev.response}"
+                                                    </div>
+                                                  )}
+                                                </div>
                                               </div>
                                             );
                                           })}
