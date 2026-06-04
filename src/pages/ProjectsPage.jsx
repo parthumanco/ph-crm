@@ -2937,23 +2937,33 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
       {/* Resend revised update modal */}
       {resendEmail && (() => {
         const { task, project } = resendEmail;
-        const primaryContact = (project?.contacts || [])[0];
-        const clientName   = primaryContact?.name || project?.client_name || 'there';
-        const toEmail      = primaryContact?.email || project?.client_email || '';
-        const companyLabel = project?.client_name || project?.name || '';
-        const portalUrl    = project?.share_token ? `${window.location.origin}/portal/${project.share_token}?task=${task.id}` : null;
-        const revNum       = ((task.review_chain || []).filter(e => e.type === 'revised_sent').length) + 1;
-        const subject      = `Revision ${revNum} ready: ${task.title}`;
-        const aiResponse   = task.rejection_response || '';
-        const messageBody  = aiResponse
+        const primaryContact    = (project?.contacts || [])[0];
+        const clientName        = primaryContact?.name || project?.client_name || 'there';
+        const toEmail           = primaryContact?.email || project?.client_email || '';
+        const companyLabel      = project?.client_name || project?.name || '';
+        const portalUrl         = project?.share_token ? `${window.location.origin}/portal/${project.share_token}?task=${task.id}` : null;
+        const revNum            = ((task.review_chain || []).filter(e => e.type === 'revised_sent').length) + 1;
+        const subject           = `Revision ${revNum} ready: ${task.title}`;
+        const taskAttachments   = projectFiles.filter(f => f.task_id === task.id && f.url);
+        const aiResponse        = task.rejection_response || '';
+        const messageBody       = aiResponse
           ? `${aiResponse} Please click the link below to review.`
           : `A revision has been made to your project. Please click the link below to review and approve it.`;
-        const body         = `Hi ${clientName},\n\n${messageBody}\n\n${portalUrl ? `${portalUrl}\n\n` : ''}Best,\nPart Human`;
-        const htmlBody     = [
+        // Plain-text file list appended after sign-off
+        const filePlainText     = taskAttachments.length
+          ? `\n\nAttached files:\n${taskAttachments.map(f => `• ${f.name}: ${f.url}`).join('\n')}`
+          : '';
+        const body              = `Hi ${clientName},\n\n${messageBody}\n\n${portalUrl ? `${portalUrl}\n\n` : ''}Best,\nPart Human${filePlainText}`;
+        // HTML file list — styled link pills
+        const fileHtml          = taskAttachments.length
+          ? `<p style="font-family:sans-serif;font-size:13px;color:#6b7280;margin-top:16px;">📎 <strong>Attached files</strong></p><p style="font-family:sans-serif;">${taskAttachments.map(f => `<a href="${f.url}" style="display:inline-block;margin:2px 4px 2px 0;padding:3px 10px;background:#f3f4f6;border:1px solid #d1d5db;border-radius:4px;font-size:12px;color:#111;text-decoration:none;font-family:sans-serif;">${f.name}</a>`).join('')}</p>`
+          : '';
+        const htmlBody          = [
           `<p style="font-family:sans-serif;font-size:14px;">Hi ${clientName},</p>`,
           `<p style="font-family:sans-serif;font-size:14px;">${messageBody.replace(/\n/g, '<br>')}</p>`,
           portalUrl ? `<p><a href="${portalUrl}" style="display:inline-block;background:#fbbf24;color:#111;font-weight:800;font-size:13px;padding:6px 14px;border-radius:20px;text-decoration:none;font-family:sans-serif;">PH &times; ${companyLabel}</a></p>` : '',
           `<p style="font-family:sans-serif;font-size:14px;">Best,<br>Part Human</p>`,
+          fileHtml,
         ].join('');
         const ccEmailsResend = extraRecipients.map(c => c.email).filter(Boolean);
         const gmailUrl = toEmail ? `https://mail.google.com/mail/?view=cm&to=${encodeURIComponent(toEmail)}&su=${encodeURIComponent(subject)}${ccEmailsResend.length ? `&cc=${encodeURIComponent(ccEmailsResend.join(','))}` : ''}` : null;
@@ -3025,6 +3035,18 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                       </a>
                     ) : <span style={{ color: 'var(--text-faint)', fontSize: 11 }}>No portal link — set up a client portal to enable this</span>}
                     <div style={{ whiteSpace: 'pre-wrap' }}>{`\nBest,\nPart Human`}</div>
+                    {taskAttachments.length > 0 && (
+                      <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--border-light)' }}>
+                        <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-faint)', marginBottom: 6 }}>📎 Attached files</div>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+                          {taskAttachments.map(f => (
+                            <a key={f.id} href={f.url} target="_blank" rel="noopener noreferrer" style={{ display: 'inline-block', padding: '2px 9px', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 4, fontSize: 11, color: 'var(--accent)', textDecoration: 'none', whiteSpace: 'nowrap' }}>
+                              {f.name}
+                            </a>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
