@@ -67,9 +67,9 @@ export async function fetchCompanyIntel(clientName) {
   return data || null;
 }
 
-export async function runClientDeepScan(companyId, company, icp) {
+export async function runClientDeepScan(companyId, company, icp, items = []) {
   const { scanDeepDive } = await import('./anthropic.js');
-  const result = await scanDeepDive(company, icp, company.engagement_type || null);
+  const result = await scanDeepDive(company, icp, company.engagement_type || null, items);
 
   const stripEmDash = s => (s || '').replace(/\s*—\s*/g, ' – ');
   const update = {

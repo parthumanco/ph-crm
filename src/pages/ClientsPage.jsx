@@ -124,7 +124,7 @@ export default function ClientsPage({ onNavigate, refreshKey, icp }) {
     setScanning(true);
     setScanStatus('Researching…');
     try {
-      const updated = await runClientDeepScan(intel.id, intel, icp);
+      const updated = await runClientDeepScan(intel.id, intel, icp, detail?.items || []);
       setIntel(updated);
       setScanStatus('Done');
       setTimeout(() => setScanStatus(''), 2000);

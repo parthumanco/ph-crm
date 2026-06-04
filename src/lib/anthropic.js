@@ -305,7 +305,7 @@ export async function weeklyRescanBatch(companies, icp = DEFAULT_ICP) {
   }
 }
 
-export async function scanDeepDive(company, icp = DEFAULT_ICP, existingEngagementType = null) {
+export async function scanDeepDive(company, icp = DEFAULT_ICP, existingEngagementType = null, researchItems = []) {
   const contacts = company.contacts || [];
   const contactStr = contacts
     .map(ct => {
@@ -326,6 +326,11 @@ export async function scanDeepDive(company, icp = DEFAULT_ICP, existingEngagemen
 
   const websiteKnown = !!company.website;
 
+  // Build research notes context from client_items
+  const researchContext = researchItems.length > 0
+    ? ` INTERNAL RESEARCH NOTES (use these as additional context — factor them into your analysis, recommended angle, and triggers):\n${researchItems.map(it => it.type === 'note' ? `- Note: ${it.body || it.title}` : `- Link: ${it.title}${it.url ? ` (${it.url})` : ''}${it.body ? ` — ${it.body}` : ''}`).join('\n')}`
+    : '';
+
   const data = await withTimeout(
     callClaude({
       model: 'claude-sonnet-4-6',
@@ -334,7 +339,7 @@ export async function scanDeepDive(company, icp = DEFAULT_ICP, existingEngagemen
       tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 2 }],
       messages: [{
         role: 'user',
-        content: `Search for recent signals about ${company.name}${company.website ? ` (${company.website})` : ''}. Check: company news, LinkedIn company page, Twitter/X, job boards (brand/marketing/comms roles).${linkedInClause}${nameSearchClause} Look for posts about growth, brand, team changes, or challenges. Find up to 3 trigger events from the last 90 days.${contactStr ? ` For each contact, also find their LinkedIn profile URL (linkedin.com/in/...) — include it in contactAngles.linkedinUrl if found with confidence. Contacts: ${contactStr}.` : ''} Do 1-2 searches max.${!websiteKnown ? ' Also find their website.' : ''}${existingEngagementType ? ` The engagement type is already set to "${existingEngagementType}" — write recommendedAngle and contactAngles for that engagement tier unless the company profile clearly warrants a different one.` : ''} Return JSON only.`,
+        content: `Search for recent signals about ${company.name}${company.website ? ` (${company.website})` : ''}. Check: company news, LinkedIn company page, Twitter/X, job boards (brand/marketing/comms roles).${linkedInClause}${nameSearchClause} Look for posts about growth, brand, team changes, or challenges. Find up to 3 trigger events from the last 90 days.${contactStr ? ` For each contact, also find their LinkedIn profile URL (linkedin.com/in/...) — include it in contactAngles.linkedinUrl if found with confidence. Contacts: ${contactStr}.` : ''} Do 1-2 searches max.${!websiteKnown ? ' Also find their website.' : ''}${existingEngagementType ? ` The engagement type is already set to "${existingEngagementType}" — write recommendedAngle and contactAngles for that engagement tier unless the company profile clearly warrants a different one.` : ''}${researchContext} Return JSON only.`,
       }],
     }),
     TIMEOUT_MS
