@@ -2392,7 +2392,8 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                             {(() => {
                               const chain = task.review_chain || [];
                               const hasRejection = task.rejected_at;
-                              if (chain.length === 0) return null;
+                              // Collapse CoC once task is fully approved (approval state shown by inline status chip)
+                              if (chain.length === 0 || task.approved_at) return null;
 
                               const revisionsSent = chain.filter(e => e.type === 'revised_sent').length;
                               const nextRevNum    = revisionsSent + 1;
