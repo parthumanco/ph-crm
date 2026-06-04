@@ -439,6 +439,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
   const [projectFiles, setProjectFiles]         = useState([]);
   const [cardFiles, setCardFiles]               = useState({});   // { projectId: files[] } for list view
   const [uploadingFor, setUploadingFor]         = useState(null);
+  const [dragOverTask, setDragOverTask]         = useState(null); // taskId being hovered over
   const [showImporterForProject, setShowImporterForProject] = useState(null); // projectId | null
   const fileInputRef                             = useRef(null);
   const pendingUpload                            = useRef({ projectId: null, milestoneId: null });
@@ -1248,6 +1249,27 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
       }
     } catch (err) {
       console.error('Upload failed:', err.message);
+      alert(`Upload failed: ${err.message}`);
+    } finally {
+      setUploadingFor(null);
+    }
+  };
+
+  const handleDropOnTask = async (e, task) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOverTask(null);
+    const files = Array.from(e.dataTransfer.files);
+    if (!files.length) return;
+    setUploadingFor(task.id);
+    try {
+      const saved = await Promise.all(
+        files.map(f => uploadProjectFile(activeProject.id, f, task.milestone_id || null, task.id))
+      );
+      setProjectFiles(prev => [...saved, ...prev]);
+      setCardFiles(prev => ({ ...prev, [activeProject.id]: [...saved, ...(prev[activeProject.id] || [])] }));
+    } catch (err) {
+      console.error('Drop upload failed:', err.message);
       alert(`Upload failed: ${err.message}`);
     } finally {
       setUploadingFor(null);
@@ -2145,8 +2167,33 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                         const isEditingThis = editingTask === task.id;
 
                         const hasOpenRejection = task.completed && task.rejected_at;
+                        const isDroppingOnTask = dragOverTask === task.id;
                         return (
-                          <div key={task.id} style={{ borderBottom: '1px solid var(--border-light)', background: hasOpenRejection ? '#fffbeb' : 'var(--surface)', borderLeft: hasOpenRejection ? '3px solid #f59e0b' : 'none' }}>
+                          <div
+                            key={task.id}
+                            onDragOver={e => { e.preventDefault(); e.stopPropagation(); setDragOverTask(task.id); }}
+                            onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget)) setDragOverTask(null); }}
+                            onDrop={e => handleDropOnTask(e, task)}
+                            style={{
+                              borderBottom: '1px solid var(--border-light)',
+                              background: isDroppingOnTask ? '#eff6ff' : hasOpenRejection ? '#fffbeb' : 'var(--surface)',
+                              borderLeft: isDroppingOnTask ? '3px solid var(--accent)' : hasOpenRejection ? '3px solid #f59e0b' : 'none',
+                              transition: 'background .1s, border-left .1s',
+                              position: 'relative',
+                            }}
+                          >
+                            {isDroppingOnTask && uploadingFor !== task.id && (
+                              <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none', zIndex: 2 }}>
+                                <div style={{ background: 'var(--accent)', color: '#fff', fontSize: 12, fontWeight: 700, padding: '4px 12px', borderRadius: 20, boxShadow: '0 2px 8px rgba(0,0,0,0.15)' }}>
+                                  📎 Drop to attach
+                                </div>
+                              </div>
+                            )}
+                            {uploadingFor === task.id && (
+                              <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none', zIndex: 2, background: 'rgba(255,255,255,0.7)' }}>
+                                <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--accent)' }}>⏳ Uploading…</div>
+                              </div>
+                            )}
 
                             {isEditingThis ? (
                               /* ── Edit mode ───────────────────────────────── */
