@@ -3,12 +3,32 @@ import { supabase } from './supabase';
 // ── Clients ───────────────────────────────────────────────────────────────────
 
 export async function fetchClients() {
+  // First ensure any projects with client_name but no client_id are reconciled
+  try {
+    const { data: orphans } = await supabase
+      .from('projects')
+      .select('id, client_name')
+      .not('client_name', 'is', null)
+      .neq('client_name', '')
+      .is('client_id', null);
+
+    if (orphans?.length > 0) {
+      // Create missing client records and link them
+      for (const p of orphans) {
+        const client = await findOrCreateClient(p.client_name);
+        if (client) {
+          await supabase.from('projects').update({ client_id: client.id }).eq('id', p.id);
+        }
+      }
+    }
+  } catch { /* non-fatal — fetch still proceeds */ }
+
   const { data, error } = await supabase
     .from('clients')
     .select('*, projects(id, name, status, start_date, end_date)')
     .order('name');
   if (error) throw new Error(error.message);
-  return data || [];
+  return (data || []).filter(c => (c.projects || []).length > 0);
 }
 
 export async function findOrCreateClient(name) {

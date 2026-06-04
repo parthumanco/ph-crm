@@ -87,8 +87,9 @@ export async function upsertProject(p) {
   if (!payload.start_date) payload.start_date = null;
   if (!payload.end_date)   payload.end_date   = null;
 
-  // Auto-create/link client record when client_name is set
-  if (payload.client_name?.trim() && !payload.client_id) {
+  // Always sync client_id whenever client_name is present
+  // (handles new projects, renames, and any rows that slipped through migration)
+  if (payload.client_name?.trim()) {
     try {
       const { findOrCreateClient } = await import('./clients.js');
       const client = await findOrCreateClient(payload.client_name.trim());
