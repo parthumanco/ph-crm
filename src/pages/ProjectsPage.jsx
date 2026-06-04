@@ -5,7 +5,7 @@ import {
   fetchProjects, fetchArchivedProjects, upsertProject, archiveProject, restoreProject, deleteProject,
   fetchMilestones, fetchArchivedMilestones, upsertMilestone, archiveMilestone, restoreMilestone, deleteMilestone,
   fetchProjectTasks, upsertProjectTask, toggleTask, deleteProjectTask, rejectTask, approveTask, saveRejectionResponse, addToReviewChain, clearRejectionFields,
-  fetchProjectFiles, uploadProjectFile, deleteProjectFile, addExternalLink,
+  fetchProjectFiles, fetchArchivedProjectFiles, uploadProjectFile, deleteProjectFile, archiveProjectFile, restoreProjectFile, addExternalLink,
   restoreProjectTask, fetchAllTasksByOwner,
   bulkInsertMilestones, bulkInsertTasks, parseProposalWithAI,
   fetchProjectMeetings, deleteProjectMeeting,
@@ -448,6 +448,9 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
 
   // File state
   const [projectFiles, setProjectFiles]         = useState([]);
+  const [archivedFiles, setArchivedFiles]       = useState([]);
+  const [archivedFilesOpen, setArchivedFilesOpen] = useState(false);
+  const [confirmDeleteFile, setConfirmDeleteFile] = useState(null); // file id
   const [cardFiles, setCardFiles]               = useState({});   // { projectId: files[] } for list view
   const [uploadingFor, setUploadingFor]         = useState(null);
   const [dragOverTask, setDragOverTask]         = useState(null); // taskId being hovered over
@@ -557,6 +560,9 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
     setMilestones([]);
     setTasks([]);
     setProjectFiles([]);
+    setArchivedFiles([]);
+    setArchivedFilesOpen(false);
+    setConfirmDeleteFile(null);
     setMeetings([]);
     setMeetingsExpanded(false);
     setShowTranscript(null);
@@ -572,10 +578,11 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
       });
     }
     try {
-      const [ms, ts, files, mtgs] = await Promise.all([
+      const [ms, ts, files, archivedF, mtgs] = await Promise.all([
         fetchMilestones(project.id),
         fetchProjectTasks(project.id),
         fetchProjectFiles(project.id).catch(() => []),
+        fetchArchivedProjectFiles(project.id).catch(() => []),
         fetchProjectMeetings(project.id).catch(() => []),
       ]);
       // Fix milestone statuses: if any task has an open rejection, milestone
@@ -587,6 +594,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
       setMilestones(fixedMs);
       setTasks(ts);
       setProjectFiles(files);
+      setArchivedFiles(archivedF);
       setMeetings(mtgs);
     } catch (e) {
       console.error('Failed to load project detail:', e);
@@ -1333,10 +1341,29 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
   const handleDeleteFile = async (file) => {
     await deleteProjectFile(file.id, file.storage_path);
     setProjectFiles(prev => prev.filter(f => f.id !== file.id));
+    setArchivedFiles(prev => prev.filter(f => f.id !== file.id));
     setCardFiles(prev => ({
       ...prev,
       [file.project_id]: (prev[file.project_id] || []).filter(f => f.id !== file.id),
     }));
+    setConfirmDeleteFile(null);
+  };
+
+  const handleArchiveFile = async (file) => {
+    await archiveProjectFile(file.id);
+    setProjectFiles(prev => prev.filter(f => f.id !== file.id));
+    setArchivedFiles(prev => [{ ...file, archived_at: new Date().toISOString() }, ...prev]);
+    setCardFiles(prev => ({
+      ...prev,
+      [file.project_id]: (prev[file.project_id] || []).filter(f => f.id !== file.id),
+    }));
+    setConfirmDeleteFile(null);
+  };
+
+  const handleRestoreFile = async (file) => {
+    await restoreProjectFile(file.id);
+    setArchivedFiles(prev => prev.filter(f => f.id !== file.id));
+    setProjectFiles(prev => [{ ...file, archived_at: null }, ...prev]);
   };
 
   const openLinkModal = (projectId, milestoneId = null, taskId = null) => {
@@ -2732,15 +2759,49 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                     Project Files <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>· {projectFiles.length}</span>
                   </div>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                    {annotated.map(f => (
-                      <div key={f.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '4px 8px 4px 7px', borderRadius: 20, background: 'var(--bg)', border: '1px solid var(--border-light)', maxWidth: 280 }}>
-                        <span style={{ fontSize: 13, flexShrink: 0, lineHeight: 1 }}>{fileIcon(f.mime_type)}</span>
-                        <a href={f.url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, fontWeight: 600, color: 'var(--accent)', textDecoration: 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 160 }} title={f.name}>{f.name}</a>
-                        {f.size && <span style={{ fontSize: 10, color: 'var(--text-faint)', whiteSpace: 'nowrap', flexShrink: 0 }}>{fmtFileSize(f.size)}</span>}
-                        <button onClick={() => handleDeleteFile(f)} style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 11, padding: '0 0 0 2px', flexShrink: 0, lineHeight: 1 }} title="Remove">✕</button>
-                      </div>
-                    ))}
+                    {annotated.map(f => {
+                      const confirming = confirmDeleteFile === f.id;
+                      return confirming ? (
+                        <div key={f.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '4px 8px', borderRadius: 20, background: '#fef2f2', border: '1px solid #fecaca' }}>
+                          <span style={{ fontSize: 11, color: '#ef4444', fontWeight: 600, whiteSpace: 'nowrap' }}>Remove "{f.name.length > 20 ? f.name.slice(0, 20) + '…' : f.name}"?</span>
+                          <button onClick={() => handleArchiveFile(f)} style={{ fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 10, border: '1px solid #d1d5db', background: 'var(--bg)', color: 'var(--text-muted)', cursor: 'pointer', whiteSpace: 'nowrap' }}>Archive</button>
+                          <button onClick={() => handleDeleteFile(f)} style={{ fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 10, border: 'none', background: '#ef4444', color: '#fff', cursor: 'pointer', whiteSpace: 'nowrap' }}>Delete</button>
+                          <button onClick={() => setConfirmDeleteFile(null)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: 12, padding: '0 0 0 2px', lineHeight: 1 }}>✕</button>
+                        </div>
+                      ) : (
+                        <div key={f.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '4px 8px 4px 7px', borderRadius: 20, background: 'var(--bg)', border: '1px solid var(--border-light)', maxWidth: 280 }}>
+                          <span style={{ fontSize: 13, flexShrink: 0, lineHeight: 1 }}>{fileIcon(f.mime_type)}</span>
+                          <a href={f.url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, fontWeight: 600, color: 'var(--accent)', textDecoration: 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 160 }} title={f.name}>{f.name}</a>
+                          {f.size && <span style={{ fontSize: 10, color: 'var(--text-faint)', whiteSpace: 'nowrap', flexShrink: 0 }}>{fmtFileSize(f.size)}</span>}
+                          <button onClick={() => setConfirmDeleteFile(f.id)} style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 11, padding: '0 0 0 2px', flexShrink: 0, lineHeight: 1 }} title="Remove">✕</button>
+                        </div>
+                      );
+                    })}
                   </div>
+
+                  {/* Archived files */}
+                  {archivedFiles.length > 0 && (
+                    <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--border-light)' }}>
+                      <button
+                        onClick={() => setArchivedFilesOpen(v => !v)}
+                        style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-faint)', background: 'none', border: 'none', cursor: 'pointer', padding: 0, textTransform: 'uppercase', letterSpacing: '.04em' }}
+                      >
+                        {archivedFilesOpen ? '▲' : '▼'} Archived ({archivedFiles.length})
+                      </button>
+                      {archivedFilesOpen && (
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+                          {archivedFiles.map(f => (
+                            <div key={f.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '4px 8px 4px 7px', borderRadius: 20, background: 'var(--bg)', border: '1px solid var(--border-light)', opacity: 0.6, maxWidth: 280 }}>
+                              <span style={{ fontSize: 13, flexShrink: 0, lineHeight: 1 }}>{fileIcon(f.mime_type)}</span>
+                              <span style={{ fontSize: 11, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 140 }} title={f.name}>{f.name}</span>
+                              <button onClick={() => handleRestoreFile(f)} style={{ fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-muted)', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}>Restore</button>
+                              <button onClick={() => handleDeleteFile(f)} style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 11, padding: '0 0 0 2px', flexShrink: 0, lineHeight: 1 }} title="Delete permanently">✕</button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               );
             })()}

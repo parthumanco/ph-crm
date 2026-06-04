@@ -535,9 +535,37 @@ export async function fetchProjectFiles(projectId) {
     .from('project_files')
     .select('*')
     .eq('project_id', projectId)
+    .is('archived_at', null)
     .order('uploaded_at', { ascending: false });
   if (error) throw new Error(error.message);
   return data || [];
+}
+
+export async function fetchArchivedProjectFiles(projectId) {
+  const { data, error } = await supabase
+    .from('project_files')
+    .select('*')
+    .eq('project_id', projectId)
+    .not('archived_at', 'is', null)
+    .order('archived_at', { ascending: false });
+  if (error) throw new Error(error.message);
+  return data || [];
+}
+
+export async function archiveProjectFile(id) {
+  const { error } = await supabase
+    .from('project_files')
+    .update({ archived_at: new Date().toISOString() })
+    .eq('id', id);
+  if (error) throw new Error(error.message);
+}
+
+export async function restoreProjectFile(id) {
+  const { error } = await supabase
+    .from('project_files')
+    .update({ archived_at: null })
+    .eq('id', id);
+  if (error) throw new Error(error.message);
 }
 
 export async function uploadProjectFile(projectId, file, milestoneId = null, taskId = null) {
