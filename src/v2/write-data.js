@@ -19,7 +19,8 @@
    Scope (current):
      • Projects:   create / edit / archive / restore
      • Milestones: create / edit / archive / restore
-     • Tasks:      create / edit / toggle / delete / restore
+     • Project tasks:  create / edit / toggle / delete / restore
+     • Deals:      create / edit / move stage / delete
 ============================================ */
 
 export {
@@ -33,9 +34,16 @@ export {
     archiveMilestone,
     restoreMilestone,
     deleteMilestone,
-    // Tasks
+    // Project tasks
     upsertProjectTask,
     toggleTask,
     deleteProjectTask,
     restoreProjectTask,
 } from '../lib/projects.js';
+
+export {
+    // Deals
+    upsertDeal,
+    moveStage as moveDealStage,
+    deleteDeal,
+} from '../lib/deals.js';

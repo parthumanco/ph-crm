@@ -2627,3 +2627,85 @@
 .v2-task {
     grid-template-columns: 24px 1fr auto;
 }
+
+/* ============================================
+   DEALS — drag/drop, toast, textarea
+============================================ */
+.v2-deal {
+    cursor: grab;
+    user-select: none;
+}
+.v2-deal:active { cursor: grabbing; }
+.v2-deal.is-dragging {
+    opacity: 0.4;
+    transform: rotate(-1deg);
+}
+
+.v2-lane.is-drop-target {
+    background: rgba(247, 94, 42, 0.06);
+    border-color: var(--v2-orange);
+    transition: background 0.15s ease, border-color 0.15s ease;
+}
+.v2-lane.is-drop-target .v2-lane__header {
+    background: rgba(247, 94, 42, 0.04);
+}
+
+.v2-closed-lane {
+    transition: background 0.15s ease, border-color 0.15s ease;
+}
+.v2-closed-lane.is-drop-target {
+    border-style: solid;
+}
+.v2-closed-lane--won.is-drop-target {
+    background: rgba(55, 187, 176, 0.12);
+    border-color: var(--v2-teal);
+}
+.v2-closed-lane--lost.is-drop-target {
+    background: rgba(194, 69, 26, 0.10);
+    border-color: #c2451a;
+}
+
+/* Toast — auto-dismiss bottom-right notification */
+.v2-toast {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    background: var(--crm-text);
+    color: #fff;
+    padding: 12px 18px;
+    border-radius: 9999px;
+    font-family: var(--v2-font-body);
+    font-size: 13px;
+    font-weight: 500;
+    box-shadow: 0 8px 24px rgba(20, 14, 30, 0.25);
+    z-index: 200;
+    animation: v2-toast-in 0.25s var(--ease-standard, ease);
+    max-width: 480px;
+}
+@keyframes v2-toast-in {
+    from { transform: translateY(8px); opacity: 0; }
+    to   { transform: translateY(0); opacity: 1; }
+}
+.v2-toast--win  { background: #20857c; }
+.v2-toast--warn { background: #c2451a; }
+.v2-toast--info { background: var(--v2-purple); }
+.v2-toast__icon {
+    width: 18px; height: 18px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.18);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12px;
+    font-weight: 700;
+    flex-shrink: 0;
+}
+
+/* Textarea variant of v2-form__input */
+.v2-form__textarea {
+    resize: vertical;
+    min-height: 70px;
+    font-family: var(--v2-font-body);
+    line-height: 1.5;
+}

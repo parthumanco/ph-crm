@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
     fetchDeals,
     DEAL_STAGES,
@@ -9,25 +9,32 @@ import {
     fmt$,
     daysSince,
 } from './safe-data.js';
+import {
+    moveDealStage,
+    deleteDeal,
+    upsertProject,
+} from './write-data.js';
+import V2Modal from './V2Modal.jsx';
+import V2Confirm from './V2Confirm.jsx';
+import DealForm from './forms/DealForm.jsx';
 
 /* ============================================
-   V2 DEALS KANBAN
+   V2 DEALS KANBAN — now interactive
 
-   Read-only kanban view wired to lib/deals.js
-   fetchDeals(). Active stages render as columns;
-   Won and Lost are displayed in dedicated drop
-   bars below the stats so there's exactly one
-   target for each close action (no duplicate
-   stat-card-doubles-as-drop-zone ambiguity).
+   Six active stages as columns; Won and Lost as
+   dedicated drop bars. Drag a card to move stage.
+   Drop on Won → moveStage + auto-create project
+   (matches legacy behavior without the audio
+   fanfare or animated celebration).
 ============================================ */
 
 const LANE_ACCENTS = {
-    new: '#6f8ec9',
-    discovery: 'var(--v2-blue)',
-    proposal: 'var(--v2-purple)',
-    negotiation: '#c08850',
-    verbal: 'var(--v2-orange)',
-    contract: 'var(--v2-teal)',
+    prospect:       'var(--v2-blue)',
+    outreach:       '#6f8ec9',
+    responded:      'var(--v2-blue)',
+    discovery_call: 'var(--v2-purple)',
+    proposal_sent:  '#c08850',
+    negotiation:    'var(--v2-orange)',
 };
 
 function ageWarn(days) {
@@ -43,12 +50,27 @@ function ownerAvatar(owner) {
     return { initials, color };
 }
 
-function DealCard({ deal }) {
+function DealCard({ deal, onClick, onDragStart, onDragEnd, isDragging }) {
     const days = daysSince(deal.stage_entered_at || deal.created_at);
     const ageClass = ageWarn(days);
     const owner = ownerAvatar(deal.assigned_to);
     return (
-        <div className="v2-deal">
+        <div
+            className={`v2-deal ${isDragging ? 'is-dragging' : ''}`}
+            draggable
+            onDragStart={(e) => {
+                e.dataTransfer.effectAllowed = 'move';
+                e.dataTransfer.setData('text/dealid', deal.id);
+                onDragStart?.(deal);
+            }}
+            onDragEnd={() => onDragEnd?.()}
+            onClick={(e) => {
+                // Click should open detail; drag handlers don't fire click.
+                if (e.detail > 0) onClick?.(deal);
+            }}
+            role="button"
+            tabIndex={0}
+        >
             <div className="v2-deal__head">
                 <div className="v2-deal__company">{deal.company_name || '—'}</div>
                 {deal.tier && (
@@ -86,23 +108,95 @@ export default function V2DealsPage() {
     const [deals, setDeals] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
+    const [draggingId, setDraggingId] = useState(null);
+    const [dragOverStage, setDragOverStage] = useState(null);
+    const [dealModal, setDealModal] = useState(null);   // null | { mode: 'new' | 'edit', target?: deal }
+    const [deleteTarget, setDeleteTarget] = useState(null); // null | deal
+    const [working, setWorking] = useState(false);
+    const [toast, setToast] = useState(null);
 
-    useEffect(() => {
-        let cancelled = false;
-        (async () => {
-            try {
-                setLoading(true);
-                setError(null);
-                const list = await fetchDeals();
-                if (!cancelled) setDeals(list);
-            } catch (err) {
-                if (!cancelled) setError(err.message || 'Failed to load deals');
-            } finally {
-                if (!cancelled) setLoading(false);
-            }
-        })();
-        return () => { cancelled = true; };
+    const load = useCallback(async () => {
+        try {
+            setLoading(true);
+            setError(null);
+            const list = await fetchDeals();
+            setDeals(list);
+        } catch (err) {
+            setError(err.message || 'Failed to load deals');
+        } finally {
+            setLoading(false);
+        }
     }, []);
+
+    useEffect(() => { load(); }, [load]);
+
+    // Auto-dismiss toast after 4 seconds
+    useEffect(() => {
+        if (!toast) return;
+        const t = setTimeout(() => setToast(null), 4000);
+        return () => clearTimeout(t);
+    }, [toast]);
+
+    /** Move a deal to a new stage. If moving to 'won', also create
+        a project from the deal (matches legacy createProjectFromDeal). */
+    const moveToStage = useCallback(async (dealId, newStage) => {
+        const deal = deals.find((d) => d.id === dealId);
+        if (!deal || deal.stage === newStage) return;
+
+        // Optimistic local update so the kanban feels snappy
+        setDeals((s) => s.map((d) => d.id === dealId ? { ...d, stage: newStage } : d));
+
+        try {
+            await moveDealStage(dealId, newStage);
+
+            if (newStage === 'won') {
+                // Auto-create a project for the won deal
+                try {
+                    await upsertProject({
+                        name: deal.title || deal.company_name,
+                        client_name: deal.company_name,
+                        contact_name: deal.contact_name || null,
+                        status: 'active',
+                        start_date: new Date().toISOString().slice(0, 10),
+                    });
+                    setToast({ kind: 'win', text: `Won! Project created for ${deal.company_name}.` });
+                } catch (err) {
+                    setToast({ kind: 'warn', text: `Won, but couldn't create project: ${err.message}` });
+                }
+            } else if (newStage === 'lost') {
+                setToast({ kind: 'info', text: `${deal.company_name} moved to Lost — back to nurture in 6 months.` });
+            }
+
+            await load();
+        } catch (err) {
+            // Roll back optimistic update on failure
+            setDeals((s) => s.map((d) => d.id === dealId ? { ...d, stage: deal.stage } : d));
+            setToast({ kind: 'warn', text: err.message || 'Couldn\'t move deal' });
+        }
+    }, [deals, load]);
+
+    const handleDrop = useCallback((e, targetStage) => {
+        e.preventDefault();
+        const dealId = e.dataTransfer.getData('text/dealid');
+        setDragOverStage(null);
+        if (!dealId) return;
+        moveToStage(dealId, targetStage);
+    }, [moveToStage]);
+
+    const handleDelete = useCallback(async () => {
+        if (!deleteTarget) return;
+        setWorking(true);
+        try {
+            await deleteDeal(deleteTarget.id);
+            setDeleteTarget(null);
+            setDealModal(null);
+            await load();
+        } catch (err) {
+            setError(err.message || 'Couldn\'t delete deal');
+        } finally {
+            setWorking(false);
+        }
+    }, [deleteTarget, load]);
 
     const byStage = useMemo(() => {
         const map = {};
@@ -151,6 +245,16 @@ export default function V2DealsPage() {
                         {loading ? 'Loading from Supabase…' : `Won this year: ${fmt$(stats.wonYtd)}`}
                     </p>
                 </div>
+                <div className="v2-page-header__actions">
+                    <button
+                        type="button"
+                        className="v2-btn v2-btn--primary"
+                        onClick={() => setDealModal({ mode: 'new' })}
+                    >
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+                        New deal
+                    </button>
+                </div>
             </div>
 
             {error && <div className="v2-error">Couldn't load deals: {error}</div>}
@@ -179,20 +283,30 @@ export default function V2DealsPage() {
                 </div>
             </div>
 
-            {/* Closed lanes — dedicated, unambiguous targets */}
+            {/* Closed lanes — dedicated, unambiguous drop targets */}
             <div className="v2-closed-strip">
-                <div className="v2-closed-lane v2-closed-lane--won">
+                <div
+                    className={`v2-closed-lane v2-closed-lane--won ${dragOverStage === 'won' ? 'is-drop-target' : ''}`}
+                    onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setDragOverStage('won'); }}
+                    onDragLeave={() => setDragOverStage(null)}
+                    onDrop={(e) => handleDrop(e, 'won')}
+                >
                     <div className="v2-closed-lane__icon">✓</div>
                     <div className="v2-closed-lane__body">
-                        <div className="v2-closed-lane__label">Won lane</div>
+                        <div className="v2-closed-lane__label">{draggingId ? 'Drop here to mark Won' : 'Won lane'}</div>
                         <div className="v2-closed-lane__hint">{wonCount} closed · auto-creates project on move</div>
                     </div>
                     <div className="v2-closed-lane__count">{wonCount}</div>
                 </div>
-                <div className="v2-closed-lane v2-closed-lane--lost">
+                <div
+                    className={`v2-closed-lane v2-closed-lane--lost ${dragOverStage === 'lost' ? 'is-drop-target' : ''}`}
+                    onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setDragOverStage('lost'); }}
+                    onDragLeave={() => setDragOverStage(null)}
+                    onDrop={(e) => handleDrop(e, 'lost')}
+                >
                     <div className="v2-closed-lane__icon">×</div>
                     <div className="v2-closed-lane__body">
-                        <div className="v2-closed-lane__label">Lost lane</div>
+                        <div className="v2-closed-lane__label">{draggingId ? 'Drop here to mark Lost' : 'Lost lane'}</div>
                         <div className="v2-closed-lane__hint">{lostCount} closed · returns to nurture in 6mo</div>
                     </div>
                     <div className="v2-closed-lane__count">{lostCount}</div>
@@ -205,8 +319,23 @@ export default function V2DealsPage() {
                     {DEAL_ACTIVE_STAGES.map((stage) => {
                         const stageDeals = byStage[stage.id] || [];
                         const total = stageDeals.reduce((sum, d) => sum + dealValue(d), 0);
+                        const isDropTarget = dragOverStage === stage.id;
                         return (
-                            <div key={stage.id} className="v2-lane" style={{ '--lane-accent': LANE_ACCENTS[stage.id] || stage.color }}>
+                            <div
+                                key={stage.id}
+                                className={`v2-lane ${isDropTarget ? 'is-drop-target' : ''}`}
+                                style={{ '--lane-accent': LANE_ACCENTS[stage.id] || stage.color }}
+                                onDragOver={(e) => {
+                                    e.preventDefault();
+                                    e.dataTransfer.dropEffect = 'move';
+                                    if (dragOverStage !== stage.id) setDragOverStage(stage.id);
+                                }}
+                                onDragLeave={(e) => {
+                                    // Only clear when leaving the lane entirely, not when moving to a child
+                                    if (!e.currentTarget.contains(e.relatedTarget)) setDragOverStage(null);
+                                }}
+                                onDrop={(e) => handleDrop(e, stage.id)}
+                            >
                                 <div className="v2-lane__header">
                                     <div className="v2-lane__title-row">
                                         <div className="v2-lane__title">
@@ -222,15 +351,76 @@ export default function V2DealsPage() {
                                 <div className="v2-lane__body">
                                     {loading && <div className="v2-lane__empty">Loading…</div>}
                                     {!loading && stageDeals.length === 0 && (
-                                        <div className="v2-lane__empty">No deals in {stage.label.toLowerCase()}</div>
+                                        <div className="v2-lane__empty">
+                                            {draggingId ? `Drop to move to ${stage.label}` : `No deals in ${stage.label.toLowerCase()}`}
+                                        </div>
                                     )}
-                                    {stageDeals.map((d) => <DealCard key={d.id} deal={d} />)}
+                                    {stageDeals.map((d) => (
+                                        <DealCard
+                                            key={d.id}
+                                            deal={d}
+                                            isDragging={draggingId === d.id}
+                                            onDragStart={(deal) => setDraggingId(deal.id)}
+                                            onDragEnd={() => { setDraggingId(null); setDragOverStage(null); }}
+                                            onClick={(deal) => setDealModal({ mode: 'edit', target: deal })}
+                                        />
+                                    ))}
                                 </div>
                             </div>
                         );
                     })}
                 </div>
             </div>
+
+            {/* Toast (auto-dismiss) */}
+            {toast && (
+                <div className={`v2-toast v2-toast--${toast.kind}`}>
+                    {toast.kind === 'win' && <span className="v2-toast__icon">✓</span>}
+                    {toast.kind === 'warn' && <span className="v2-toast__icon">!</span>}
+                    {toast.kind === 'info' && <span className="v2-toast__icon">·</span>}
+                    <span>{toast.text}</span>
+                </div>
+            )}
+
+            {/* Create / edit modal */}
+            <V2Modal
+                open={dealModal !== null}
+                onClose={() => setDealModal(null)}
+                eyebrow={dealModal?.mode === 'edit' ? 'edit deal' : 'new deal'}
+                title={dealModal?.mode === 'edit' ? (dealModal.target?.title || dealModal.target?.company_name || 'Edit deal') : 'Create a deal'}
+                footer={
+                    dealModal?.mode === 'edit' && (
+                        <button
+                            type="button"
+                            className="v2-btn-link v2-btn-link--danger"
+                            onClick={() => setDeleteTarget(dealModal.target)}
+                            style={{ marginRight: 'auto' }}
+                        >
+                            Delete deal
+                        </button>
+                    )
+                }
+            >
+                {dealModal && (
+                    <DealForm
+                        initial={dealModal.mode === 'edit' ? dealModal.target : null}
+                        onSaved={() => { setDealModal(null); load(); }}
+                        onCancel={() => setDealModal(null)}
+                    />
+                )}
+            </V2Modal>
+
+            <V2Confirm
+                open={deleteTarget !== null}
+                onClose={() => setDeleteTarget(null)}
+                onConfirm={handleDelete}
+                eyebrow="careful"
+                title="Delete this deal?"
+                description={deleteTarget ? `${deleteTarget.company_name} will be removed. Activities and tasks on this deal will be deleted too.` : null}
+                confirmLabel="Delete deal"
+                confirmTone="danger"
+                loading={working}
+            />
         </>
     );
 }
