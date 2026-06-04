@@ -715,11 +715,12 @@ export async function fetchProjectMeetings(projectId) {
   return data || [];
 }
 
-export async function saveProjectMeeting({ projectId, title, meetingDate, summary, transcript, actionItems }) {
+export async function saveProjectMeeting({ projectId, dealId, title, meetingDate, summary, transcript, actionItems }) {
   const { data, error } = await supabase
     .from('project_meetings')
     .insert({
-      project_id:   projectId,
+      project_id:   projectId || null,
+      deal_id:      dealId    || null,
       title,
       meeting_date: meetingDate || null,
       summary:      summary || null,
@@ -730,6 +731,91 @@ export async function saveProjectMeeting({ projectId, title, meetingDate, summar
     .single();
   if (error) throw new Error(error.message);
   return data;
+}
+
+export async function fetchDealMeetings(dealId) {
+  const { data, error } = await supabase
+    .from('project_meetings')
+    .select('*')
+    .eq('deal_id', dealId)
+    .order('created_at', { ascending: false });
+  if (error) throw new Error(error.message);
+  return data || [];
+}
+
+// Migrate deal meetings to a project when a deal is won
+export async function migrateDealMeetingsToProject(dealId, projectId) {
+  const { error } = await supabase
+    .from('project_meetings')
+    .update({ project_id: projectId })
+    .eq('deal_id', dealId);
+  if (error) throw new Error(error.message);
+}
+
+export async function generateProposalFromMeetings(meetings, companyName, startDate) {
+  const key = import.meta.env.VITE_ANTHROPIC_API_KEY;
+  if (!key) throw new Error('No API key configured');
+
+  const today = startDate || new Date().toISOString().slice(0, 10);
+  const transcriptBlock = meetings
+    .map((m, i) => `--- Meeting ${i + 1}: ${m.title}${m.meeting_date ? ` (${m.meeting_date})` : ''} ---\n${m.transcript || m.summary || ''}`)
+    .join('\n\n');
+
+  const prompt = `You are an expert project manager at a creative/digital agency. Based on the following discovery meeting transcripts with a prospective client, generate a structured project proposal plan.
+
+Client/Company: ${companyName || 'Prospective Client'}
+Project start date: ${today}
+
+Return ONLY a valid JSON object with no markdown, no explanation, no code fences:
+{
+  "project_name": "Short descriptive project name",
+  "total_budget": null,
+  "milestones": [
+    {
+      "title": "Phase name",
+      "description": "What this phase delivers",
+      "duration_days": 14,
+      "assigned_to": "",
+      "tasks": [
+        { "title": "Specific deliverable or action", "duration_days": 3, "assigned_to": "" }
+      ]
+    }
+  ]
+}
+
+Rules:
+- Create 3–6 sequential phases that reflect the full project scope based on what was discussed
+- Each milestone starts the day the previous one ends
+- Tasks within a milestone are concrete, actionable deliverables
+- Estimate realistic durations based on the described work
+- Base the scope entirely on what the client described needing — don't add things not mentioned
+- If budget was discussed, include it as total_budget (number only, no $ or commas)
+- Return ONLY the raw JSON object, nothing else
+
+MEETING TRANSCRIPTS:
+${transcriptBlock}`;
+
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': key,
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true',
+    },
+    body: JSON.stringify({
+      model: 'claude-opus-4-5',
+      max_tokens: 4000,
+      messages: [{ role: 'user', content: prompt }],
+    }),
+  });
+
+  if (!res.ok) throw new Error(`API error ${res.status}`);
+  const json = await res.json();
+  const text = json.content[0].text.trim();
+  const match = text.match(/\{[\s\S]*\}/);
+  if (!match) throw new Error('Could not parse AI response as JSON');
+  return JSON.parse(match[0]);
 }
 
 export async function deleteProjectMeeting(id) {
@@ -749,8 +835,11 @@ Today's date: ${today}
 
 Return ONLY a valid JSON object with no markdown, no explanation, no code fences:
 {
-  "title": "Short descriptive meeting title (eg. 'Kickoff', 'Week 2 Check-in', 'Design Review')",
+  "title": "Short descriptive meeting title (eg. 'Kickoff', 'Intro Call', 'Week 2 Check-in')",
   "meeting_date": "YYYY-MM-DD if a date is mentioned or implied, otherwise null",
+  "company_name": "The client or prospect company name if identifiable from context, otherwise null",
+  "contact_name": "The primary external contact's full name if mentioned, otherwise null",
+  "contact_email": "The primary external contact's email if mentioned, otherwise null",
   "summary": "2-3 sentence summary of what was discussed and decided",
   "action_items": [
     {
@@ -766,6 +855,7 @@ Rules:
 - Only extract genuine action items — things that need to be done, not things already completed
 - Keep task titles concise and actionable (start with a verb)
 - If no action items are mentioned, return an empty array
+- For company_name: extract the client/prospect company, NOT Part Human or the user's own company
 - Return ONLY the raw JSON object, nothing else
 
 TRANSCRIPT:

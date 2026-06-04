@@ -7,18 +7,34 @@ const today = new Date().toISOString().slice(0, 10);
  * TranscriptImporter
  *
  * Props:
- *   projectId     — string
- *   milestones    — array of { id, title }
+ *   projectId     — string (for project meetings)
+ *   dealId        — string (for pre-project deal meetings; omit milestones/tasks)
+ *   milestones    — array of { id, title } (project mode only)
  *   owners        — string[] (team members)
  *   defaultMsId   — optional pre-selected milestone id (for per-milestone entry point)
  *   onImported    — fn({ meeting, tasks }) called after save
  *   onClose       — fn()
+ *
+ *   — Prospect mode (no dealId or projectId) —
+ *   prospectMode  — bool: true to enable company detection + deal linking
+ *   allDeals      — array of deal objects [{ id, company_name }] for matching
+ *   resolveDealId — async fn(companyName, contactName, contactEmail) => dealId
+ *                   called before saving; creates or finds the deal
  */
-export default function TranscriptImporter({ projectId, milestones, owners = OWNERS, defaultMsId, onImported, onClose }) {
+export default function TranscriptImporter({ projectId, dealId, milestones = [], owners = OWNERS, defaultMsId, onImported, onClose, prospectMode = false, allDeals = [], resolveDealId }) {
+  const isDealMode     = !!dealId && !projectId;
+  const isProspectMode = prospectMode && !dealId && !projectId;
+
   const [step, setStep]             = useState('paste');   // paste | parsing | preview | saving
   const [transcript, setTranscript] = useState('');
   const [error, setError]           = useState('');
   const [parsed, setParsed]         = useState(null);      // raw AI output
+
+  // Prospect mode: company + contact fields
+  const [companyName, setCompanyName]   = useState('');
+  const [contactName, setContactName]   = useState('');
+  const [contactEmail, setContactEmail] = useState('');
+  const [linkedDealId, setLinkedDealId] = useState('');    // '' = create new
 
   // Editable task list derived from parsed
   const [items, setItems] = useState([]);   // { ...action_item, selected, milestoneId, owner }
@@ -31,11 +47,25 @@ export default function TranscriptImporter({ projectId, milestones, owners = OWN
     try {
       const result = await parseMeetingWithAI(transcript);
       setParsed(result);
+
+      // Populate prospect fields from AI extraction
+      if (isProspectMode) {
+        const aiCompany = result.company_name || '';
+        setCompanyName(aiCompany);
+        setContactName(result.contact_name || '');
+        setContactEmail(result.contact_email || '');
+        // Auto-match to an existing deal (case-insensitive)
+        if (aiCompany) {
+          const match = allDeals.find(d => d.company_name.toLowerCase() === aiCompany.toLowerCase());
+          setLinkedDealId(match ? match.id : '');
+        }
+      }
+
       setItems(
         (result.action_items || []).map(ai => ({
           ...ai,
           selected:    true,
-          milestoneId: defaultMsId || (milestones[0]?.id ?? ''),
+          milestoneId: (isDealMode || isProspectMode) ? '' : (defaultMsId || (milestones[0]?.id ?? '')),
           owner:       ai.owner && owners.includes(ai.owner) ? ai.owner : '',
         }))
       );
@@ -50,6 +80,17 @@ export default function TranscriptImporter({ projectId, milestones, owners = OWN
   const handleSave = async () => {
     setStep('saving');
     try {
+      // Prospect mode: resolve (find or create) the deal first
+      let resolvedDealId = dealId || null;
+      if (isProspectMode) {
+        if (!companyName.trim()) {
+          setError('Please enter a company name.');
+          setStep('preview');
+          return;
+        }
+        resolvedDealId = linkedDealId || await resolveDealId(companyName.trim(), contactName.trim(), contactEmail.trim());
+      }
+
       const selectedItems = items.filter(it => it.selected);
 
       // Build tasks for each selected action item
@@ -69,7 +110,8 @@ export default function TranscriptImporter({ projectId, milestones, owners = OWN
 
       // Save meeting record
       const meeting = await saveProjectMeeting({
-        projectId,
+        projectId:   projectId || null,
+        dealId:      resolvedDealId || null,
         title:       parsed.title || 'Meeting',
         meetingDate: parsed.meeting_date || null,
         summary:     parsed.summary || null,
@@ -77,7 +119,7 @@ export default function TranscriptImporter({ projectId, milestones, owners = OWN
         actionItems: selectedItems.map(({ title, owner, due_date, notes }) => ({ title, owner, due_date, notes })),
       });
 
-      onImported({ meeting, tasks, milestoneId: defaultMsId });
+      onImported({ meeting, tasks, milestoneId: defaultMsId, dealId: resolvedDealId, companyName: companyName.trim() });
     } catch (e) {
       setError(e.message || 'Failed to save');
       setStep('preview');
@@ -95,11 +137,13 @@ export default function TranscriptImporter({ projectId, milestones, owners = OWN
         {/* Header */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20, flexShrink: 0 }}>
           <div>
-            <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--text)' }}>📝 Import from transcript</div>
+            <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--text)' }}>
+              {isProspectMode ? '📝 Log a Meeting' : '📝 Import from transcript'}
+            </div>
             <div style={{ fontSize: 12, color: 'var(--text-faint)', marginTop: 3 }}>
-              {step === 'paste'   && 'Paste a Granola (or any meeting) transcript'}
+              {step === 'paste'   && (isProspectMode ? 'Paste a transcript — we\'ll detect the company automatically' : 'Paste a Granola (or any meeting) transcript')}
               {step === 'parsing' && 'Analyzing transcript…'}
-              {step === 'preview' && 'Review extracted tasks before adding to the project'}
+              {step === 'preview' && (isProspectMode ? 'Confirm the company and review extracted tasks' : 'Review extracted tasks before adding to the project')}
               {step === 'saving'  && 'Saving…'}
             </div>
           </div>
@@ -129,6 +173,81 @@ export default function TranscriptImporter({ projectId, milestones, owners = OWN
           {/* ── Preview step ── */}
           {(step === 'preview' || step === 'saving') && parsed && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+
+              {/* ── Prospect: company + deal linking ── */}
+              {isProspectMode && (
+                <div style={{ padding: '14px 16px', background: 'var(--surface)', borderRadius: 10, border: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em' }}>Company</div>
+
+                  {/* Company name + deal picker */}
+                  <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+                    <div style={{ flex: 1, minWidth: 160 }}>
+                      <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 4 }}>Company Name</label>
+                      <input
+                        value={companyName}
+                        onChange={e => { setCompanyName(e.target.value); setLinkedDealId(''); }}
+                        placeholder="e.g. Acme Corp"
+                        style={{ width: '100%', fontSize: 13, fontWeight: 700, padding: '6px 10px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)' }}
+                      />
+                    </div>
+                    <div style={{ flex: 1, minWidth: 160 }}>
+                      <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 4 }}>Link to Deal</label>
+                      <select
+                        value={linkedDealId}
+                        onChange={e => {
+                          setLinkedDealId(e.target.value);
+                          if (e.target.value) {
+                            const d = allDeals.find(d => d.id === e.target.value);
+                            if (d) setCompanyName(d.company_name);
+                          }
+                        }}
+                        style={{ width: '100%', fontSize: 12, padding: '6px 8px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', cursor: 'pointer' }}
+                      >
+                        <option value="">✦ New prospect</option>
+                        {allDeals.map(d => (
+                          <option key={d.id} value={d.id}>{d.company_name}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Contact info */}
+                  <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                    <div style={{ flex: 1, minWidth: 140 }}>
+                      <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 4 }}>Contact Name</label>
+                      <input
+                        value={contactName}
+                        onChange={e => setContactName(e.target.value)}
+                        placeholder="First Last"
+                        style={{ width: '100%', fontSize: 12, padding: '5px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)' }}
+                      />
+                    </div>
+                    <div style={{ flex: 1, minWidth: 160 }}>
+                      <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 4 }}>Contact Email</label>
+                      <input
+                        value={contactEmail}
+                        onChange={e => setContactEmail(e.target.value)}
+                        placeholder="email@company.com"
+                        style={{ width: '100%', fontSize: 12, padding: '5px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)' }}
+                      />
+                    </div>
+                  </div>
+
+                  {/* New prospect badge */}
+                  {!linkedDealId && companyName && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--accent)', fontWeight: 600 }}>
+                      <span style={{ display: 'inline-block', width: 6, height: 6, borderRadius: '50%', background: 'var(--accent)' }} />
+                      A new deal card will be created for <strong>{companyName}</strong>
+                    </div>
+                  )}
+                  {linkedDealId && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: '#059669', fontWeight: 600 }}>
+                      <span style={{ display: 'inline-block', width: 6, height: 6, borderRadius: '50%', background: '#10b981' }} />
+                      Meeting will be added to the existing deal
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Meeting meta */}
               <div style={{ padding: '14px 16px', background: 'var(--surface)', borderRadius: 10, border: '1px solid var(--border)' }}>
@@ -181,21 +300,23 @@ export default function TranscriptImporter({ projectId, milestones, owners = OWN
                         {/* Milestone + Owner + Due date row */}
                         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
 
-                          {/* Milestone picker */}
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                            <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em' }}>Milestone</label>
-                            <select
-                              value={it.milestoneId}
-                              onChange={e => updateItem(i, { milestoneId: e.target.value })}
-                              disabled={!it.selected}
-                              style={{ fontSize: 12, padding: '4px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', cursor: 'pointer' }}
-                            >
-                              <option value="">— No milestone —</option>
-                              {milestones.map(ms => (
-                                <option key={ms.id} value={ms.id}>{ms.title}</option>
-                              ))}
-                            </select>
-                          </div>
+                          {/* Milestone picker — project mode only */}
+                          {!isDealMode && !isProspectMode && (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                              <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em' }}>Milestone</label>
+                              <select
+                                value={it.milestoneId}
+                                onChange={e => updateItem(i, { milestoneId: e.target.value })}
+                                disabled={!it.selected}
+                                style={{ fontSize: 12, padding: '4px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', cursor: 'pointer' }}
+                              >
+                                <option value="">— No milestone —</option>
+                                {milestones.map(ms => (
+                                  <option key={ms.id} value={ms.id}>{ms.title}</option>
+                                ))}
+                              </select>
+                            </div>
+                          )}
 
                           {/* Owner picker */}
                           <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
@@ -254,11 +375,12 @@ export default function TranscriptImporter({ projectId, milestones, owners = OWN
               <button onClick={() => { setStep('paste'); setError(''); }} style={{ padding: '9px 16px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>← Back</button>
               <button
                 onClick={handleSave}
-                style={{ padding: '9px 20px', borderRadius: 8, border: 'none', background: 'var(--accent)', color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
+                disabled={isProspectMode && !companyName.trim()}
+                style={{ padding: '9px 20px', borderRadius: 8, border: 'none', background: 'var(--accent)', color: '#fff', fontSize: 13, fontWeight: 700, cursor: (!isProspectMode || companyName.trim()) ? 'pointer' : 'default', opacity: (!isProspectMode || companyName.trim()) ? 1 : 0.5 }}
               >
                 {items.filter(i => i.selected).length > 0
-                  ? `Add ${items.filter(i => i.selected).length} task${items.filter(i => i.selected).length !== 1 ? 's' : ''} + save meeting`
-                  : 'Save meeting only'}
+                  ? `Save meeting + ${items.filter(i => i.selected).length} task${items.filter(i => i.selected).length !== 1 ? 's' : ''}`
+                  : 'Save meeting'}
               </button>
             </>
           )}

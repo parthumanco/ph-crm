@@ -1,12 +1,13 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import {
-  fetchDeals, moveStage,
+  fetchDeals, upsertDeal, moveStage,
   ACTIVE_STAGES, CLOSED_STAGES,
   stageColor, stageLabel, dealValue, fmt$, daysSince,
 } from '../lib/deals';
 import { upsertProject, buildTimelineFromParsed, bulkInsertMilestones, bulkInsertTasks, migrateDealMeetingsToProject } from '../lib/projects';
 import DealDetailModal from '../components/DealDetailModal';
 import ProposalImporter from '../components/ProposalImporter';
+import TranscriptImporter from '../components/TranscriptImporter';
 
 const OWNER_COLORS = {
   Mike: { bg: '#f3e8ff', color: '#7c3aed' },
@@ -137,6 +138,8 @@ export default function DealsPage({ refreshKey = 0 }) {
   const [wonToast, setWonToast]         = useState(null); // project name string
   const [wonError, setWonError]         = useState(null); // project creation error
   const [proposalDraftPayload, setProposalDraftPayload] = useState(null); // { parsed, startDate, deal }
+  const [showProspectImporter, setShowProspectImporter] = useState(false);
+  const [prospectToast, setProspectToast] = useState(null); // { company, isNew }
   const dragDealId = useRef(null);
 
   const load = useCallback(async () => {
@@ -339,6 +342,32 @@ export default function DealsPage({ refreshKey = 0 }) {
     }
   };
 
+  // ── Prospect meeting: find or create deal ─────────────────────────────────
+  const resolveDealId = async (companyName, contactName, contactEmail) => {
+    // Check in-memory deals first (case-insensitive)
+    const existing = deals.find(d => d.company_name.toLowerCase() === companyName.toLowerCase());
+    if (existing) return existing.id;
+
+    // Create new deal in prospect stage
+    const newDeal = await upsertDeal({
+      company_name:  companyName,
+      contact_name:  contactName  || null,
+      contact_email: contactEmail || null,
+      stage:         'prospect',
+      assigned_to:   'Mike',
+    });
+    setDeals(prev => [newDeal, ...prev]);
+    return newDeal.id;
+  };
+
+  const handleProspectImported = ({ meeting, dealId, companyName }) => {
+    setShowProspectImporter(false);
+    // Check if this was a new deal (not in deals list before the import triggered resolveDealId)
+    const isNew = !deals.some(d => d.id === dealId);
+    setProspectToast({ company: companyName, isNew });
+    setTimeout(() => setProspectToast(null), 5000);
+  };
+
   // ── Modal handlers ─────────────────────────────────────────────────────────
   const handleSaved = (saved) => {
     if (!saved) {
@@ -393,6 +422,13 @@ export default function DealsPage({ refreshKey = 0 }) {
         <div className="page-header-left">
           <button className="btn btn-primary" onClick={() => { setSelectedDeal(null); setShowNewDeal(true); }}>
             + New Deal
+          </button>
+          <button
+            className="btn btn-secondary"
+            onClick={() => setShowProspectImporter(true)}
+            style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+          >
+            📝 Log Meeting
           </button>
         </div>
         <div className="page-header-actions" />
@@ -879,6 +915,32 @@ export default function DealsPage({ refreshKey = 0 }) {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Prospect meeting logged toast */}
+      {prospectToast && (
+        <div style={{
+          position: 'fixed', bottom: 72, left: '50%', transform: 'translateX(-50%)',
+          zIndex: 999, background: 'var(--accent)', color: '#fff',
+          padding: '12px 22px', borderRadius: 10,
+          boxShadow: '0 4px 20px rgba(99,102,241,0.35)',
+          fontSize: 14, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 10,
+          animation: 'fadeInUp .3s ease',
+        }}>
+          📝 Meeting saved{prospectToast.isNew ? ` · New deal created for ` : ' · Added to '}
+          <span style={{ fontWeight: 800 }}>{prospectToast.company}</span>
+        </div>
+      )}
+
+      {/* Prospect transcript importer */}
+      {showProspectImporter && (
+        <TranscriptImporter
+          prospectMode
+          allDeals={deals.filter(d => !['won','lost'].includes(d.stage))}
+          resolveDealId={resolveDealId}
+          onImported={handleProspectImported}
+          onClose={() => setShowProspectImporter(false)}
+        />
       )}
 
       {/* Deal detail modal */}
