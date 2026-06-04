@@ -25,7 +25,7 @@ export async function fetchClients() {
 
   const { data, error } = await supabase
     .from('clients')
-    .select('*, projects(id, name, status, start_date, end_date)')
+    .select('*, projects(id, name, status, archived_at, start_date, end_date)')
     .order('name');
   if (error) throw new Error(error.message);
   return (data || []).filter(c => (c.projects || []).length > 0);
@@ -113,7 +113,7 @@ export async function fetchClientDetail(clientId) {
   // Projects linked to this client
   const { data: projects } = await supabase
     .from('projects')
-    .select('id, name, status, start_date, end_date, client_name, contact_name, contacts, description')
+    .select('id, name, status, archived_at, start_date, end_date, client_name, contact_name, contacts, description')
     .eq('client_id', clientId)
     .order('start_date', { ascending: false });
 

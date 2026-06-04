@@ -4,7 +4,9 @@ import {
   upsertClient, addClientItem, deleteClientItem, askClientQuestion,
 } from '../lib/clients';
 
-const STATUS_COLOR = { active: '#10b981', completed: '#6366f1', paused: '#f59e0b', archived: '#9ca3af' };
+const STATUS_COLOR = { active: '#10b981', completed: '#6366f1', on_hold: '#f59e0b', cancelled: '#ef4444', archived: '#9ca3af' };
+const projStatus = p => p.archived_at ? 'archived' : (p.status || 'active');
+const projStatusLabel = p => { const s = projStatus(p); return s.charAt(0).toUpperCase() + s.slice(1).replace('_', ' '); };
 const ACTIVITY_ICONS = { email: '✉️', call: '📞', meeting: '🤝', note: '📝', proposal: '📄', contract: '✍️' };
 
 const TRIGGER_CATS = {
@@ -199,7 +201,7 @@ export default function ClientsPage({ onNavigate, refreshKey, icp }) {
             <div style={{ fontSize: 12, color: 'var(--text-faint)', textAlign: 'center', padding: '24px 12px' }}>{search ? 'No match' : 'No clients yet'}</div>
           ) : (
             filtered.map(c => {
-              const activeCount = (c.projects || []).filter(p => p.status === 'active').length;
+              const activeCount = (c.projects || []).filter(p => !p.archived_at && p.status === 'active').length;
               return (
                 <button
                   key={c.id}
@@ -444,7 +446,7 @@ export default function ClientsPage({ onNavigate, refreshKey, icp }) {
                     <div key={p.id} onClick={() => onNavigate?.('projects')} style={{ padding: '14px 16px', background: 'var(--surface)', borderRadius: 10, border: '1px solid var(--border)', cursor: 'pointer', transition: 'border-color .15s' }} onMouseEnter={e => e.currentTarget.style.borderColor = 'var(--accent)'} onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--border)'}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
                         <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>{p.name}</div>
-                        <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 10, background: (STATUS_COLOR[p.status] || '#9ca3af') + '22', color: STATUS_COLOR[p.status] || '#9ca3af', flexShrink: 0 }}>{p.status}</span>
+                        <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 10, background: (STATUS_COLOR[projStatus(p)] || '#9ca3af') + '22', color: STATUS_COLOR[projStatus(p)] || '#9ca3af', flexShrink: 0 }}>{projStatusLabel(p)}</span>
                       </div>
                       {p.description && <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '4px 0 0', lineHeight: 1.5 }}>{p.description}</p>}
                       <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 6 }}>Started {fmtDate(p.start_date)}{p.end_date ? ` · Ends ${fmtDate(p.end_date)}` : ''}</div>
