@@ -269,7 +269,6 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
                           </div>
                           <p style={{ fontSize: 12, color: 'var(--text)', margin: 0, lineHeight: 1.5 }}>{a.summary}</p>
                         </div>
-                        <button onClick={() => removeActivity(a.id)} style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 14, flexShrink: 0, padding: '0 2px' }}>×</button>
                       </div>
                     ))}
                   </div>
