@@ -111,7 +111,7 @@ export default function App() {
           </button>
         </div>
         <PageSlot active={page === 'clients'}>
-          <ClientsPage onNavigate={handleSetPage} refreshKey={pageKeys.clients || 0} />
+          <ClientsPage onNavigate={handleSetPage} refreshKey={pageKeys.clients || 0} icp={icp} />
         </PageSlot>
         <PageSlot active={page === 'signals'}>
           <SignalWatchPage onNavigate={handleSetPage} icp={icp} refreshKey={pageKeys.signals || 0} />

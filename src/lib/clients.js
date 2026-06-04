@@ -54,6 +54,49 @@ export async function findOrCreateClient(name) {
   return data;
 }
 
+// ── Company intelligence (from companies table) ───────────────────────────────
+
+export async function fetchCompanyIntel(clientName) {
+  if (!clientName) return null;
+  const { data } = await supabase
+    .from('companies')
+    .select('*')
+    .ilike('name', clientName)
+    .limit(1)
+    .single();
+  return data || null;
+}
+
+export async function runClientDeepScan(companyId, company, icp) {
+  const { scanDeepDive } = await import('./anthropic.js');
+  const result = await scanDeepDive(company, icp, company.engagement_type || null);
+
+  const stripEmDash = s => (s || '').replace(/\s*—\s*/g, ' – ');
+  const update = {
+    icp_tier:          result.icpTier    || null,
+    icp_score:         result.icpScore   ? Math.round(result.icpScore)   : null,
+    overall_score:     result.overallScore ? Math.round(result.overallScore) : null,
+    funding_stage:     result.fundingStage || null,
+    employee_count_num: result.employeeCountNum ? Math.round(result.employeeCountNum) : null,
+    employee_count:    result.employeeCountNum  ? String(Math.round(result.employeeCountNum)) : null,
+    summary:           stripEmDash(result.summary) || null,
+    triggers:          (result.triggers || []).map(t => ({ ...t, headline: stripEmDash(t.headline), detail: stripEmDash(t.detail) })),
+    recommended_angle: stripEmDash(result.recommendedAngle) || null,
+    contact_angles:    (result.contactAngles || []).map(ca => ({ ...ca, angle: stripEmDash(ca.angle) })),
+    scan_date:         new Date().toISOString(),
+    deep_scanned:      true,
+    ...(result.website         ? { website:          result.website }         : {}),
+    ...(result.hq              ? { hq:               result.hq }              : {}),
+    ...(result.industry        ? { industry:         result.industry }        : {}),
+    ...(result.companyLinkedinUrl ? { company_linkedin: result.companyLinkedinUrl } : {}),
+  };
+
+  const { error } = await supabase.from('companies').update(update).eq('id', companyId);
+  if (error) throw new Error(error.message);
+
+  return { ...company, ...update };
+}
+
 export async function upsertClient(client) {
   const { data, error } = await supabase
     .from('clients')
@@ -154,7 +197,7 @@ export async function deleteClientItem(id) {
 
 // ── AI Q&A ───────────────────────────────────────────────────────────────────
 
-export async function askClientQuestion({ client, projects, activities, meetings, items }, question) {
+export async function askClientQuestion({ client, projects, activities, meetings, items, intel }, question) {
   const key = import.meta.env.VITE_ANTHROPIC_API_KEY;
   if (!key) throw new Error('No API key configured');
 
@@ -165,6 +208,29 @@ export async function askClientQuestion({ client, projects, activities, meetings
   if (client.website)      ctx.push(`Website: ${client.website}`);
   if (client.linkedin_url) ctx.push(`LinkedIn: ${client.linkedin_url}`);
   if (client.notes)        ctx.push(`Notes: ${client.notes}`);
+
+  // Company intelligence (from companies / deep scan data)
+  if (intel) {
+    ctx.push('\nCOMPANY INTELLIGENCE:');
+    if (intel.industry)        ctx.push(`Industry: ${intel.industry}`);
+    if (intel.hq)              ctx.push(`HQ: ${intel.hq}`);
+    if (intel.funding_stage)   ctx.push(`Funding stage: ${intel.funding_stage}`);
+    if (intel.employee_count)  ctx.push(`Employee count: ${intel.employee_count}`);
+    if (intel.icp_tier)        ctx.push(`ICP tier: ${intel.icp_tier}`);
+    if (intel.icp_score)       ctx.push(`ICP score: ${intel.icp_score}`);
+    if (intel.overall_score)   ctx.push(`Overall score: ${intel.overall_score}`);
+    if (intel.engagement_type) ctx.push(`Engagement type: ${intel.engagement_type}`);
+    if (intel.summary)         ctx.push(`Summary: ${intel.summary}`);
+    if (intel.recommended_angle) ctx.push(`Recommended angle: ${intel.recommended_angle}`);
+    if (intel.triggers?.length > 0) {
+      ctx.push('Signal triggers:');
+      intel.triggers.forEach(t => ctx.push(`  - [${t.category || 'signal'}] ${t.headline}: ${t.detail || ''}`));
+    }
+    if (intel.contact_angles?.length > 0) {
+      ctx.push('Contact angles:');
+      intel.contact_angles.forEach(ca => ctx.push(`  - ${ca.name || ''}${ca.title ? ` (${ca.title})` : ''}: ${ca.angle || ''}`));
+    }
+  }
 
   if (projects.length > 0) {
     ctx.push('\nPROJECTS:');
