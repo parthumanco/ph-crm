@@ -2,6 +2,14 @@ import { useState, useEffect } from 'react';
 import { saveIcp, loadTeamEmails, saveTeamEmails, saveTeamMembers } from '../lib/settings';
 import { supabase } from '../lib/supabase';
 
+async function loadDocLink() {
+  const { data } = await supabase.from('app_settings').select('value').eq('key', 'sales_doc_link').single();
+  return data?.value || '';
+}
+async function saveDocLink(url) {
+  await supabase.from('app_settings').upsert({ key: 'sales_doc_link', value: url }, { onConflict: 'key' });
+}
+
 // ── ICP field definitions ─────────────────────────────────────────────────────
 const FIELD_META = [
   {
@@ -99,6 +107,11 @@ export default function SettingsPage({ icp, onIcpSaved, teamMembers = [], onTeam
   const [testStatus, setTestStatus]   = useState('');
   const [testMsg, setTestMsg]         = useState('');
 
+  // Sales methodology doc link
+  const [docLink, setDocLink]       = useState('');
+  const [docSaving, setDocSaving]   = useState(false);
+  const [docSaved, setDocSaved]     = useState(false);
+
   // Keep member draft in sync if parent reloads
   useEffect(() => { setMemberDraft(teamMembers); }, [teamMembers]);
   useEffect(() => {
@@ -106,6 +119,7 @@ export default function SettingsPage({ icp, onIcpSaved, teamMembers = [], onTeam
   }, [teamMembers]);
 
   useEffect(() => { loadTeamEmails().then(setTeamEmails); }, []);
+  useEffect(() => { loadDocLink().then(setDocLink); }, []);
 
   // ── ICP handlers ────────────────────────────────────────────────────────────
   const handleSave = async () => {
@@ -393,6 +407,126 @@ export default function SettingsPage({ icp, onIcpSaved, teamMembers = [], onTeam
   )
   $$
 );`}</pre>
+        </div>
+      </div>
+
+      <SectionDivider />
+
+      {/* ════════════════════════════════════════════════════════════════
+          SECTION 4 — Sales Methodology
+      ════════════════════════════════════════════════════════════════ */}
+      <SectionHeader
+        title="📖 Sales Methodology"
+        description="The Dan Allard 5-touch outreach framework this program is built on. Reference this when writing emails or coaching the cadence."
+      >
+        {docLink && (
+          <a
+            href={docLink}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="btn btn-ghost btn-sm"
+            style={{ textDecoration: 'none' }}
+          >↗ Open original doc</a>
+        )}
+      </SectionHeader>
+
+      {/* Touch cadence cards */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 10, marginBottom: 20 }}>
+        {[
+          {
+            num: 1, day: 'Day 0', channel: 'Email',
+            label: 'Cold outreach',
+            desc: 'Lead with the specific trigger event. 4 paragraphs: Trigger → Brand gap → Human cost → Low-pressure CTA for a Sprint call.',
+            color: '#3b82f6',
+          },
+          {
+            num: 2, day: 'Day 7', channel: 'Email',
+            label: 'Follow-up',
+            desc: 'Reply on the same thread. 3–4 sentences. Soft nudge only — no new pitch. Keep it brief.',
+            color: '#8b5cf6',
+          },
+          {
+            num: 3, day: 'Day 14', channel: 'LinkedIn',
+            label: 'Connect + DM',
+            desc: 'Connection request (300 chars, no pitch). After acceptance, DM referencing a specific recent post of theirs.',
+            color: '#0ea5e9',
+          },
+          {
+            num: 4, day: 'Day 21', channel: 'Email',
+            label: 'Goodwill',
+            desc: 'Share a relevant market observation or competitor move that genuinely helps them. Zero pitch, zero CTA. Just value.',
+            color: '#10b981',
+          },
+          {
+            num: 5, day: 'Day 28', channel: 'Email',
+            label: 'Close the loop',
+            desc: 'Acknowledge the silence gracefully. No guilt. Leave the door open and promise to check back next quarter.',
+            color: '#f59e0b',
+          },
+        ].map(t => (
+          <div key={t.num} style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: '14px 14px 12px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <div style={{ width: 24, height: 24, borderRadius: '50%', background: t.color, color: '#fff', fontSize: 12, fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{t.num}</div>
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--text)', letterSpacing: '.01em' }}>{t.label}</div>
+                <div style={{ fontSize: 10, color: 'var(--text-faint)' }}>{t.day} · {t.channel}</div>
+              </div>
+            </div>
+            <p style={{ margin: 0, fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.55 }}>{t.desc}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* Key principles */}
+      <div className="card" style={{ padding: '16px 20px', marginBottom: 20 }}>
+        <div style={{ fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--text-faint)', marginBottom: 12 }}>Core principles</div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+          {[
+            { icon: '🎯', title: 'Trigger required', body: 'Never reach out cold without a specific, named reason — funding, rebrand, leadership change, expansion, award, etc.' },
+            { icon: '🧠', title: 'Specificity wins', body: 'Reference the exact trigger in T1, reference a specific LinkedIn post in T3. Generic outreach gets deleted.' },
+            { icon: '🤝', title: 'Relationship over pitch', body: 'T4 adds value with no ask. The goal is to be remembered as someone who brings insight, not just a vendor.' },
+            { icon: '🚪', title: 'Graceful exits', body: 'T5 closes the loop with warmth. Silence is fine — next quarter\'s trigger is another entry point.' },
+            { icon: '⚡', title: 'Sprint as entry point', body: 'Every touch frames a low-risk, high-value Sprint engagement. Never lead with the full retainer.' },
+            { icon: '📊', title: 'Score before you send', body: 'Only T1–T3 companies with a real signal and ICP score 7+ make the weekly send list.' },
+          ].map(p => (
+            <div key={p.title} style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+              <span style={{ fontSize: 16, flexShrink: 0, lineHeight: 1.4 }}>{p.icon}</span>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)', marginBottom: 2 }}>{p.title}</div>
+                <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.5 }}>{p.body}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Document link */}
+      <div className="card" style={{ padding: '16px 20px' }}>
+        <label style={{ fontWeight: 700, marginBottom: 4, display: 'block', fontSize: 13 }}>Original document link</label>
+        <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 8, marginTop: 0 }}>Paste the URL to Dan Allard's source document (Google Drive, Notion, Dropbox, etc.)</p>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+          <input
+            type="url"
+            value={docLink}
+            onChange={e => { setDocLink(e.target.value); setDocSaved(false); }}
+            placeholder="https://…"
+            style={{ flex: 1, fontSize: 13, padding: '7px 10px' }}
+          />
+          {docLink && (
+            <a href={docLink} target="_blank" rel="noopener noreferrer" className="btn btn-ghost btn-sm" style={{ textDecoration: 'none', whiteSpace: 'nowrap' }}>↗ Open</a>
+          )}
+          <button
+            className="btn btn-primary"
+            onClick={async () => {
+              setDocSaving(true);
+              await saveDocLink(docLink);
+              setDocSaving(false);
+              setDocSaved(true);
+              setTimeout(() => setDocSaved(false), 2000);
+            }}
+            disabled={docSaving}
+            style={{ whiteSpace: 'nowrap' }}
+          >{docSaving ? 'Saving…' : docSaved ? '✅ Saved!' : '💾 Save'}</button>
         </div>
       </div>
 
