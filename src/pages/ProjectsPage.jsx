@@ -2876,17 +2876,26 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
         const clientName   = primaryContact?.name || project.client_name || project.contact_name || 'there';
         const toEmail      = primaryContact?.email || project.client_email || '';
         const portalUrl    = project.share_token ? `${window.location.origin}/portal/${project.share_token}?task=${task.id}` : null;
-        const subject      = `Task complete: ${task.title}`;
-        const companyLabel = project.client_name || project.name;
-        const body         = `Hi ${clientName},\n\nA task on your project has been completed and is ready for your review.\n\nTask: ${task.title}\n\n${portalUrl ? `Please visit your project dashboard to review and approve it:\n${portalUrl}\n\n` : ''}Best,\nPart Human`;
-        const htmlBody     = [
+        const subject         = `Task complete: ${task.title}`;
+        const companyLabel    = project.client_name || project.name;
+        const taskAttachments = projectFiles.filter(f => f.task_id === task.id && f.url);
+        const filePlainText   = taskAttachments.length
+          ? `\n\nAttached files:\n${taskAttachments.map(f => `• ${f.name}: ${f.url}`).join('\n')}`
+          : '';
+        const fileHtml        = taskAttachments.length
+          ? `<p style="font-family:sans-serif;font-size:13px;color:#6b7280;margin-top:16px;">📎 <strong>Attached files</strong></p><p style="font-family:sans-serif;">${taskAttachments.map(f => `<a href="${f.url}" style="display:inline-block;margin:2px 4px 2px 0;padding:3px 10px;background:#f3f4f6;border:1px solid #d1d5db;border-radius:4px;font-size:12px;color:#111;text-decoration:none;font-family:sans-serif;">${f.name}</a>`).join('')}</p>`
+          : '';
+        const body            = `Hi ${clientName},\n\nA task on your project has been completed and is ready for your review.\n\nTask: ${task.title}\n\n${portalUrl ? `Please visit your project dashboard to review and approve it:\n${portalUrl}\n\n` : ''}Best,\nPart Human${filePlainText}`;
+        const htmlBody        = [
           `<p style="font-family:sans-serif;font-size:14px;">Hi ${clientName},</p>`,
           `<p style="font-family:sans-serif;font-size:14px;">A task on your project has been completed and is ready for your review.</p>`,
           `<p style="font-family:sans-serif;font-size:14px;"><strong>Task:</strong> ${task.title}</p>`,
           portalUrl ? `<p style="font-family:sans-serif;font-size:14px;">Please visit your project dashboard to review and approve it:</p><p><a href="${portalUrl}" style="display:inline-block;background:#fbbf24;color:#111;font-weight:800;font-size:13px;padding:6px 14px;border-radius:20px;text-decoration:none;font-family:sans-serif;">PH &times; ${companyLabel}</a></p>` : '',
           `<p style="font-family:sans-serif;font-size:14px;">Best,<br>Part Human</p>`,
+          fileHtml,
         ].join('');
-        const ccEmails    = extraRecipients.map(c => c.email).filter(Boolean);
+        const ccEmails        = extraRecipients.map(c => c.email).filter(Boolean);
+        const gmailUrl        = toEmail ? `https://mail.google.com/mail/?view=cm&to=${encodeURIComponent(toEmail)}&su=${encodeURIComponent(subject)}${ccEmails.length ? `&cc=${encodeURIComponent(ccEmails.join(','))}` : ''}` : null;
         const allContacts = (project.contacts || []).filter(c => c.email && c.email !== toEmail && !extraRecipients.find(r => r.email === c.email));
 
         return (
@@ -2951,6 +2960,8 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
 
 
 
+              {portalUrl && <div style={{ marginTop: 12, fontSize: 11, color: 'var(--text-faint)', textAlign: 'right' }}>💡 Once Gmail opens, paste to drop in the styled message</div>}
+
               {/* Footer */}
               <div style={{ display: 'flex', alignItems: 'center', marginTop: 14, gap: 10 }}>
                 {/* Approve internally escape hatch */}
@@ -2975,26 +2986,20 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                   style={{ padding: '9px 16px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}
                 >Copy</button>
                 <button
-                  disabled={sendingEmail || emailSentFor === task.id}
                   onClick={async () => {
-                    if (!toEmail) return;
-                    setSendingEmail(true);
+                    try { await navigator.clipboard.write([new ClipboardItem({ 'text/html': new Blob([htmlBody], { type: 'text/html' }), 'text/plain': new Blob([body], { type: 'text/plain' }) })]); }
+                    catch { /* skip */ }
                     try {
-                      await sendPortalNotification(toEmail, subject, htmlBody, ccEmails);
                       const chain = await addToReviewChain(task.id, { type: 'sent', by: 'Part Human' });
                       const chainPatch = t => t.id === task.id ? { ...t, review_chain: chain } : t;
                       setTasks(prev => prev.map(chainPatch));
                       setAllTasks(prev => ({ ...prev, [project.id]: (prev[project.id] || []).map(chainPatch) }));
-                      setEmailSentFor(task.id);
-                      setTimeout(() => { setTaskCompleteEmail(null); setEmailSentFor(null); }, 1200);
-                    } catch (err) {
-                      alert('Failed to send: ' + err.message);
-                    } finally {
-                      setSendingEmail(false);
-                    }
+                    } catch { /* non-fatal */ }
+                    window.open(gmailUrl, '_blank');
+                    setTaskCompleteEmail(null);
                   }}
-                  style={{ padding: '9px 20px', borderRadius: 8, border: 'none', background: emailSentFor === task.id ? '#10b981' : 'var(--accent)', color: '#fff', fontSize: 13, fontWeight: 700, cursor: sendingEmail ? 'wait' : 'pointer', opacity: sendingEmail ? 0.7 : 1, transition: 'background .3s' }}
-                >{emailSentFor === task.id ? '&#x2713; Sent!' : sendingEmail ? 'Sending…' : 'Send Email'}</button>
+                  style={{ padding: '9px 20px', borderRadius: 8, border: 'none', background: 'var(--accent)', color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
+                >Open in Gmail ↗</button>
               </div>
             </div>
           </div>
@@ -3033,6 +3038,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
           fileHtml,
         ].join('');
         const ccEmailsResend = extraRecipients.map(c => c.email).filter(Boolean);
+        const gmailUrl = toEmail ? `https://mail.google.com/mail/?view=cm&to=${encodeURIComponent(toEmail)}&su=${encodeURIComponent(subject)}${ccEmailsResend.length ? `&cc=${encodeURIComponent(ccEmailsResend.join(','))}` : ''}` : null;
         const allContactsResend = (project?.contacts || []).filter(c => c.email && c.email !== toEmail && !extraRecipients.find(r => r.email === c.email));
 
         return (
@@ -3116,6 +3122,11 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                   </div>
                 </div>
               </div>
+              {portalUrl && (
+                <div style={{ marginTop: 14, fontSize: 11, color: 'var(--text-faint)', textAlign: 'right' }}>
+                  💡 Once Gmail opens, just paste to drop in the styled message
+                </div>
+              )}
               <div style={{ display: 'flex', gap: 10, marginTop: 8, justifyContent: 'flex-end' }}>
                 <button
                   onClick={async () => {
@@ -3128,10 +3139,12 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                 {gmailUrl && (
                   <button
                     onClick={async () => {
-                      if (!toEmail) return;
-                      setSendingEmail(true);
                       try {
-                        await sendPortalNotification(toEmail, subject, htmlBody, ccEmailsResend);
+                        await navigator.clipboard.write([new ClipboardItem({ 'text/html': new Blob([htmlBody], { type: 'text/html' }), 'text/plain': new Blob([body], { type: 'text/plain' }) })]);
+                      } catch { /* skip */ }
+                      // Record "revised_sent" event in chain, then clear rejection fields
+                      // so the portal resets to "awaiting approval" for the revised work.
+                      try {
                         const chain = await addToReviewChain(task.id, { type: 'revised_sent', by: 'Part Human', response: messageBody });
                         await clearRejectionFields(task.id);
                         const patchTask = t => t.id === task.id
@@ -3144,16 +3157,12 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                           return { ...prev, [pid]: (prev[pid] || []).map(patchTask) };
                         });
                         setAssignedTasks(prev => prev.map(patchTask));
-                        setEmailSentFor(task.id);
-                        setTimeout(() => { setResendEmail(null); setEmailSentFor(null); }, 1200);
-                      } catch (err) {
-                        alert('Failed to send: ' + err.message);
-                      } finally {
-                        setSendingEmail(false);
-                      }
+                      } catch { /* non-fatal */ }
+                      window.open(gmailUrl, '_blank');
+                      setResendEmail(null);
                     }}
-                    style={{ padding: '9px 20px', borderRadius: 8, border: 'none', background: emailSentFor === task.id ? '#10b981' : 'var(--accent)', color: '#fff', fontSize: 13, fontWeight: 700, cursor: sendingEmail ? 'wait' : 'pointer', opacity: sendingEmail ? 0.7 : 1, transition: 'background .3s' }}
-                  >{emailSentFor === task.id ? '&#x2713; Sent!' : sendingEmail ? 'Sending…' : 'Send Email'}</button>
+                    style={{ padding: '9px 20px', borderRadius: 8, border: 'none', background: 'var(--accent)', color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
+                  >Open in Gmail ↗</button>
                 )}
               </div>
             </div>
