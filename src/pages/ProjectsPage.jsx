@@ -1972,44 +1972,6 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
             </div>
           )}
 
-          {/* ── Project Files ─────────────────────────────────────── */}
-          {projectFiles.length > 0 && (() => {
-            // Annotate each file with its context label
-            const annotated = projectFiles.map(f => {
-              if (f.task_id) {
-                const t = tasks.find(t => t.id === f.task_id);
-                return { ...f, _context: t ? t.title : 'Task' };
-              }
-              if (f.milestone_id) {
-                const m = milestones.find(m => m.id === f.milestone_id);
-                return { ...f, _context: m ? m.title : 'Milestone' };
-              }
-              return { ...f, _context: null };
-            });
-            return (
-              <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: '16px 20px', marginBottom: 20 }}>
-                <div style={{ fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--text-faint)', marginBottom: 10 }}>
-                  Project Files <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>· {projectFiles.length}</span>
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-                  {annotated.map(f => (
-                    <div key={f.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 10px', borderRadius: 6, background: 'var(--bg)', border: '1px solid var(--border-light)' }}>
-                      <span style={{ fontSize: 16, flexShrink: 0 }}>{fileIcon(f.mime_type)}</span>
-                      <a href={f.url} target="_blank" rel="noopener noreferrer" style={{ flex: 1, fontSize: 13, fontWeight: 600, color: 'var(--accent)', textDecoration: 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</a>
-                      {f._context && (
-                        <span style={{ fontSize: 10, color: 'var(--text-faint)', whiteSpace: 'nowrap', flexShrink: 0, maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis' }} title={f._context}>
-                          {f._context}
-                        </span>
-                      )}
-                      <span style={{ fontSize: 11, color: 'var(--text-faint)', whiteSpace: 'nowrap', flexShrink: 0 }}>{fmtFileSize(f.size)}</span>
-                      <button onClick={() => handleDeleteFile(f)} style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 13, padding: '2px 4px', flexShrink: 0 }} title="Remove file">✕</button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            );
-          })()}
-
           {/* ── Milestones & Tasks ─────────────────────────────────── */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             {milestones.map((ms) => {
@@ -2557,6 +2519,43 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                 )}
               </div>
             )}
+
+            {/* ── Project Files ─────────────────────────────────────── */}
+            {projectFiles.length > 0 && (() => {
+              const annotated = projectFiles.map(f => {
+                if (f.task_id) {
+                  const t = tasks.find(t => t.id === f.task_id);
+                  return { ...f, _context: t ? t.title : 'Task' };
+                }
+                if (f.milestone_id) {
+                  const m = milestones.find(m => m.id === f.milestone_id);
+                  return { ...f, _context: m ? m.title : 'Milestone' };
+                }
+                return { ...f, _context: null };
+              });
+              return (
+                <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: '16px 20px', marginTop: 10 }}>
+                  <div style={{ fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--text-faint)', marginBottom: 10 }}>
+                    Project Files <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>· {projectFiles.length}</span>
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                    {annotated.map(f => (
+                      <div key={f.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 10px', borderRadius: 6, background: 'var(--bg)', border: '1px solid var(--border-light)' }}>
+                        <span style={{ fontSize: 16, flexShrink: 0 }}>{fileIcon(f.mime_type)}</span>
+                        <a href={f.url} target="_blank" rel="noopener noreferrer" style={{ flex: 1, fontSize: 13, fontWeight: 600, color: 'var(--accent)', textDecoration: 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</a>
+                        {f._context && (
+                          <span style={{ fontSize: 10, color: 'var(--text-faint)', whiteSpace: 'nowrap', flexShrink: 0, maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis' }} title={f._context}>
+                            {f._context}
+                          </span>
+                        )}
+                        <span style={{ fontSize: 11, color: 'var(--text-faint)', whiteSpace: 'nowrap', flexShrink: 0 }}>{fmtFileSize(f.size)}</span>
+                        <button onClick={() => handleDeleteFile(f)} style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 13, padding: '2px 4px', flexShrink: 0 }} title="Remove file">✕</button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* ── Project Estimate ──────────────────────────────────────── */}
             {tasks.length > 0 && (
