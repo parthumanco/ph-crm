@@ -418,6 +418,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
   const [editContactDraft, setEditContactDraft]   = useState({ name: '', title: '', email: '' });
   const [summaryGenerating, setSummaryGenerating] = useState(false);
   const [expandedRejections, setExpandedRejections] = useState(new Set());
+  const [expandedCoC, setExpandedCoC]               = useState(new Set()); // manual expand after approval
   const [generatingResponse, setGeneratingResponse] = useState(null); // taskId
   const [resendEmail, setResendEmail]             = useState(null);   // { task, project }
   const [summaryError, setSummaryError]           = useState(null);
@@ -2392,8 +2393,18 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                             {(() => {
                               const chain = task.review_chain || [];
                               const hasRejection = task.rejected_at;
-                              // Collapse CoC once task is fully approved (approval state shown by inline status chip)
-                              if (chain.length === 0 || task.approved_at) return null;
+                              if (chain.length === 0) return null;
+                              // Collapse CoC once approved — show a small toggle to expand history
+                              if (task.approved_at && !expandedCoC.has(task.id)) {
+                                return (
+                                  <div style={{ margin: '2px 16px 8px 48px' }}>
+                                    <button
+                                      onClick={() => setExpandedCoC(prev => { const n = new Set(prev); n.add(task.id); return n; })}
+                                      style={{ fontSize: 10, color: 'var(--text-faint)', background: 'none', border: 'none', cursor: 'pointer', padding: 0, textDecoration: 'underline', textUnderlineOffset: 2 }}
+                                    >Show review history</button>
+                                  </div>
+                                );
+                              }
 
                               const revisionsSent = chain.filter(e => e.type === 'revised_sent').length;
                               const nextRevNum    = revisionsSent + 1;
@@ -2458,7 +2469,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                                   )}
 
                                   {/* CTAs below chain */}
-                                  <div style={{ display: 'flex', gap: 8, marginTop: 6, flexWrap: 'wrap' }}>
+                                  <div style={{ display: 'flex', gap: 8, marginTop: 6, flexWrap: 'wrap', alignItems: 'center' }}>
                                     {isAwaiting && (
                                       <button
                                         onClick={() => { setExtraRecipients([]); setShowContactDropdown(false); setTaskCompleteEmail({ task, project: activeProject }); }}
@@ -2470,6 +2481,12 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                                         onClick={() => openResendModal(task, activeProject)}
                                         style={{ fontSize: 11, fontWeight: 700, padding: '4px 12px', borderRadius: 6, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer', whiteSpace: 'nowrap' }}
                                       >Send Revision {nextRevNum} →</button>
+                                    )}
+                                    {task.approved_at && expandedCoC.has(task.id) && (
+                                      <button
+                                        onClick={() => setExpandedCoC(prev => { const n = new Set(prev); n.delete(task.id); return n; })}
+                                        style={{ fontSize: 10, color: 'var(--text-faint)', background: 'none', border: 'none', cursor: 'pointer', padding: 0, textDecoration: 'underline', textUnderlineOffset: 2, marginLeft: 'auto' }}
+                                      >Hide history</button>
                                     )}
                                   </div>
                                 </div>
