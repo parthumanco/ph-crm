@@ -586,37 +586,9 @@ export default function SettingsPage({ icp, onIcpSaved, teamMembers = [], onTeam
             {/* ── FILES TAB ── */}
             {refDocTab === 'files' && (
               <>
-                {/* Drag-and-drop zone */}
-                <div
-                  onDragOver={e => { e.preventDefault(); setIsDragging(true); }}
-                  onDragLeave={() => setIsDragging(false)}
-                  onDrop={async e => {
-                    e.preventDefault();
-                    setIsDragging(false);
-                    await handleFiles(Array.from(e.dataTransfer.files));
-                  }}
-                  onClick={() => !uploading && refDocInputRef.current?.click()}
-                  style={{
-                    border: `2px dashed ${isDragging ? 'var(--accent)' : 'var(--border)'}`,
-                    borderRadius: 8, padding: '20px 16px', textAlign: 'center', cursor: uploading ? 'default' : 'pointer',
-                    background: isDragging ? 'var(--accent-light, #eff6ff)' : 'var(--surface)',
-                    transition: 'all .15s', marginBottom: fileDocs.length ? 12 : 0,
-                  }}
-                >
-                  {uploading ? (
-                    <span style={{ fontSize: 13, color: 'var(--accent)', fontWeight: 600 }}>⏳ Uploading…</span>
-                  ) : (
-                    <>
-                      <div style={{ fontSize: 22, marginBottom: 4 }}>📂</div>
-                      <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-muted)' }}>Drop files here or click to browse</div>
-                      <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 3 }}>PDF, Word, PowerPoint, Excel, images</div>
-                    </>
-                  )}
-                </div>
-
                 {/* Uploaded file list */}
                 {fileDocs.length > 0 && (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 10 }}>
                     {fileDocs.map((doc) => {
                       const i = refDocs.indexOf(doc);
                       return (
@@ -636,6 +608,25 @@ export default function SettingsPage({ icp, onIcpSaved, teamMembers = [], onTeam
                     })}
                   </div>
                 )}
+
+                {/* Compact drag-and-drop zone — always at the bottom */}
+                <div
+                  onDragOver={e => { e.preventDefault(); setIsDragging(true); }}
+                  onDragLeave={() => setIsDragging(false)}
+                  onDrop={async e => { e.preventDefault(); setIsDragging(false); await handleFiles(Array.from(e.dataTransfer.files)); }}
+                  onClick={() => !uploading && refDocInputRef.current?.click()}
+                  style={{
+                    border: `1px dashed ${isDragging ? 'var(--accent)' : 'var(--border)'}`,
+                    borderRadius: 7, padding: '10px 16px', cursor: uploading ? 'default' : 'pointer',
+                    background: isDragging ? 'var(--accent-light, #eff6ff)' : 'transparent',
+                    transition: 'all .15s', display: 'flex', alignItems: 'center', gap: 8,
+                  }}
+                >
+                  <span style={{ fontSize: 14 }}>📎</span>
+                  <span style={{ fontSize: 12, color: uploading ? 'var(--accent)' : 'var(--text-faint)', fontWeight: 600 }}>
+                    {uploading ? '⏳ Uploading…' : 'Drop files here or click to add more'}
+                  </span>
+                </div>
               </>
             )}
 
