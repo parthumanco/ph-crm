@@ -1968,7 +1968,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
         </div>
 
         {/* ── Contacts + Summary row ─────────────────────────────────── */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 12, marginBottom: 16 }}>
 
           {/* Project Contacts */}
           <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: '12px 14px' }}>
