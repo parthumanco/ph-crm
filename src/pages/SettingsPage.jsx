@@ -125,11 +125,15 @@ export default function SettingsPage({ icp, onIcpSaved, teamMembers = [], onTeam
   const [testStatus, setTestStatus]   = useState('');
   const [testMsg, setTestMsg]         = useState('');
 
-  // Reference documents (uploaded files)
+  // Reference documents (uploaded files + external links)
   const [refDocs, setRefDocs]         = useState([]);
   const [uploading, setUploading]     = useState(false);
   const [uploadErr, setUploadErr]     = useState('');
-  const [deletingDoc, setDeletingDoc] = useState(null); // path of doc being deleted
+  const [deletingDoc, setDeletingDoc] = useState(null);
+  const [isDragging, setIsDragging]   = useState(false);
+  const [refDocTab, setRefDocTab]     = useState('files'); // 'files' | 'links'
+  const [linkDraftUrl, setLinkDraftUrl]   = useState('');
+  const [linkDraftName, setLinkDraftName] = useState('');
   const refDocInputRef                = useRef(null);
 
   // Keep member draft in sync if parent reloads
@@ -510,93 +514,200 @@ export default function SettingsPage({ icp, onIcpSaved, teamMembers = [], onTeam
         </div>
       </div>
 
-      {/* Reference documents upload */}
-      <div className="card" style={{ padding: '16px 20px', marginBottom: 12 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 4 }}>
-          <div>
-            <label style={{ fontWeight: 700, display: 'block', fontSize: 13 }}>Reference documents</label>
-            <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 3, marginBottom: 0 }}>
-              Upload Dan Allard's source materials here — PDFs, decks, or docs. Stored permanently for reference.
-            </p>
-          </div>
-          <button
-            className="btn btn-primary"
-            onClick={() => refDocInputRef.current?.click()}
-            disabled={uploading}
-            style={{ whiteSpace: 'nowrap', flexShrink: 0, marginLeft: 16 }}
-          >{uploading ? '⏳ Uploading…' : '+ Upload file'}</button>
-        </div>
+      {/* Additional Reference Documents */}
+      {(() => {
+        const fileDocs = refDocs.filter(d => d.type !== 'link');
+        const linkDocs = refDocs.filter(d => d.type === 'link');
 
-        <input
-          ref={refDocInputRef}
-          type="file"
-          multiple
-          accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.md,.png,.jpg,.jpeg"
-          style={{ display: 'none' }}
-          onChange={async e => {
-            const files = Array.from(e.target.files || []);
-            if (!files.length) return;
-            setUploading(true);
-            setUploadErr('');
-            try {
-              const uploaded = await Promise.all(files.map(uploadRefDoc));
-              const next = [...refDocs, ...uploaded];
-              setRefDocs(next);
-              await saveRefDocs(next);
-            } catch (err) {
-              setUploadErr(`Upload failed: ${err.message}`);
-            } finally {
-              setUploading(false);
-              e.target.value = '';
-            }
-          }}
-        />
+        const handleFiles = async (files) => {
+          if (!files.length) return;
+          setUploading(true);
+          setUploadErr('');
+          try {
+            const uploaded = await Promise.all(files.map(f => uploadRefDoc(f).then(d => ({ ...d, type: 'file' }))));
+            const next = [...refDocs, ...uploaded];
+            setRefDocs(next);
+            await saveRefDocs(next);
+          } catch (err) {
+            setUploadErr(`Upload failed: ${err.message}`);
+          } finally {
+            setUploading(false);
+          }
+        };
 
-        {uploadErr && <div style={{ fontSize: 12, color: '#ef4444', marginTop: 8 }}>{uploadErr}</div>}
+        const removeDoc = async (i) => {
+          const doc = refDocs[i];
+          if (!window.confirm(`Remove "${doc.name}"?`)) return;
+          setDeletingDoc(doc.path || doc.url);
+          try {
+            if (doc.type !== 'link') await deleteRefDoc(doc);
+            const next = refDocs.filter((_, j) => j !== i);
+            setRefDocs(next);
+            await saveRefDocs(next);
+          } catch (err) {
+            setUploadErr(`Remove failed: ${err.message}`);
+          } finally {
+            setDeletingDoc(null);
+          }
+        };
 
-        {refDocs.length === 0 ? (
-          <div style={{ marginTop: 14, padding: '20px', border: '1px dashed var(--border)', borderRadius: 8, textAlign: 'center', color: 'var(--text-faint)', fontSize: 12 }}>
-            No documents uploaded yet — click "Upload file" to add one
-          </div>
-        ) : (
-          <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 6 }}>
-            {refDocs.map((doc, i) => (
-              <div key={doc.path || i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 7 }}>
-                <span style={{ fontSize: 16, flexShrink: 0 }}>
-                  {doc.name.endsWith('.pdf') ? '📄' : doc.name.match(/\.(ppt|pptx)$/) ? '📊' : doc.name.match(/\.(doc|docx)$/) ? '📝' : '📁'}
-                </span>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <a href={doc.url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 13, fontWeight: 600, color: 'var(--accent)', textDecoration: 'none', display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {doc.name}
-                  </a>
-                  <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 1 }}>
-                    {fmtFileSize(doc.size)}{doc.uploaded_at ? ` · Uploaded ${new Date(doc.uploaded_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}` : ''}
+        const docIcon = (doc) => {
+          if (doc.type === 'link') return '🔗';
+          if (doc.name?.endsWith('.pdf')) return '📄';
+          if (doc.name?.match(/\.(ppt|pptx)$/)) return '📊';
+          if (doc.name?.match(/\.(doc|docx)$/)) return '📝';
+          return '📁';
+        };
+
+        return (
+          <div className="card" style={{ padding: '16px 20px' }}>
+            {/* Header + tabs */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>Additional Reference Documents</div>
+                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>Upload files or add links — stored here for permanent reference.</div>
+              </div>
+              <div style={{ display: 'flex', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 6, overflow: 'hidden', flexShrink: 0 }}>
+                {['files', 'links'].map(tab => (
+                  <button key={tab} onClick={() => setRefDocTab(tab)} style={{ padding: '5px 14px', fontSize: 12, fontWeight: 600, border: 'none', cursor: 'pointer', background: refDocTab === tab ? 'var(--accent)' : 'transparent', color: refDocTab === tab ? '#fff' : 'var(--text-muted)', transition: 'all .15s' }}>
+                    {tab === 'files' ? `📁 Files${fileDocs.length ? ` (${fileDocs.length})` : ''}` : `🔗 Links${linkDocs.length ? ` (${linkDocs.length})` : ''}`}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Hidden file input */}
+            <input ref={refDocInputRef} type="file" multiple accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.md,.png,.jpg,.jpeg" style={{ display: 'none' }}
+              onChange={async e => { await handleFiles(Array.from(e.target.files || [])); e.target.value = ''; }}
+            />
+
+            {uploadErr && <div style={{ fontSize: 12, color: '#ef4444', marginBottom: 8 }}>{uploadErr}</div>}
+
+            {/* ── FILES TAB ── */}
+            {refDocTab === 'files' && (
+              <>
+                {/* Drag-and-drop zone */}
+                <div
+                  onDragOver={e => { e.preventDefault(); setIsDragging(true); }}
+                  onDragLeave={() => setIsDragging(false)}
+                  onDrop={async e => {
+                    e.preventDefault();
+                    setIsDragging(false);
+                    await handleFiles(Array.from(e.dataTransfer.files));
+                  }}
+                  onClick={() => !uploading && refDocInputRef.current?.click()}
+                  style={{
+                    border: `2px dashed ${isDragging ? 'var(--accent)' : 'var(--border)'}`,
+                    borderRadius: 8, padding: '20px 16px', textAlign: 'center', cursor: uploading ? 'default' : 'pointer',
+                    background: isDragging ? 'var(--accent-light, #eff6ff)' : 'var(--surface)',
+                    transition: 'all .15s', marginBottom: fileDocs.length ? 12 : 0,
+                  }}
+                >
+                  {uploading ? (
+                    <span style={{ fontSize: 13, color: 'var(--accent)', fontWeight: 600 }}>⏳ Uploading…</span>
+                  ) : (
+                    <>
+                      <div style={{ fontSize: 22, marginBottom: 4 }}>📂</div>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-muted)' }}>Drop files here or click to browse</div>
+                      <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 3 }}>PDF, Word, PowerPoint, Excel, images</div>
+                    </>
+                  )}
+                </div>
+
+                {/* Uploaded file list */}
+                {fileDocs.length > 0 && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {fileDocs.map((doc) => {
+                      const i = refDocs.indexOf(doc);
+                      return (
+                        <div key={doc.path || i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 7 }}>
+                          <span style={{ fontSize: 16, flexShrink: 0 }}>{docIcon(doc)}</span>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <a href={doc.url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 13, fontWeight: 600, color: 'var(--accent)', textDecoration: 'none', display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{doc.name}</a>
+                            <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 1 }}>
+                              {fmtFileSize(doc.size)}{doc.uploaded_at ? ` · ${new Date(doc.uploaded_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}` : ''}
+                            </div>
+                          </div>
+                          <button onClick={() => removeDoc(i)} disabled={deletingDoc === doc.path} title="Remove" style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 15, padding: '2px 4px', flexShrink: 0, lineHeight: 1 }}>
+                            {deletingDoc === doc.path ? '⏳' : '✕'}
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </>
+            )}
+
+            {/* ── LINKS TAB ── */}
+            {refDocTab === 'links' && (
+              <>
+                {/* Add link form */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '12px 14px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, marginBottom: linkDocs.length ? 12 : 0 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em' }}>Add a link</div>
+                  <input
+                    type="url"
+                    value={linkDraftUrl}
+                    onChange={e => setLinkDraftUrl(e.target.value)}
+                    placeholder="https://drive.google.com/… or any URL"
+                    style={{ fontSize: 13, padding: '7px 10px' }}
+                  />
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <input
+                      type="text"
+                      value={linkDraftName}
+                      onChange={e => setLinkDraftName(e.target.value)}
+                      placeholder="Label (optional)"
+                      style={{ flex: 1, fontSize: 13, padding: '7px 10px' }}
+                      onKeyDown={async e => { if (e.key === 'Enter') e.currentTarget.nextSibling?.click(); }}
+                    />
+                    <button
+                      className="btn btn-primary"
+                      disabled={!linkDraftUrl.trim()}
+                      onClick={async () => {
+                        const label = linkDraftName.trim() || linkDraftUrl.replace(/^https?:\/\//, '').split('/')[0];
+                        const newLink = { type: 'link', name: label, url: linkDraftUrl.trim(), added_at: new Date().toISOString() };
+                        const next = [...refDocs, newLink];
+                        setRefDocs(next);
+                        await saveRefDocs(next);
+                        setLinkDraftUrl('');
+                        setLinkDraftName('');
+                      }}
+                    >Add</button>
                   </div>
                 </div>
-                <button
-                  onClick={async () => {
-                    if (!window.confirm(`Remove "${doc.name}"?`)) return;
-                    setDeletingDoc(doc.path);
-                    try {
-                      await deleteRefDoc(doc);
-                      const next = refDocs.filter((_, j) => j !== i);
-                      setRefDocs(next);
-                      await saveRefDocs(next);
-                    } catch (err) {
-                      setUploadErr(`Delete failed: ${err.message}`);
-                    } finally {
-                      setDeletingDoc(null);
-                    }
-                  }}
-                  disabled={deletingDoc === doc.path}
-                  title="Remove"
-                  style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 15, padding: '2px 4px', flexShrink: 0, lineHeight: 1 }}
-                >{deletingDoc === doc.path ? '⏳' : '✕'}</button>
-              </div>
-            ))}
+
+                {/* Link list */}
+                {linkDocs.length > 0 && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {linkDocs.map((doc) => {
+                      const i = refDocs.indexOf(doc);
+                      return (
+                        <div key={doc.url + i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 7 }}>
+                          <span style={{ fontSize: 16, flexShrink: 0 }}>🔗</span>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <a href={doc.url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 13, fontWeight: 600, color: 'var(--accent)', textDecoration: 'none', display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{doc.name}</a>
+                            <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{doc.url}</div>
+                          </div>
+                          <button onClick={() => removeDoc(i)} disabled={deletingDoc === doc.url} title="Remove" style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 15, padding: '2px 4px', flexShrink: 0, lineHeight: 1 }}>
+                            {deletingDoc === doc.url ? '⏳' : '✕'}
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {linkDocs.length === 0 && (
+                  <div style={{ padding: '16px', textAlign: 'center', color: 'var(--text-faint)', fontSize: 12, border: '1px dashed var(--border)', borderRadius: 8 }}>
+                    No links added yet
+                  </div>
+                )}
+              </>
+            )}
           </div>
-        )}
-      </div>
+        );
+      })()}
 
       {/* bottom breathing room */}
       <div style={{ height: 48 }} />
