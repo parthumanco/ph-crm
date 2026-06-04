@@ -4,8 +4,9 @@ import {
   ACTIVE_STAGES, CLOSED_STAGES,
   stageColor, stageLabel, dealValue, fmt$, daysSince,
 } from '../lib/deals';
-import { upsertProject } from '../lib/projects';
+import { upsertProject, buildTimelineFromParsed, bulkInsertMilestones, bulkInsertTasks, migrateDealMeetingsToProject } from '../lib/projects';
 import DealDetailModal from '../components/DealDetailModal';
+import ProposalImporter from '../components/ProposalImporter';
 
 const OWNER_COLORS = {
   Mike: { bg: '#f3e8ff', color: '#7c3aed' },
@@ -135,6 +136,7 @@ export default function DealsPage({ refreshKey = 0 }) {
   const [showLostPanel, setShowLostPanel] = useState(false);
   const [wonToast, setWonToast]         = useState(null); // project name string
   const [wonError, setWonError]         = useState(null); // project creation error
+  const [proposalDraftPayload, setProposalDraftPayload] = useState(null); // { parsed, startDate, deal }
   const dragDealId = useRef(null);
 
   const load = useCallback(async () => {
@@ -301,6 +303,40 @@ export default function DealsPage({ refreshKey = 0 }) {
       setDeals(prev => prev.map(d => d.id === dealId ? { ...d, stage: 'lost', stage_entered_at: new Date().toISOString() } : d));
       try { await moveStage(dealId, 'lost'); } catch { load(); }
     }, 2150);
+  };
+
+  // ── Deal → Project from proposal draft ────────────────────────────────────
+  const handleDraftProposal = async ({ parsed, startDate, deal }) => {
+    // Close deal modal immediately
+    setSelectedDeal(null);
+    setShowNewDeal(false);
+    setWonError(null);
+    try {
+      // 1. Create the project
+      const proj = await upsertProject({
+        name:        parsed.project_name || deal.company_name || 'New Project',
+        client_name: deal.company_name || '',
+        status:      'active',
+        start_date:  startDate,
+        budget:      parsed.total_budget || null,
+      });
+
+      // 2. Build and insert milestones + tasks
+      const { milestones: msRows, tasks: taskRows } = buildTimelineFromParsed(parsed, proj.id, startDate);
+      if (msRows.length > 0) await bulkInsertMilestones(msRows);
+      if (taskRows.length > 0) await bulkInsertTasks(taskRows);
+
+      // 3. Migrate any deal meetings over to the new project
+      if (deal.id) await migrateDealMeetingsToProject(deal.id, proj.id);
+
+      // 4. Show success toast
+      setWonToast(proj.name || deal.company_name);
+      setTimeout(() => setWonToast(null), 5000);
+    } catch (e) {
+      console.error('Project creation from proposal failed:', e.message);
+      setWonError(e.message);
+      setTimeout(() => setWonError(null), 6000);
+    }
   };
 
   // ── Modal handlers ─────────────────────────────────────────────────────────
@@ -857,6 +893,7 @@ export default function DealsPage({ refreshKey = 0 }) {
               setSelectedDeal(saved);
             }
           }}
+          onDraftProposal={handleDraftProposal}
         />
       )}
     </>

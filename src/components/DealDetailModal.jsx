@@ -5,10 +5,13 @@ import {
   fetchTasks, addTask, completeTask, deleteTask,
   STAGES, ACTIVITY_TYPES, OWNERS, stageColor, stageLabel, fmt$, daysSince,
 } from '../lib/deals';
+import { fetchDealMeetings, deleteProjectMeeting } from '../lib/projects';
+import TranscriptImporter from './TranscriptImporter';
+import DealProposalDraft from './DealProposalDraft';
 
 const ACTIVITY_ICONS = { email:'✉️', call:'📞', meeting:'🤝', note:'📝', proposal:'📄', contract:'✍️' };
 
-export default function DealDetailModal({ deal: initialDeal, onClose, onSaved }) {
+export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, onDraftProposal }) {
   const [deal, setDeal]           = useState({ ...initialDeal });
   const [activities, setActivities] = useState([]);
   const [tasks, setTasks]         = useState([]);
@@ -21,6 +24,10 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved })
   const [savingAct, setSavingAct] = useState(false);
   const [savingTask, setSavingTask] = useState(false);
   const [tab, setTab]             = useState('activities');
+  const [meetings, setMeetings]   = useState([]);
+  const [showTranscript, setShowTranscript] = useState(null); // meeting id
+  const [showTranscriptImporter, setShowTranscriptImporter] = useState(false);
+  const [showProposalDraft, setShowProposalDraft] = useState(false);
 
   const isNew = !initialDeal.id;
 
@@ -28,6 +35,7 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved })
     if (!isNew) {
       fetchActivities(initialDeal.id).then(setActivities).catch(console.error);
       fetchTasks(initialDeal.id).then(setTasks).catch(console.error);
+      fetchDealMeetings(initialDeal.id).then(setMeetings).catch(console.error);
     }
   }, [initialDeal.id, isNew]);
 
@@ -112,6 +120,7 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved })
   const overdueTasks = openTasks.filter(t => t.due_date && new Date(t.due_date) < new Date());
 
   return (
+    <>
     <div
       style={{ position: 'fixed', inset: 0, zIndex: 300, display: 'flex', justifyContent: 'flex-end' }}
       onClick={e => e.target === e.currentTarget && onClose()}
@@ -212,9 +221,9 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved })
               )}
 
               <div style={{ display: 'flex', gap: 0, borderBottom: '2px solid var(--border)', marginBottom: 16 }}>
-                {['activities','tasks'].map(t => (
+                {['activities','tasks','meetings'].map(t => (
                   <button key={t} onClick={() => setTab(t)} style={{ padding: '8px 16px', fontSize: 12, fontWeight: 700, background: 'none', border: 'none', borderBottom: tab === t ? '2px solid var(--accent)' : '2px solid transparent', marginBottom: -2, cursor: 'pointer', color: tab === t ? 'var(--accent)' : 'var(--text-muted)', textTransform: 'capitalize' }}>
-                    {t}{t === 'tasks' && openTasks.length > 0 ? ` (${openTasks.length})` : ''}
+                    {t}{t === 'tasks' && openTasks.length > 0 ? ` (${openTasks.length})` : ''}{t === 'meetings' && meetings.length > 0 ? ` (${meetings.length})` : ''}
                   </button>
                 ))}
               </div>
@@ -313,10 +322,98 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved })
                   </div>
                 </div>
               )}
+
+              {tab === 'meetings' && (
+                <div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                    <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em' }}>Meeting Log</span>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      {meetings.length > 0 && (
+                        <button
+                          className="btn btn-primary btn-xs"
+                          onClick={() => setShowProposalDraft(true)}
+                        >✦ Draft Proposal</button>
+                      )}
+                      <button className="btn btn-secondary btn-xs" onClick={() => setShowTranscriptImporter(true)}>+ Add Meeting</button>
+                    </div>
+                  </div>
+
+                  {meetings.length === 0 && (
+                    <div style={{ textAlign: 'center', padding: '24px 0' }}>
+                      <p style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 10 }}>No meetings logged yet.</p>
+                      <button className="btn btn-secondary btn-sm" onClick={() => setShowTranscriptImporter(true)}>📝 Add first meeting</button>
+                    </div>
+                  )}
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    {meetings.map(mtg => (
+                      <div key={mtg.id} style={{ padding: '12px 14px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8 }}>
+                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: mtg.summary ? 6 : 0 }}>
+                          <div style={{ flex: 1 }}>
+                            <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>{mtg.title}</div>
+                            {mtg.meeting_date && <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 1 }}>{new Date(mtg.meeting_date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'long', day: 'numeric', year: 'numeric' })}</div>}
+                          </div>
+                          <div style={{ display: 'flex', gap: 5, flexShrink: 0 }}>
+                            {mtg.transcript && (
+                              <button onClick={() => setShowTranscript(showTranscript === mtg.id ? null : mtg.id)} style={{ fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 5, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text-faint)', cursor: 'pointer' }}>
+                                {showTranscript === mtg.id ? 'Hide' : 'Transcript'}
+                              </button>
+                            )}
+                            <button onClick={async () => { await deleteProjectMeeting(mtg.id); setMeetings(prev => prev.filter(m => m.id !== mtg.id)); }} style={{ fontSize: 10, padding: '2px 5px', borderRadius: 5, border: '1px solid var(--border)', background: 'none', color: 'var(--text-faint)', cursor: 'pointer' }}>🗑</button>
+                          </div>
+                        </div>
+                        {mtg.summary && <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6, marginBottom: mtg.action_items?.length ? 6 : 0 }}>{mtg.summary}</div>}
+                        {mtg.action_items?.length > 0 && (
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                            {mtg.action_items.map((ai, i) => (
+                              <span key={i} style={{ fontSize: 11, padding: '2px 8px', borderRadius: 12, background: 'var(--bg)', border: '1px solid var(--border)', color: 'var(--text-muted)' }}>
+                                {ai.owner && <span style={{ fontWeight: 700, color: 'var(--accent)', marginRight: 3 }}>{ai.owner}</span>}
+                                {ai.title}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                        {showTranscript === mtg.id && mtg.transcript && (
+                          <div style={{ marginTop: 8, padding: '8px 10px', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 6, fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.7, whiteSpace: 'pre-wrap', maxHeight: 220, overflowY: 'auto' }}>
+                            {mtg.transcript}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </>
           )}
         </div>
       </div>
     </div>
+
+    {/* Transcript importer */}
+    {showTranscriptImporter && (
+      <TranscriptImporter
+        dealId={deal.id}
+        owners={OWNERS}
+        onImported={({ meeting }) => {
+          setMeetings(prev => [meeting, ...prev]);
+          setShowTranscriptImporter(false);
+        }}
+        onClose={() => setShowTranscriptImporter(false)}
+      />
+    )}
+
+    {/* Proposal draft */}
+    {showProposalDraft && (
+      <DealProposalDraft
+        deal={deal}
+        meetings={meetings}
+        onConfirm={(payload) => {
+          setShowProposalDraft(false);
+          onDraftProposal?.({ ...payload, deal });
+        }}
+        onClose={() => setShowProposalDraft(false)}
+      />
+    )}
+    </>
   );
 }
