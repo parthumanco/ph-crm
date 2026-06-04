@@ -878,8 +878,20 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
     setAssignedTasks(prev => prev.map(patch));
     if (task.milestone_id) await syncMilestoneStatus(task.milestone_id, updated);
     if (nowComplete) {
-      setExtraRecipients([]);
-      setTaskCompleteEmail({ task, project: activeProject });
+      // If no client portal or no contact email, auto-approve internally — no review needed
+      const primaryContact = (activeProject.contacts || [])[0];
+      const toEmail = primaryContact?.email || activeProject.client_email || '';
+      if (!activeProject.share_token || !toEmail) {
+        try {
+          await approveTask(task.id, 'Internal');
+          const now = new Date().toISOString();
+          const approvePatch = t => t.id === task.id ? { ...t, approved_at: now, approved_by: 'Internal' } : t;
+          setTasks(prev => prev.map(approvePatch));
+          setAllTasks(prev => ({ ...prev, [activeProject.id]: (prev[activeProject.id] || []).map(approvePatch) }));
+          setAssignedTasks(prev => prev.map(approvePatch));
+        } catch (e) { console.error('Auto-approve failed:', e); }
+      }
+      // If portal + email exist, the inline "Notify client" button on the task row handles next step
     }
   };
 
@@ -2204,11 +2216,35 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                                   >
                                     {task.title}
                                   </span>
-                                  {task.completed && task.completed_at && (
-                                    <div style={{ fontSize: 10, color: hasOpenRejection ? '#f59e0b' : 'var(--text-faint)', fontWeight: hasOpenRejection ? 700 : 400, marginTop: 2 }}>
-                                      {hasOpenRejection ? '⟳ In Progress — changes requested' : `✓ Completed ${fmtDate(task.completed_at)}`}
-                                    </div>
-                                  )}
+                                  {task.completed && (() => {
+                                    const chain = task.review_chain || [];
+                                    const lastEvent = [...chain].reverse().find(e => e.type === 'sent' || e.type === 'revised_sent');
+                                    const isAwaiting = !task.approved_at && !task.rejected_at && !!lastEvent;
+                                    const isUnsent   = !task.approved_at && !task.rejected_at && !lastEvent;
+                                    const portalEmail = (activeProject.contacts || [])[0]?.email || activeProject.client_email || '';
+                                    const hasPortalEmail = !!(activeProject.share_token && portalEmail);
+                                    return (
+                                      <div style={{ fontSize: 10, marginTop: 2, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                                        {hasOpenRejection ? (
+                                          <span style={{ color: '#f59e0b', fontWeight: 700 }}>⟳ In Progress — changes requested</span>
+                                        ) : task.approved_at ? (
+                                          <span style={{ color: '#10b981', fontWeight: 600 }}>✓ Approved{task.approved_by ? ` by ${task.approved_by}` : ''}</span>
+                                        ) : isAwaiting ? (
+                                          <span style={{ color: 'var(--text-muted)', fontWeight: 600 }}>⏳ Awaiting client review</span>
+                                        ) : (
+                                          <>
+                                            <span style={{ color: 'var(--text-faint)' }}>✓ Completed {fmtDate(task.completed_at)}</span>
+                                            {isUnsent && hasPortalEmail && (
+                                              <button
+                                                onClick={() => { setExtraRecipients([]); setShowContactDropdown(false); setTaskCompleteEmail({ task, project: activeProject }); }}
+                                                style={{ fontSize: 10, fontWeight: 700, padding: '1px 8px', borderRadius: 4, border: '1px solid var(--accent)', background: 'transparent', color: 'var(--accent)', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                                              >📤 Notify client</button>
+                                            )}
+                                          </>
+                                        )}
+                                      </div>
+                                    );
+                                  })()}
                                 </div>
                                 {(task.assigned_to || (task.estimated_hours != null && task.estimated_hours !== '')) && (
                                   <span style={{ fontSize: 11, fontWeight: 600, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 4, padding: '2px 7px', flexShrink: 0, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
@@ -2750,14 +2786,13 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
         );
       })()}
 
-      {/* Task complete — email prompt */}
+      {/* Task complete — notify client email draft */}
       {taskCompleteEmail && (() => {
-        const { task, project, showDraft } = taskCompleteEmail;
+        const { task, project } = taskCompleteEmail;
         const primaryContact = (project.contacts || [])[0];
         const clientName   = primaryContact?.name || project.client_name || project.contact_name || 'there';
         const toEmail      = primaryContact?.email || project.client_email || '';
-        const hasPortal    = !!(project.share_token && toEmail);
-        const portalUrl    = hasPortal ? `${window.location.origin}/portal/${project.share_token}?task=${task.id}` : null;
+        const portalUrl    = project.share_token ? `${window.location.origin}/portal/${project.share_token}?task=${task.id}` : null;
         const subject      = `Task complete: ${task.title}`;
         const companyLabel = project.client_name || project.name;
         const body         = `Hi ${clientName},\n\nA task on your project has been completed and is ready for your review.\n\nTask: ${task.title}\n\n${portalUrl ? `Please visit your project dashboard to review and approve it:\n${portalUrl}\n\n` : ''}Best,\nPart Human`;
@@ -2768,210 +2803,111 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
           portalUrl ? `<p style="font-family:sans-serif;font-size:14px;">Please visit your project dashboard to review and approve it:</p><p><a href="${portalUrl}" style="display:inline-block;background:#fbbf24;color:#111;font-weight:800;font-size:13px;padding:6px 14px;border-radius:20px;text-decoration:none;font-family:sans-serif;">PH &times; ${companyLabel}</a></p>` : '',
           `<p style="font-family:sans-serif;font-size:14px;">Best,<br>Part Human</p>`,
         ].join('');
-        const ccEmails     = extraRecipients.map(c => c.email).filter(Boolean);
-        const gmailUrl     = toEmail ? `https://mail.google.com/mail/?view=cm&to=${encodeURIComponent(toEmail)}&su=${encodeURIComponent(subject)}${ccEmails.length ? `&cc=${encodeURIComponent(ccEmails.join(','))}` : ''}` : null;
-        const allContacts  = (project.contacts || []).filter(c => c.email && c.email !== toEmail && !extraRecipients.find(r => r.email === c.email));
+        const ccEmails    = extraRecipients.map(c => c.email).filter(Boolean);
+        const gmailUrl    = toEmail ? `https://mail.google.com/mail/?view=cm&to=${encodeURIComponent(toEmail)}&su=${encodeURIComponent(subject)}${ccEmails.length ? `&cc=${encodeURIComponent(ccEmails.join(','))}` : ''}` : null;
+        const allContacts = (project.contacts || []).filter(c => c.email && c.email !== toEmail && !extraRecipients.find(r => r.email === c.email));
 
         return (
           <div style={{ position: 'fixed', inset: 0, zIndex: 900, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.4)' }} onClick={() => { setTaskCompleteEmail(null); setShowContactDropdown(false); }} />
-            <div style={{
-              position: 'relative', zIndex: 1, background: 'var(--bg)', borderRadius: 14,
-              padding: '28px 28px 24px',
-              width: showDraft ? 500 : 380, maxWidth: '95vw',
-              boxShadow: '0 20px 60px rgba(0,0,0,0.22)',
-            }}>
+            <div style={{ position: 'relative', zIndex: 1, background: 'var(--bg)', borderRadius: 14, padding: '24px 24px 20px', width: 500, maxWidth: '95vw', boxShadow: '0 20px 60px rgba(0,0,0,0.22)' }}>
 
-              {!showDraft ? (
-                /* ── Step 1: confirm ── */
-                <>
-                  <div style={{ fontSize: 22, marginBottom: 12 }}>✅</div>
-                  <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--text)', marginBottom: 6 }}>
-                    Task complete
-                  </div>
-                  <div style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.55, marginBottom: 6 }}>
-                    <strong style={{ color: 'var(--text)' }}>{task.title}</strong> has been marked complete.
-                  </div>
-                  {hasPortal ? (
-                    <>
-                      <div style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.55, marginBottom: 24 }}>
-                        Would you like to email <strong style={{ color: 'var(--text)' }}>{clientName}</strong> to let them know it's ready for approval?
-                      </div>
-                      <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
-                        <button
-                          onClick={async () => {
-                            await approveTask(task.id, 'Internal');
-                            const now = new Date().toISOString();
-                            const patch = t => t.id === task.id ? { ...t, approved_at: now, approved_by: 'Internal' } : t;
-                            setTasks(prev => prev.map(patch));
-                            setAllTasks(prev => ({ ...prev, [project.id]: (prev[project.id] || []).map(patch) }));
-                            setAssignedTasks(prev => prev.map(patch));
-                            setTaskCompleteEmail(null);
-                          }}
-                          style={{ padding: '9px 16px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-muted)', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}
-                        >Skip — mark approved</button>
-                        <button
-                          onClick={() => setTaskCompleteEmail(null)}
-                          style={{ padding: '9px 16px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}
-                        >Not now</button>
-                        <button
-                          onClick={() => setTaskCompleteEmail(prev => ({ ...prev, showDraft: true }))}
-                          style={{ padding: '9px 20px', borderRadius: 8, border: 'none', background: 'var(--accent)', color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
-                        >Email client →</button>
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      <div style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 20, padding: '8px 12px', background: 'var(--surface)', borderRadius: 7, border: '1px solid var(--border)' }}>
-                        💡 Set up a client portal on this project to enable email notifications.
-                      </div>
-                      <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
-                        <button
-                          onClick={async () => {
-                            await approveTask(task.id, 'Internal');
-                            const now = new Date().toISOString();
-                            const patch = t => t.id === task.id ? { ...t, approved_at: now, approved_by: 'Internal' } : t;
-                            setTasks(prev => prev.map(patch));
-                            setAllTasks(prev => ({ ...prev, [project.id]: (prev[project.id] || []).map(patch) }));
-                            setAssignedTasks(prev => prev.map(patch));
-                            setTaskCompleteEmail(null);
-                          }}
-                          style={{ padding: '9px 16px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-muted)', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}
-                        >Skip — mark approved</button>
-                        <button
-                          onClick={() => setTaskCompleteEmail(null)}
-                          style={{ padding: '9px 20px', borderRadius: 8, border: 'none', background: 'var(--accent)', color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
-                        >Done</button>
-                      </div>
-                    </>
-                  )}
-                </>
-              ) : (
-                /* ── Step 2: draft ── */
-                <>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
-                    <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--text)' }}>📬 Email draft</div>
-                    <button onClick={() => { setTaskCompleteEmail(null); setShowContactDropdown(false); }} style={{ background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: 'var(--text-muted)', padding: '2px 4px' }}>✕</button>
-                  </div>
+              {/* Header */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--text)' }}>📬 Notify client</div>
+                <button onClick={() => { setTaskCompleteEmail(null); setShowContactDropdown(false); }} style={{ background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: 'var(--text-muted)', padding: '2px 4px' }}>✕</button>
+              </div>
 
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                    <div>
-                      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 4 }}>To</div>
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, padding: '6px 10px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 7, alignItems: 'center', minHeight: 38 }}>
-                        <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>
-                          {primaryContact ? `${primaryContact.name}${primaryContact.email ? ` <${primaryContact.email}>` : ''}` : toEmail || '—'}
-                        </span>
-                        {extraRecipients.map(c => (
-                          <span key={c.email} style={{ display: 'inline-flex', alignItems: 'center', gap: 3, background: 'var(--accent)', color: '#fff', fontSize: 11, fontWeight: 600, padding: '3px 8px 3px 10px', borderRadius: 20 }}>
-                            {c.name || c.email}
-                            <button onClick={() => setExtraRecipients(prev => prev.filter(r => r.email !== c.email))} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'rgba(255,255,255,0.8)', fontSize: 14, lineHeight: 1, padding: 0, marginLeft: 2, display: 'flex', alignItems: 'center' }}>×</button>
-                          </span>
-                        ))}
-                        {allContacts.length > 0 && (
-                          <div style={{ position: 'relative' }}>
-                            <button
-                              onClick={() => setShowContactDropdown(v => !v)}
-                              style={{ background: 'none', border: '1px dashed var(--border)', borderRadius: 20, padding: '2px 10px', fontSize: 11, color: 'var(--text-faint)', cursor: 'pointer', whiteSpace: 'nowrap' }}
-                            >+ CC contact</button>
-                            {showContactDropdown && (
-                              <div style={{ position: 'absolute', top: 'calc(100% + 4px)', left: 0, zIndex: 10, background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.14)', minWidth: 210 }}>
-                                {allContacts.map(c => (
-                                  <button
-                                    key={c.email}
-                                    onClick={() => { setExtraRecipients(prev => [...prev, c]); setShowContactDropdown(false); }}
-                                    style={{ display: 'block', width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', borderBottom: '1px solid var(--border)', cursor: 'pointer', fontSize: 13, color: 'var(--text)' }}
-                                    onMouseEnter={e => e.currentTarget.style.background = 'var(--surface)'}
-                                    onMouseLeave={e => e.currentTarget.style.background = 'none'}
-                                  >
-                                    <div style={{ fontWeight: 600, fontSize: 13 }}>{c.name}</div>
-                                    <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 1 }}>{c.email}</div>
-                                  </button>
-                                ))}
-                              </div>
-                            )}
+              {/* Fields */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <div>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 4 }}>To</div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, padding: '6px 10px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 7, alignItems: 'center', minHeight: 38 }}>
+                    <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>
+                      {primaryContact ? `${primaryContact.name}${primaryContact.email ? ` <${primaryContact.email}>` : ''}` : toEmail || '—'}
+                    </span>
+                    {extraRecipients.map(c => (
+                      <span key={c.email} style={{ display: 'inline-flex', alignItems: 'center', gap: 3, background: 'var(--accent)', color: '#fff', fontSize: 11, fontWeight: 600, padding: '3px 8px 3px 10px', borderRadius: 20 }}>
+                        {c.name || c.email}
+                        <button onClick={() => setExtraRecipients(prev => prev.filter(r => r.email !== c.email))} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'rgba(255,255,255,0.8)', fontSize: 14, lineHeight: 1, padding: 0, marginLeft: 2, display: 'flex', alignItems: 'center' }}>×</button>
+                      </span>
+                    ))}
+                    {allContacts.length > 0 && (
+                      <div style={{ position: 'relative' }}>
+                        <button onClick={() => setShowContactDropdown(v => !v)} style={{ background: 'none', border: '1px dashed var(--border)', borderRadius: 20, padding: '2px 10px', fontSize: 11, color: 'var(--text-faint)', cursor: 'pointer', whiteSpace: 'nowrap' }}>+ CC contact</button>
+                        {showContactDropdown && (
+                          <div style={{ position: 'absolute', top: 'calc(100% + 4px)', left: 0, zIndex: 10, background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.14)', minWidth: 210 }}>
+                            {allContacts.map(c => (
+                              <button key={c.email} onClick={() => { setExtraRecipients(prev => [...prev, c]); setShowContactDropdown(false); }} style={{ display: 'block', width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', borderBottom: '1px solid var(--border)', cursor: 'pointer', fontSize: 13, color: 'var(--text)' }} onMouseEnter={e => e.currentTarget.style.background = 'var(--surface)'} onMouseLeave={e => e.currentTarget.style.background = 'none'}>
+                                <div style={{ fontWeight: 600, fontSize: 13 }}>{c.name}</div>
+                                <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 1 }}>{c.email}</div>
+                              </button>
+                            ))}
                           </div>
                         )}
                       </div>
-                    </div>
-                    <div>
-                      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 4 }}>Subject</div>
-                      <div style={{ fontSize: 13, padding: '8px 12px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 7, color: 'var(--text-muted)' }}>{subject}</div>
-                    </div>
-                    <div>
-                      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 4 }}>Message</div>
-                      <div style={{ fontSize: 12, padding: '10px 12px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 7, color: 'var(--text-muted)', lineHeight: 1.65, maxHeight: 220, overflowY: 'auto' }}>
-                        <div style={{ whiteSpace: 'pre-wrap' }}>{`Hi ${clientName},\n\nA task on your project has been completed and is ready for your review.\n\nTask: ${task.title}\n\n${portalUrl ? 'Please visit your project dashboard to review and approve it:\n' : ''}` }</div>
-                        {portalUrl && (
-                          <a
-                            href={portalUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            style={{
-                              display: 'inline-flex', alignItems: 'center', gap: 6,
-                              background: '#fbbf24', color: '#111', fontWeight: 800,
-                              fontSize: 12, padding: '5px 12px', borderRadius: 20,
-                              textDecoration: 'none', letterSpacing: '.01em',
-                              margin: '6px 0 8px', boxShadow: '0 1px 4px rgba(0,0,0,0.12)',
-                            }}
-                          >
-                            <span style={{ fontWeight: 900, fontSize: 13 }}>PH</span>
-                            <span>×</span>
-                            <span>{companyLabel}</span>
-                          </a>
-                        )}
-                        <div style={{ whiteSpace: 'pre-wrap' }}>{`\nBest,\nPart Human`}</div>
-                      </div>
-                    </div>
+                    )}
                   </div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 4 }}>Subject</div>
+                  <div style={{ fontSize: 13, padding: '8px 12px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 7, color: 'var(--text-muted)' }}>{subject}</div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 4 }}>Message</div>
+                  <div style={{ fontSize: 12, padding: '10px 12px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 7, color: 'var(--text-muted)', lineHeight: 1.65, maxHeight: 200, overflowY: 'auto' }}>
+                    <div style={{ whiteSpace: 'pre-wrap' }}>{`Hi ${clientName},\n\nA task on your project has been completed and is ready for your review.\n\nTask: ${task.title}\n\n${portalUrl ? 'Please visit your project dashboard to review and approve it:\n' : ''}`}</div>
+                    {portalUrl && (
+                      <a href={portalUrl} target="_blank" rel="noopener noreferrer" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: '#fbbf24', color: '#111', fontWeight: 800, fontSize: 12, padding: '5px 12px', borderRadius: 20, textDecoration: 'none', margin: '6px 0 8px', boxShadow: '0 1px 4px rgba(0,0,0,0.12)' }}>
+                        <span style={{ fontWeight: 900, fontSize: 13 }}>PH</span><span>×</span><span>{companyLabel}</span>
+                      </a>
+                    )}
+                    <div style={{ whiteSpace: 'pre-wrap' }}>{`\nBest,\nPart Human`}</div>
+                  </div>
+                </div>
+              </div>
 
-                  {portalUrl && (
-                    <div style={{ marginTop: 14, fontSize: 11, color: 'var(--text-faint)', textAlign: 'right' }}>
-                      💡 Once Gmail opens, just paste to drop in the styled message
-                    </div>
-                  )}
-                  <div style={{ display: 'flex', gap: 10, marginTop: 8, justifyContent: 'flex-end' }}>
-                    <button
-                      onClick={async () => {
-                        try {
-                          await navigator.clipboard.write([
-                            new ClipboardItem({
-                              'text/html': new Blob([htmlBody], { type: 'text/html' }),
-                              'text/plain': new Blob([body], { type: 'text/plain' }),
-                            }),
-                          ]);
-                        } catch {
-                          navigator.clipboard.writeText(body);
-                        }
-                      }}
-                      style={{ padding: '9px 16px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}
-                    >Copy</button>
-                    <button
-                      onClick={async () => {
-                        try {
-                          await navigator.clipboard.write([
-                            new ClipboardItem({
-                              'text/html': new Blob([htmlBody], { type: 'text/html' }),
-                              'text/plain': new Blob([body], { type: 'text/plain' }),
-                            }),
-                          ]);
-                        } catch { /* clipboard not available, skip */ }
-                        // Record "sent" event in chain
-                        try {
-                          const chain = await addToReviewChain(task.id, { type: 'sent', by: 'Part Human' });
-                          setTasks(prev => prev.map(t => t.id === task.id ? { ...t, review_chain: chain } : t));
-                          setAllTasks(prev => {
-                            const updated = (prev[project.id] || []).map(t => t.id === task.id ? { ...t, review_chain: chain } : t);
-                            return { ...prev, [project.id]: updated };
-                          });
-                        } catch { /* non-fatal */ }
-                        window.open(gmailUrl, '_blank');
-                        setTaskCompleteEmail(null);
-                      }}
-                      style={{ padding: '9px 20px', borderRadius: 8, border: 'none', background: 'var(--accent)', color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
-                    >Open in Gmail ↗</button>
-                  </div>
-                </>
-              )}
+              {portalUrl && <div style={{ marginTop: 12, fontSize: 11, color: 'var(--text-faint)', textAlign: 'right' }}>💡 Once Gmail opens, paste to drop in the styled message</div>}
+
+              {/* Footer */}
+              <div style={{ display: 'flex', alignItems: 'center', marginTop: 14, gap: 10 }}>
+                {/* Approve internally escape hatch */}
+                <button
+                  onClick={async () => {
+                    await approveTask(task.id, 'Internal');
+                    const now = new Date().toISOString();
+                    const patch = t => t.id === task.id ? { ...t, approved_at: now, approved_by: 'Internal' } : t;
+                    setTasks(prev => prev.map(patch));
+                    setAllTasks(prev => ({ ...prev, [project.id]: (prev[project.id] || []).map(patch) }));
+                    setAssignedTasks(prev => prev.map(patch));
+                    setTaskCompleteEmail(null);
+                  }}
+                  style={{ fontSize: 11, color: 'var(--text-faint)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 0', textDecoration: 'underline', textUnderlineOffset: 2, flexShrink: 0 }}
+                >Approve internally</button>
+                <div style={{ flex: 1 }} />
+                <button
+                  onClick={async () => {
+                    try { await navigator.clipboard.write([new ClipboardItem({ 'text/html': new Blob([htmlBody], { type: 'text/html' }), 'text/plain': new Blob([body], { type: 'text/plain' }) })]); }
+                    catch { navigator.clipboard.writeText(body); }
+                  }}
+                  style={{ padding: '9px 16px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}
+                >Copy</button>
+                <button
+                  onClick={async () => {
+                    try { await navigator.clipboard.write([new ClipboardItem({ 'text/html': new Blob([htmlBody], { type: 'text/html' }), 'text/plain': new Blob([body], { type: 'text/plain' }) })]); }
+                    catch { /* skip */ }
+                    try {
+                      const chain = await addToReviewChain(task.id, { type: 'sent', by: 'Part Human' });
+                      const chainPatch = t => t.id === task.id ? { ...t, review_chain: chain } : t;
+                      setTasks(prev => prev.map(chainPatch));
+                      setAllTasks(prev => ({ ...prev, [project.id]: (prev[project.id] || []).map(chainPatch) }));
+                    } catch { /* non-fatal */ }
+                    window.open(gmailUrl, '_blank');
+                    setTaskCompleteEmail(null);
+                  }}
+                  style={{ padding: '9px 20px', borderRadius: 8, border: 'none', background: 'var(--accent)', color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
+                >Open in Gmail ↗</button>
+              </div>
             </div>
           </div>
         );
