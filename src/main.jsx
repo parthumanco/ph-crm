@@ -14,12 +14,16 @@ import './index.css'
 import App from './App.jsx'
 import V2App from './v2/V2App.jsx'
 
-// Route flag: /v2/* renders the redesigned UI. Everything else falls through
-// to the existing app, which stays bit-for-bit untouched.
-const isV2 = typeof window !== 'undefined' && window.location.pathname.startsWith('/v2');
+// Route flag: /legacy/* renders the original app for fallback or comparison.
+// Everything else (root, /v2/* alias) renders the redesigned UI.
+//
+// This flip only exists on the ux/redesign-v2 branch — main stays bit-for-bit
+// unchanged, so production Netlify continues to serve the legacy app at root.
+const pathname = typeof window !== 'undefined' ? window.location.pathname : '/';
+const isLegacy = pathname.startsWith('/legacy');
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>
-    {isV2 ? <V2App /> : <App />}
+    {isLegacy ? <App /> : <V2App />}
   </StrictMode>,
 )

@@ -96,7 +96,7 @@ function V2Placeholder({ pageKey }) {
                 Not ported to v2 yet. Use the legacy app for {pageKey} until this surface lands.
             </p>
             <p className="v2-placeholder__hint">
-                <a href="/" onClick={(e) => { e.preventDefault(); window.location.href = '/'; }}>
+                <a href="/legacy" onClick={(e) => { e.preventDefault(); window.location.href = '/legacy'; }}>
                     ← Use the legacy app
                 </a>
             </p>
@@ -159,7 +159,7 @@ export default function V2App() {
                     <a
                         className="v2-sidebar__exit"
                         href="/"
-                        onClick={(e) => { e.preventDefault(); window.location.href = '/'; }}
+                        onClick={(e) => { e.preventDefault(); window.location.href = '/legacy'; }}
                         title="Return to the existing app"
                     >
                         legacy →
@@ -186,7 +186,7 @@ export default function V2App() {
 
                 <div className="v2-banner">
                     Prototype UI · /v2 redesign branch · read-only
-                    <a onClick={() => { window.location.href = '/'; }}>↩ legacy app</a>
+                    <a onClick={() => { window.location.href = '/legacy'; }}>↩ legacy app</a>
                 </div>
 
                 <div className="v2-content">

@@ -291,7 +291,7 @@ function CompanyRow({ company, inPipeline, expanded, onToggle }) {
                     <div className="v2-signal-section__legacy">
                         <a
                             href="/"
-                            onClick={(e) => { e.preventDefault(); window.location.href = '/'; }}
+                            onClick={(e) => { e.preventDefault(); window.location.href = '/legacy'; }}
                             className="v2-section__link"
                         >
                             Open in legacy to scan, edit, or add to pipeline →
