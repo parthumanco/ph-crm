@@ -86,6 +86,16 @@ export async function upsertProject(p) {
   // Convert empty strings to null for date columns
   if (!payload.start_date) payload.start_date = null;
   if (!payload.end_date)   payload.end_date   = null;
+
+  // Auto-create/link client record when client_name is set
+  if (payload.client_name?.trim() && !payload.client_id) {
+    try {
+      const { findOrCreateClient } = await import('./clients.js');
+      const client = await findOrCreateClient(payload.client_name.trim());
+      if (client) payload.client_id = client.id;
+    } catch { /* non-fatal */ }
+  }
+
   const { data, error } = await supabase
     .from('projects').upsert(payload, { onConflict: 'id' }).select().single();
   if (error) throw new Error(error.message);

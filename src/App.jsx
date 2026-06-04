@@ -4,6 +4,7 @@ import PipelinePage from './pages/PipelinePage';
 import DealsPage from './pages/DealsPage';
 import SupportPage from './pages/SupportPage';
 import ProjectsPage from './pages/ProjectsPage';
+import ClientsPage from './pages/ClientsPage';
 import DiscoverPage from './pages/DiscoverPage';
 import WeeklyReportPage from './pages/WeeklyReportPage';
 import ChatPage from './pages/ChatPage';
@@ -11,28 +12,31 @@ import SettingsPage from './pages/SettingsPage';
 import { loadIcp, DEFAULT_ICP, loadTeamMembers, DEFAULT_TEAM_MEMBERS } from './lib/settings';
 
 const NAV = [
-  { id: 'projects', label: 'Projects',           icon: '📌'  },
-  { id: 'deals',    label: 'Pipeline',           icon: '💵' },
-  { id: 'pipeline', label: 'Prospects',          icon: '🔥' },
+  { id: 'clients',  label: 'Clients',            icon: '🏢' },
+  { id: 'projects', label: 'Projects',            icon: '📌' },
   { divider: true },
-  { id: 'report',   label: 'Weekly Outreach',    icon: '📋' },
-  { id: 'discover', label: 'Find New Companies', icon: '🧭' },
-  { id: 'signals',  label: 'Rate & Review',      icon: '🌡️' },
-  { id: 'chat',     label: 'Little Stevie',      icon: '💬' },
+  { id: 'deals',    label: 'Pipeline',            icon: '💵' },
+  { id: 'pipeline', label: 'Active Outreach',     icon: '🔥' },
+  { id: 'report',   label: 'Weekly Outreach',     icon: '📋' },
+  { divider: true },
+  { id: 'discover', label: 'Find New Companies',  icon: '🧭' },
+  { id: 'signals',  label: 'Rate & Review',       icon: '🌡️' },
+  { id: 'chat',     label: 'Little Stevie',       icon: '💬' },
   { divider: true },
   { id: 'settings', label: 'Settings',            icon: '⚙️'  },
-  { id: 'support',  label: 'Support',            icon: '🎧' },
+  { id: 'support',  label: 'Support',             icon: '🎧' },
 ];
 
 const PAGE_TITLES = {
-  signals:  { title: 'Rate & Review',       sub: 'Company intelligence & outreach triggers' },
-  pipeline: { title: 'Prospects',           sub: 'Active prospects & touch cadence' },
-  deals:    { title: 'Pipeline',            sub: 'CRM pipeline, activities & revenue tracking' },
-  support:  { title: 'Support',             sub: 'Case management & client communication' },
-  projects: { title: 'Projects',            sub: 'Timelines, milestones & deliverables' },
-  discover: { title: 'Find New Companies',  sub: 'Find new companies to add to your watch list' },
+  clients:  { title: 'Clients',              sub: 'Active and archived client history, contacts & AI insights' },
+  signals:  { title: 'Rate & Review',        sub: 'Company intelligence & outreach triggers' },
+  pipeline: { title: 'Active Outreach',      sub: 'Active prospects & touch cadence' },
+  deals:    { title: 'Pipeline',             sub: 'CRM pipeline, activities & revenue tracking' },
+  support:  { title: 'Support',              sub: 'Case management & client communication' },
+  projects: { title: 'Projects',             sub: 'Timelines, milestones & deliverables' },
+  discover: { title: 'Find New Companies',   sub: 'Find new companies to add to your watch list' },
   report:   { title: 'Weekly Outreach',      sub: 'AI briefing & draft outreach' },
-  chat:     { title: 'Little Stevie',       sub: 'Ask anything about your pipeline' },
+  chat:     { title: 'Little Stevie',        sub: 'Ask anything about your pipeline' },
   settings: { title: 'Settings',             sub: 'ICP, team, billing rates & notifications' },
 };
 
@@ -106,6 +110,9 @@ export default function App() {
             <p className="app-page-sub">{pt.sub}</p>
           </button>
         </div>
+        <PageSlot active={page === 'clients'}>
+          <ClientsPage onNavigate={handleSetPage} refreshKey={pageKeys.clients || 0} />
+        </PageSlot>
         <PageSlot active={page === 'signals'}>
           <SignalWatchPage onNavigate={handleSetPage} icp={icp} refreshKey={pageKeys.signals || 0} />
         </PageSlot>
