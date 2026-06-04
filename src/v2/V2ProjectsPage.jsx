@@ -1,10 +1,12 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
     fetchProjects,
     fetchMilestones,
     fetchProjectTasks,
     fmtDate,
 } from './safe-data.js';
+import V2Modal from './V2Modal.jsx';
+import ProjectForm from './forms/ProjectForm.jsx';
 
 /* ============================================
    V2 PROJECTS PAGE
@@ -82,48 +84,42 @@ export default function V2ProjectsPage({ onSelect }) {
     const [filter, setFilter] = useState('all');
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
+    const [showNewModal, setShowNewModal] = useState(false);
 
-    useEffect(() => {
-        let cancelled = false;
-        (async () => {
-            try {
-                setLoading(true);
-                setError(null);
-                const list = await fetchProjects();
-                if (cancelled) return;
-                setProjects(list);
+    const load = useCallback(async () => {
+        try {
+            setLoading(true);
+            setError(null);
+            const list = await fetchProjects();
+            setProjects(list);
 
-                // Pull milestones + tasks for each project in parallel.
-                // Failures on individual projects shouldn't take down the page.
-                const metaEntries = await Promise.all(
-                    list.map(async (p) => {
-                        try {
-                            const [milestones, tasks] = await Promise.all([
-                                fetchMilestones(p.id),
-                                fetchProjectTasks(p.id),
-                            ]);
-                            const next = pickNextMilestone(milestones);
-                            const total = tasks.length;
-                            const done = tasks.filter((t) => t.completed).length;
-                            const progress = total ? Math.round((done / total) * 100) : 0;
-                            return [p.id, { next, progress, total, done }];
-                        } catch (err) {
-                            console.warn('Failed to load meta for project', p.id, err);
-                            return [p.id, null];
-                        }
-                    })
-                );
-                if (cancelled) return;
-                setRowsMeta(Object.fromEntries(metaEntries));
-            } catch (err) {
-                if (cancelled) return;
-                setError(err.message || 'Failed to load projects');
-            } finally {
-                if (!cancelled) setLoading(false);
-            }
-        })();
-        return () => { cancelled = true; };
+            const metaEntries = await Promise.all(
+                list.map(async (p) => {
+                    try {
+                        const [milestones, tasks] = await Promise.all([
+                            fetchMilestones(p.id),
+                            fetchProjectTasks(p.id),
+                        ]);
+                        const next = pickNextMilestone(milestones);
+                        const total = tasks.length;
+                        const done = tasks.filter((t) => t.completed).length;
+                        const progress = total ? Math.round((done / total) * 100) : 0;
+                        return [p.id, { next, progress, total, done }];
+                    } catch (err) {
+                        console.warn('Failed to load meta for project', p.id, err);
+                        return [p.id, null];
+                    }
+                })
+            );
+            setRowsMeta(Object.fromEntries(metaEntries));
+        } catch (err) {
+            setError(err.message || 'Failed to load projects');
+        } finally {
+            setLoading(false);
+        }
     }, []);
+
+    useEffect(() => { load(); }, [load]);
 
     const visible = useMemo(() => {
         if (filter === 'all') return projects;
@@ -167,7 +163,29 @@ export default function V2ProjectsPage({ onSelect }) {
                             : `${stats.active} active · ${stats.dueSoon} due this week${stats.atRisk ? ` · ${stats.atRisk} at risk` : ''}`}
                     </p>
                 </div>
+                <div className="v2-page-header__actions">
+                    <button
+                        type="button"
+                        className="v2-btn v2-btn--primary"
+                        onClick={() => setShowNewModal(true)}
+                    >
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+                        New project
+                    </button>
+                </div>
             </div>
+
+            <V2Modal
+                open={showNewModal}
+                onClose={() => setShowNewModal(false)}
+                eyebrow="new engagement"
+                title="Create a project"
+            >
+                <ProjectForm
+                    onSaved={() => { setShowNewModal(false); load(); }}
+                    onCancel={() => setShowNewModal(false)}
+                />
+            </V2Modal>
 
             {error && <div className="v2-error">Couldn't load projects: {error}</div>}
 

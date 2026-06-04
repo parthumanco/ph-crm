@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
     fetchProjects,
     fetchMilestones,
@@ -6,6 +6,17 @@ import {
     fetchProjectFiles,
     fmtDate,
 } from './safe-data.js';
+import {
+    archiveProject,
+    archiveMilestone,
+    deleteProjectTask,
+    toggleTask,
+} from './write-data.js';
+import V2Modal from './V2Modal.jsx';
+import V2Confirm from './V2Confirm.jsx';
+import ProjectForm from './forms/ProjectForm.jsx';
+import MilestoneForm from './forms/MilestoneForm.jsx';
+import TaskForm from './forms/TaskForm.jsx';
 
 /* ============================================
    V2 PROJECT DETAIL
@@ -59,56 +70,115 @@ export default function V2ProjectPage({ projectId, onBack }) {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
 
-    useEffect(() => {
-        let cancelled = false;
-        (async () => {
-            try {
-                setLoading(true);
-                setError(null);
-                const projects = await fetchProjects();
-                if (cancelled) return;
-                const target = projectId
-                    ? projects.find((p) => p.id === projectId)
-                    : projects[0];
-                if (!target) {
-                    setError('Project not found');
-                    return;
-                }
-                setProject(target);
+    // Modal state
+    const [showEditProject, setShowEditProject] = useState(false);
+    const [showArchiveProject, setShowArchiveProject] = useState(false);
+    const [milestoneModal, setMilestoneModal] = useState(null); // null | { mode: 'new' | 'edit', target?: ms }
+    const [archiveMs, setArchiveMs]           = useState(null); // null | milestone
+    const [taskModal, setTaskModal]           = useState(null); // null | { mode, milestoneId, target? }
+    const [archiveTask, setArchiveTask]       = useState(null); // null | task
+    const [working, setWorking] = useState(false);
 
-                const [ms, fs] = await Promise.all([
-                    fetchMilestones(target.id),
-                    fetchProjectFiles(target.id).catch(() => []),
-                ]);
-                if (cancelled) return;
-                setMilestones(ms);
-                setFiles(fs);
-
-                // Tasks per milestone, parallel
-                const tasksEntries = await Promise.all(
-                    ms.map(async (m) => {
-                        try {
-                            const t = await fetchProjectTasks(target.id);
-                            return [m.id, t.filter((tk) => tk.milestone_id === m.id)];
-                        } catch {
-                            return [m.id, []];
-                        }
-                    })
-                );
-                if (cancelled) return;
-                setTasksByMs(Object.fromEntries(tasksEntries));
-
-                // Auto-expand the current in-progress milestone
-                const current = ms.find((m) => m.status === 'in_progress');
-                if (current) setExpandedMs(current.id);
-            } catch (err) {
-                if (!cancelled) setError(err.message || 'Failed to load project');
-            } finally {
-                if (!cancelled) setLoading(false);
+    const load = useCallback(async () => {
+        try {
+            setLoading(true);
+            setError(null);
+            const projects = await fetchProjects();
+            const target = projectId
+                ? projects.find((p) => p.id === projectId)
+                : projects[0];
+            if (!target) {
+                setError('Project not found');
+                return;
             }
-        })();
-        return () => { cancelled = true; };
+            setProject(target);
+
+            const [ms, fs, allTasks] = await Promise.all([
+                fetchMilestones(target.id),
+                fetchProjectFiles(target.id).catch(() => []),
+                fetchProjectTasks(target.id).catch(() => []),
+            ]);
+            setMilestones(ms);
+            setFiles(fs);
+
+            // Bucket tasks by milestone in one pass (was N parallel fetches before — wasteful)
+            const byMs = Object.fromEntries(ms.map((m) => [m.id, []]));
+            for (const t of allTasks) {
+                if (byMs[t.milestone_id]) byMs[t.milestone_id].push(t);
+            }
+            setTasksByMs(byMs);
+
+            // Auto-expand the in-progress milestone on first load
+            const current = ms.find((m) => m.status === 'in_progress');
+            if (current && expandedMs === null) setExpandedMs(current.id);
+        } catch (err) {
+            setError(err.message || 'Failed to load project');
+        } finally {
+            setLoading(false);
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [projectId]);
+
+    useEffect(() => { load(); }, [load]);
+
+    const handleArchiveProject = async () => {
+        setWorking(true);
+        try {
+            await archiveProject(project.id);
+            setShowArchiveProject(false);
+            onBack?.();
+        } catch (err) {
+            setError(err.message || 'Couldn\'t archive project');
+        } finally {
+            setWorking(false);
+        }
+    };
+
+    const handleArchiveMilestone = async () => {
+        if (!archiveMs) return;
+        setWorking(true);
+        try {
+            await archiveMilestone(archiveMs.id);
+            setArchiveMs(null);
+            await load();
+        } catch (err) {
+            setError(err.message || 'Couldn\'t archive milestone');
+        } finally {
+            setWorking(false);
+        }
+    };
+
+    const handleDeleteTask = async () => {
+        if (!archiveTask) return;
+        setWorking(true);
+        try {
+            await deleteProjectTask(archiveTask.id);
+            setArchiveTask(null);
+            await load();
+        } catch (err) {
+            setError(err.message || 'Couldn\'t delete task');
+        } finally {
+            setWorking(false);
+        }
+    };
+
+    const handleToggleTask = async (task) => {
+        // Optimistic local toggle so the checkbox feels instant; reverts on failure.
+        const prev = task.completed;
+        const next = !prev;
+        setTasksByMs((s) => ({
+            ...s,
+            [task.milestone_id]: (s[task.milestone_id] || []).map((t) => t.id === task.id ? { ...t, completed: next } : t),
+        }));
+        try {
+            await toggleTask(task.id, next);
+        } catch {
+            setTasksByMs((s) => ({
+                ...s,
+                [task.milestone_id]: (s[task.milestone_id] || []).map((t) => t.id === task.id ? { ...t, completed: prev } : t),
+            }));
+        }
+    };
 
     const stats = useMemo(() => {
         if (!milestones.length) return { progress: 0, total: 0, done: 0, daysLeft: null };
@@ -179,6 +249,13 @@ export default function V2ProjectPage({ projectId, onBack }) {
                     </div>
                     <div className="v2-project-actions">
                         <button type="button" className="v2-btn" onClick={onBack}>← All projects</button>
+                        <button type="button" className="v2-btn" onClick={() => setShowEditProject(true)}>
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H5a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h13a2 2 0 0 0 2-2v-6"/><path d="M19 3l3 3-9 9H10v-3z"/></svg>
+                            Edit
+                        </button>
+                        <button type="button" className="v2-btn v2-btn--danger-outline" onClick={() => setShowArchiveProject(true)}>
+                            Archive
+                        </button>
                     </div>
                 </div>
 
@@ -231,6 +308,16 @@ export default function V2ProjectPage({ projectId, onBack }) {
                             )}
                         </h2>
                     </div>
+                    <div className="v2-section__actions">
+                        <button
+                            type="button"
+                            className="v2-btn"
+                            onClick={() => setMilestoneModal({ mode: 'new' })}
+                        >
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+                            Add milestone
+                        </button>
+                    </div>
                 </div>
                 <div className="v2-section__card">
                     <div className="v2-milestone-list">
@@ -279,21 +366,68 @@ export default function V2ProjectPage({ projectId, onBack }) {
                                     </button>
                                     {expanded && (
                                         <div className="v2-milestone-row__body">
+                                            <div className="v2-milestone-row__body-actions">
+                                                <button
+                                                    type="button"
+                                                    className="v2-btn-link"
+                                                    onClick={() => setMilestoneModal({ mode: 'edit', target: m })}
+                                                >
+                                                    Edit phase
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    className="v2-btn-link v2-btn-link--danger"
+                                                    onClick={() => setArchiveMs(m)}
+                                                >
+                                                    Archive phase
+                                                </button>
+                                            </div>
                                             {tasks.length === 0 ? (
                                                 <div className="v2-empty" style={{ padding: '14px 8px' }}>
-                                                    No tasks on this milestone.
+                                                    No tasks on this milestone yet.
                                                 </div>
                                             ) : tasks.map((t) => (
                                                 <div key={t.id} className={`v2-task ${t.completed ? 'v2-task--done' : ''}`}>
-                                                    <span className="v2-task__checkbox">
+                                                    <button
+                                                        type="button"
+                                                        className="v2-task__checkbox"
+                                                        onClick={() => handleToggleTask(t)}
+                                                        aria-label={t.completed ? 'Mark incomplete' : 'Mark complete'}
+                                                    >
                                                         {t.completed && (
                                                             <svg viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
                                                         )}
-                                                    </span>
+                                                    </button>
                                                     <span className="v2-task__title">{t.title}</span>
-                                                    {t.due_date && <span className="v2-task__due">{fmtDate(t.due_date)}</span>}
+                                                    <span className="v2-task__row-actions">
+                                                        {t.due_date && <span className="v2-task__due">{fmtDate(t.due_date)}</span>}
+                                                        <button
+                                                            type="button"
+                                                            className="v2-task__action"
+                                                            onClick={() => setTaskModal({ mode: 'edit', milestoneId: m.id, target: t })}
+                                                            aria-label="Edit task"
+                                                        >
+                                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H5a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h13a2 2 0 0 0 2-2v-6"/><path d="M19 3l3 3-9 9H10v-3z"/></svg>
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            className="v2-task__action v2-task__action--danger"
+                                                            onClick={() => setArchiveTask(t)}
+                                                            aria-label="Delete task"
+                                                        >
+                                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M6 6l1 14a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-14"/></svg>
+                                                        </button>
+                                                    </span>
                                                 </div>
                                             ))}
+                                            <button
+                                                type="button"
+                                                className="v2-add-task"
+                                                onClick={() => setTaskModal({ mode: 'new', milestoneId: m.id })}
+                                            >
+                                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+                                                Add task
+                                            </button>
                                         </div>
                                     )}
                                 </div>
@@ -330,6 +464,92 @@ export default function V2ProjectPage({ projectId, onBack }) {
                     </div>
                 </div>
             )}
+
+            {/* ─── Mutation modals ─── */}
+            <V2Modal
+                open={showEditProject}
+                onClose={() => setShowEditProject(false)}
+                eyebrow="edit engagement"
+                title={project.name}
+            >
+                <ProjectForm
+                    initial={project}
+                    onSaved={() => { setShowEditProject(false); load(); }}
+                    onCancel={() => setShowEditProject(false)}
+                />
+            </V2Modal>
+
+            <V2Confirm
+                open={showArchiveProject}
+                onClose={() => setShowArchiveProject(false)}
+                onConfirm={handleArchiveProject}
+                eyebrow="careful"
+                title="Archive this project?"
+                description={`${project.name} will be hidden from this list. You can restore it from archived projects later.`}
+                confirmLabel="Archive project"
+                confirmTone="danger"
+                loading={working}
+            />
+
+            <V2Modal
+                open={milestoneModal !== null}
+                onClose={() => setMilestoneModal(null)}
+                eyebrow={milestoneModal?.mode === 'edit' ? 'edit phase' : 'new phase'}
+                title={milestoneModal?.mode === 'edit' ? milestoneModal.target.name : 'Add a milestone'}
+            >
+                {milestoneModal && (
+                    <MilestoneForm
+                        projectId={project.id}
+                        initial={milestoneModal.mode === 'edit' ? milestoneModal.target : null}
+                        nextOrder={milestones.length + 1}
+                        onSaved={() => { setMilestoneModal(null); load(); }}
+                        onCancel={() => setMilestoneModal(null)}
+                    />
+                )}
+            </V2Modal>
+
+            <V2Confirm
+                open={archiveMs !== null}
+                onClose={() => setArchiveMs(null)}
+                onConfirm={handleArchiveMilestone}
+                eyebrow="careful"
+                title="Archive this milestone?"
+                description={archiveMs ? `${archiveMs.name} and its tasks will be hidden.` : null}
+                confirmLabel="Archive phase"
+                confirmTone="danger"
+                loading={working}
+            />
+
+            <V2Modal
+                open={taskModal !== null}
+                onClose={() => setTaskModal(null)}
+                eyebrow={taskModal?.mode === 'edit' ? 'edit task' : 'new task'}
+                title={taskModal?.mode === 'edit' ? taskModal.target.title : 'Add a task'}
+                size="sm"
+            >
+                {taskModal && (
+                    <TaskForm
+                        projectId={project.id}
+                        milestoneId={taskModal.milestoneId}
+                        initial={taskModal.mode === 'edit' ? taskModal.target : null}
+                        nextOrder={(tasksByMs[taskModal.milestoneId] || []).length + 1}
+                        onSaved={() => { setTaskModal(null); load(); }}
+                        onCancel={() => setTaskModal(null)}
+                    />
+                )}
+            </V2Modal>
+
+            <V2Confirm
+                open={archiveTask !== null}
+                onClose={() => setArchiveTask(null)}
+                onConfirm={handleDeleteTask}
+                eyebrow="careful"
+                title="Delete this task?"
+                description={archiveTask ? archiveTask.title : null}
+                confirmLabel="Delete task"
+                confirmTone="danger"
+                loading={working}
+            />
         </>
     );
 }
