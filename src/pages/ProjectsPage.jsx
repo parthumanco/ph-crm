@@ -193,9 +193,9 @@ function GanttChart({ milestones, projectStart, projectEnd, onMilestoneClick }) 
     <div style={{ overflowX: 'auto' }}>
       <div style={{ minWidth: 560, position: 'relative' }}>
         {/* Month labels */}
-        <div style={{ display: 'flex', marginBottom: 6 }}>
+        <div style={{ display: 'flex', marginBottom: 4 }}>
           <div style={{ width: LABEL_W, flexShrink: 0 }} />
-          <div style={{ flex: 1, position: 'relative', height: 18 }}>
+          <div style={{ flex: 1, position: 'relative', height: 16 }}>
             {months.map((m, i) => (
               <span key={i} style={{
                 position: 'absolute', left: `${m.pct}%`,
@@ -235,7 +235,7 @@ function GanttChart({ milestones, projectStart, projectEnd, onMilestoneClick }) 
                 key={m.id}
                 onClick={() => onMilestoneClick?.(m.id)}
                 style={{
-                  display: 'flex', alignItems: 'center', marginBottom: 8, height: 30,
+                  display: 'flex', alignItems: 'center', marginBottom: 4, height: 22,
                   cursor: clickable ? 'pointer' : 'default',
                   borderRadius: 4,
                   transition: 'background .12s',
@@ -247,7 +247,7 @@ function GanttChart({ milestones, projectStart, projectEnd, onMilestoneClick }) 
                 {/* Label */}
                 <div style={{
                   width: LABEL_W, flexShrink: 0, paddingRight: 12,
-                  fontSize: 12, fontWeight: 600, color: 'var(--text-muted)',
+                  fontSize: 11, fontWeight: 600, color: 'var(--text-muted)',
                   overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                 }}>{m.title}</div>
 
