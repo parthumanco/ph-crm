@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { fetchProjectByToken, approveMilestone, approveTask, rejectTask, fetchMilestones, fetchProjectTasks, fetchProjectFiles } from '../lib/projects';
 
 const ACCENT = '#E8541E';
@@ -675,6 +675,16 @@ export default function ClientPortalPage({ token }) {
     load();
   }, [token]);
 
+  const handleToggleMilestone = useCallback((e, msId) => {
+    const el = e.currentTarget;
+    const prevTop = el.getBoundingClientRect().top;
+    setExpanded(prev => ({ ...prev, [msId]: !prev[msId] }));
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      const delta = el.getBoundingClientRect().top - prevTop;
+      if (delta !== 0) window.scrollBy({ top: delta, behavior: 'instant' });
+    }));
+  }, []);
+
   const openApproveModal = (target) => {
     setApproveName('');
     setApproveModal(target);
@@ -914,7 +924,7 @@ export default function ClientPortalPage({ token }) {
                   }}>
                     {/* Milestone header */}
                     <div
-                      onClick={() => setExpanded(e => ({ ...e, [ms.id]: !e[ms.id] }))}
+                      onClick={e => handleToggleMilestone(e, ms.id)}
                       style={{
                         display: 'grid', gridTemplateColumns: '4px 1fr auto', gap: 0,
                         alignItems: 'stretch', cursor: 'pointer',
@@ -992,16 +1002,11 @@ export default function ClientPortalPage({ token }) {
                                   whiteSpace: 'nowrap',
                                 }}>✓ Approved</span>
                               ) : task.rejected_at ? (
-                                <button
-                                  onClick={e => { e.stopPropagation(); setExpandedRejections(s => { const n = new Set(s); n.has(task.id) ? n.delete(task.id) : n.add(task.id); return n; }); }}
-                                  style={{
-                                    background: '#fef2f2', border: '1px solid #fca5a5',
-                                    color: '#ef4444', cursor: 'pointer',
-                                    fontSize: 11, fontWeight: 700, padding: '2px 8px',
-                                    borderRadius: 4, flexShrink: 0, whiteSpace: 'nowrap',
-                                    fontFamily: 'Inter, sans-serif',
-                                  }}
-                                >⚠ Changes Requested {expandedRejections.has(task.id) ? '▲' : '▼'}</button>
+                                <span style={{
+                                  background: '#fef2f2', border: '1px solid #fca5a5',
+                                  color: '#ef4444', fontSize: 11, fontWeight: 700, padding: '2px 8px',
+                                  borderRadius: 4, flexShrink: 0, whiteSpace: 'nowrap',
+                                }}>Changes Requested</span>
                               ) : (
                                 <div style={{ display: 'flex', gap: 5, flexShrink: 0 }}>
                                   <button
@@ -1041,66 +1046,71 @@ export default function ClientPortalPage({ token }) {
                               >📄 proposal</button>
                             )}
                             </div>{/* end flex row */}
-                            {/* ── Chain of custody (read-only on portal) ── */}
+                            {/* ── Chain of custody (read-only on portal) — always visible ── */}
                             {(() => {
                               const chain = task.review_chain || [];
-                              const hasApproval = task.approved_at;
-                              if (chain.length === 0 && !hasApproval) return null;
-
-                              const isExpanded  = expandedChains.has(task.id);
-                              const toggleChain = () => setExpandedChains(s => { const n = new Set(s); n.has(task.id) ? n.delete(task.id) : n.add(task.id); return n; });
+                              if (chain.length === 0) return null;
 
                               let rn = 0;
                               const displayChain = chain.map(ev => ev.type === 'revised_sent' ? { ...ev, revNum: ++rn } : ev);
 
-                              const eventLabel = ev => {
-                                if (ev.type === 'sent')         return { icon: '📤', text: 'Sent for review',            color: '#9ca3af' };
-                                if (ev.type === 'rejected')     return { icon: '⚠',  text: `Changes requested by ${ev.by}`, color: '#ef4444' };
-                                if (ev.type === 'revised_sent') return { icon: '📤', text: `Revision ${ev.revNum} sent`,  color: '#9ca3af' };
-                                if (ev.type === 'approved')     return { icon: '✓',  text: `Approved by ${ev.by}`,        color: '#10b981' };
-                                return { icon: '·', text: ev.type, color: '#9ca3af' };
+                              const pillFor = ev => {
+                                if (ev.type === 'sent')         return { label: 'Sent for review',                  color: '#6b7280', bg: '#f3f4f6' };
+                                if (ev.type === 'rejected')     return { label: `Not approved · ${ev.by || ''}`,    color: '#ef4444', bg: '#fef2f2' };
+                                if (ev.type === 'revised_sent') return { label: `Rev ${ev.revNum} sent`,             color: '#3b82f6', bg: '#eff6ff' };
+                                if (ev.type === 'approved')     return { label: `Approved · ${ev.by || ''}`,         color: '#10b981', bg: '#f0fdf4' };
+                                return { label: ev.type, color: '#9ca3af', bg: '#f9fafb' };
                               };
 
+                              const lastRejection = task.rejected_at
+                                ? [...displayChain].reverse().find(e => e.type === 'rejected')
+                                : null;
+
+                              const lastEv = displayChain[displayChain.length - 1];
+                              const awaitingResponse = lastEv?.type === 'revised_sent' && lastEv.response;
+
                               return (
-                                <div style={{ margin: '6px 0 2px 28px', display: 'flex', flexDirection: 'column', gap: 4 }}>
-                                  {hasApproval && chain.length === 0 && (
-                                    <div style={{ fontSize: 11, color: '#10b981', fontWeight: 600 }}>
-                                      ✓ Approved by {task.approved_by} on {fmtDate(task.approved_at)}
+                                <div style={{ margin: '6px 0 4px 28px' }}>
+                                  {/* Stacked pill chain — always visible */}
+                                  <div style={{ display: 'flex', flexDirection: 'column' }}>
+                                    {displayChain.map((ev, i) => {
+                                      const p = pillFor(ev);
+                                      const isLast = i === displayChain.length - 1;
+                                      return (
+                                        <div key={i} style={{ display: 'flex', alignItems: 'stretch' }}>
+                                          {/* Vertical spine + dot */}
+                                          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: 12, flexShrink: 0, marginRight: 8 }}>
+                                            {i > 0 && <div style={{ width: 1.5, height: 5, background: '#d1d5db', flexShrink: 0 }} />}
+                                            <div style={{ width: 7, height: 7, borderRadius: '50%', background: p.color, flexShrink: 0, border: `2px solid ${p.color}40`, marginTop: i === 0 ? 4 : 0 }} />
+                                            {!isLast && <div style={{ width: 1.5, flex: 1, background: '#d1d5db', minHeight: 6 }} />}
+                                          </div>
+                                          {/* Pill + timestamp */}
+                                          <div style={{ display: 'flex', alignItems: 'center', gap: 7, paddingBottom: isLast ? 0 : 5 }}>
+                                            <div style={{
+                                              padding: '2px 10px', borderRadius: 20, fontSize: 10, fontWeight: 700,
+                                              color: p.color, background: p.bg, border: `1px solid ${p.color}28`,
+                                              whiteSpace: 'nowrap', lineHeight: 1.5,
+                                              fontFamily: 'Inter, sans-serif',
+                                            }}>{p.label}</div>
+                                            {ev.at && <span style={{ fontSize: 10, color: '#9ca3af', whiteSpace: 'nowrap', fontFamily: 'Inter, sans-serif' }}>{fmtDate(ev.at)}</span>}
+                                          </div>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+
+                                  {/* Most recent rejection notes */}
+                                  {lastRejection?.notes && (
+                                    <div style={{ margin: '6px 0 4px 20px', padding: '6px 10px', background: '#fef2f2', borderRadius: 5, fontSize: 11, color: '#374151', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>
+                                      {lastRejection.notes}
                                     </div>
                                   )}
-                                  {chain.length > 0 && (
-                                    <>
-                                      <button
-                                        onClick={toggleChain}
-                                        style={{ alignSelf: 'flex-start', fontSize: 11, fontWeight: 600, color: '#9ca3af', background: 'none', border: 'none', padding: 0, cursor: 'pointer', textDecoration: 'underline', textUnderlineOffset: 2, fontFamily: 'Inter, sans-serif' }}
-                                      >{isExpanded ? '▲ Hide' : '▼ Show'} review history ({chain.length})</button>
-                                      {isExpanded && (
-                                        <div style={{ borderLeft: '2px solid #e5e7eb', paddingLeft: 12, display: 'flex', flexDirection: 'column', gap: 8, marginTop: 4 }}>
-                                          {displayChain.map((ev, i) => {
-                                            const lbl = eventLabel(ev);
-                                            return (
-                                              <div key={i} style={{ fontSize: 12 }}>
-                                                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                                                  <span style={{ color: lbl.color, fontWeight: 700 }}>{lbl.icon}</span>
-                                                  <span style={{ color: lbl.color, fontWeight: ev.type === 'rejected' ? 700 : 500 }}>{lbl.text}</span>
-                                                  <span style={{ color: '#d1d5db', fontSize: 11 }}>· {fmtDate(ev.at)}</span>
-                                                </div>
-                                                {ev.type === 'rejected' && ev.notes && (
-                                                  <div style={{ marginTop: 4, marginLeft: 18, padding: '5px 9px', background: '#fef2f2', borderRadius: 5, fontSize: 11, color: '#374151', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>
-                                                    {ev.notes}
-                                                  </div>
-                                                )}
-                                                {ev.type === 'revised_sent' && ev.response && (
-                                                  <div style={{ marginTop: 4, marginLeft: 18, padding: '5px 9px', background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: 5, fontSize: 11, color: '#6b7280', lineHeight: 1.6, whiteSpace: 'pre-wrap', fontStyle: 'italic' }}>
-                                                    "{ev.response}"
-                                                  </div>
-                                                )}
-                                              </div>
-                                            );
-                                          })}
-                                        </div>
-                                      )}
-                                    </>
+
+                                  {/* Latest revision response */}
+                                  {awaitingResponse && (
+                                    <div style={{ margin: '4px 0 0 20px', padding: '6px 10px', background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: 5, fontSize: 11, color: '#6b7280', lineHeight: 1.6, whiteSpace: 'pre-wrap', fontStyle: 'italic', fontFamily: 'Inter, sans-serif' }}>
+                                      "{lastEv.response}"
+                                    </div>
                                   )}
                                 </div>
                               );

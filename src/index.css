@@ -755,3 +755,8 @@ label {
 }
 
 .char-grip        { animation: char-grip 0.65s ease-in-out infinite; }
+
+/* ── Task row action buttons — dim at rest, bright on row hover ─────────────── */
+.task-actions { opacity: 0.28; transition: opacity .15s; }
+.task-row:hover .task-actions { opacity: 1; }
+.task-actions button:hover { background: var(--surface-2) !important; color: var(--text) !important; }

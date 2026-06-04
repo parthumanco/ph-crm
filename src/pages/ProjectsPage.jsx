@@ -854,6 +854,20 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
 
   // ── Task edits ────────────────────────────────────────────────────────────
 
+  // ── Scroll-stable milestone toggle ───────────────────────────────────────
+  // Capture the clicked header's viewport position before the state flip, then
+  // after React commits + the browser paints, scroll back by the difference so
+  // the header stays exactly where the user clicked it.
+  const handleToggleMilestone = useCallback((e, msId) => {
+    const el = e.currentTarget;
+    const prevTop = el.getBoundingClientRect().top;
+    setExpanded(prev => ({ ...prev, [msId]: !prev[msId] }));
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      const delta = el.getBoundingClientRect().top - prevTop;
+      if (delta !== 0) window.scrollBy({ top: delta, behavior: 'instant' });
+    }));
+  }, []);
+
   // Auto-update milestone status based on task completion:
   //   any rejected (open change request) → in_progress
   //   0 done       → not_started
@@ -2043,7 +2057,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                   {/* Milestone header */}
                   <div
                     style={{ display: 'grid', gridTemplateColumns: '32px 1fr auto', gap: 0, alignItems: 'stretch', cursor: 'pointer', borderBottom: isOpen ? '1px solid var(--border-light)' : 'none' }}
-                    onClick={() => setExpanded(e => ({ ...e, [ms.id]: !e[ms.id] }))}
+                    onClick={e => handleToggleMilestone(e, ms.id)}
                   >
                     {/* Color strip */}
                     <div style={{ background: color, opacity: 0.8 }} />
@@ -2104,15 +2118,8 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                         </div>
                       )}
 
-                      {/* Row 2 – Assigned to · Start · Due */}
+                      {/* Row 2 – Start · Due */}
                       <div style={{ display: 'flex', gap: 16, padding: '10px 16px 10px 48px', borderBottom: '1px solid var(--border-light)', background: 'var(--bg)', alignItems: 'flex-end', flexWrap: 'wrap' }}>
-                        <div>
-                          <Lbl>Assigned to</Lbl>
-                          <select value={ms.assigned_to || ''} onChange={e => { const u = { ...ms, assigned_to: e.target.value }; setMilestones(p => p.map(m => m.id === ms.id ? u : m)); upsertMilestone(u); }} style={{ fontSize: 12, padding: '3px 8px', width: 'auto' }}>
-                            <option value="">Unassigned</option>
-                            {owners.map(o => <option key={o} value={o}>{o}</option>)}
-                          </select>
-                        </div>
                         <div>
                           <Lbl>Start</Lbl>
                           <input type="date" value={ms.start_date || ''} onChange={e => { const u = { ...ms, start_date: e.target.value }; setMilestones(p => p.map(m => m.id === ms.id ? u : m)); upsertMilestone(u); }} style={{ fontSize: 12, padding: '3px 8px', width: 'auto' }} />
@@ -2125,8 +2132,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
 
                       {/* Row 3 – Status buttons */}
                       <div style={{ display: 'flex', gap: 6, padding: '8px 16px 8px 48px', borderBottom: '1px solid var(--border-light)', background: 'var(--bg)', alignItems: 'center', flexWrap: 'wrap' }}>
-                        <Lbl>Status</Lbl>
-                        {MILESTONE_STATUSES.map(s => {
+                        {MILESTONE_STATUSES.filter(s => s.id !== 'blocked').map(s => {
                           const active = ms.status === s.id;
                           return (
                             <button
@@ -2171,6 +2177,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                         return (
                           <div
                             key={task.id}
+                            className="task-row"
                             onDragOver={e => { e.preventDefault(); e.stopPropagation(); setDragOverTask(task.id); }}
                             onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget)) setDragOverTask(null); }}
                             onDrop={e => handleDropOnTask(e, task)}
@@ -2296,8 +2303,8 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                                             {isUnsent && hasPortalEmail && (
                                               <button
                                                 onClick={() => { setExtraRecipients([]); setShowContactDropdown(false); setTaskCompleteEmail({ task, project: activeProject }); }}
-                                                style={{ fontSize: 10, fontWeight: 700, padding: '1px 8px', borderRadius: 4, border: '1px solid var(--accent)', background: 'transparent', color: 'var(--accent)', cursor: 'pointer', whiteSpace: 'nowrap' }}
-                                              >📤 Notify client</button>
+                                                style={{ fontSize: 10, fontWeight: 800, padding: '2px 10px', borderRadius: 20, border: 'none', background: '#ef4444', color: '#fff', cursor: 'pointer', whiteSpace: 'nowrap', letterSpacing: '.02em' }}
+                                              >Notify client</button>
                                             )}
                                           </>
                                         )}
@@ -2305,72 +2312,76 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                                     );
                                   })()}
                                 </div>
-                                {(task.assigned_to || (task.estimated_hours != null && task.estimated_hours !== '')) && (
-                                  <span style={{ fontSize: 11, fontWeight: 600, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 4, padding: '2px 7px', flexShrink: 0, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
-                                    {[task.assigned_to, task.estimated_hours != null && task.estimated_hours !== '' ? `${task.estimated_hours}h` : null].filter(Boolean).join(' · ')}
-                                  </span>
-                                )}
+                                {/* Inline assign + hours */}
+                                <select
+                                  value={task.assigned_to || ''}
+                                  onChange={async e => {
+                                    const updated = { ...task, assigned_to: e.target.value };
+                                    await upsertProjectTask(updated);
+                                    const patch = t => t.id === task.id ? updated : t;
+                                    setTasks(prev => prev.map(patch));
+                                    setAllTasks(prev => ({ ...prev, [activeProject.id]: (prev[activeProject.id] || []).map(patch) }));
+                                  }}
+                                  style={{ fontSize: 11, padding: '2px 4px', border: '1px solid var(--border)', borderRadius: 4, background: 'var(--surface)', color: task.assigned_to ? 'var(--text)' : 'var(--text-faint)', flexShrink: 0, maxWidth: 110 }}
+                                >
+                                  <option value="">Unassigned</option>
+                                  {owners.map(o => <option key={o} value={o}>{o}</option>)}
+                                </select>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  step="0.5"
+                                  value={task.estimated_hours ?? ''}
+                                  placeholder="hrs"
+                                  onChange={e => {
+                                    // Update state immediately so forecast reflects change while typing
+                                    const hrs = e.target.value === '' ? null : parseFloat(e.target.value);
+                                    const patch = t => t.id === task.id ? { ...t, estimated_hours: hrs } : t;
+                                    setTasks(prev => prev.map(patch));
+                                    setAllTasks(prev => ({ ...prev, [activeProject.id]: (prev[activeProject.id] || []).map(patch) }));
+                                  }}
+                                  onBlur={async e => {
+                                    // Persist to DB only when done typing
+                                    const hrs = e.target.value === '' ? null : parseFloat(e.target.value);
+                                    await upsertProjectTask({ ...task, estimated_hours: hrs });
+                                  }}
+                                  style={{ fontSize: 11, padding: '2px 5px', border: '1px solid var(--border)', borderRadius: 4, background: 'var(--surface)', width: 52, flexShrink: 0, color: 'var(--text)' }}
+                                />
                                 {task.due_date && (
                                   <span style={{ fontSize: 11, color: 'var(--text-faint)', whiteSpace: 'nowrap', flexShrink: 0 }}>{fmtDate(task.due_date)}</span>
                                 )}
-                                {/* Edit task */}
-                                <button
-                                  onClick={() => startEditTask(task)}
-                                  title="Edit task"
-                                  style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 13, padding: '2px 4px', flexShrink: 0 }}
-                                >✏️</button>
-                                {/* See in proposal */}
-                                {(activeProject.proposal_text || activeProject.proposal_pdf_url) && (
-                                  <button
-                                    onClick={() => setProposalPanel({ task })}
-                                    title="See in proposal"
-                                    style={{
-                                      background: 'none', border: '1px solid var(--border)',
-                                      color: 'var(--text-faint)', cursor: 'pointer',
-                                      fontSize: 10, fontWeight: 700, padding: '2px 7px',
-                                      borderRadius: 4, flexShrink: 0, whiteSpace: 'nowrap',
-                                      letterSpacing: '.02em',
-                                    }}
-                                  >📄 proposal</button>
-                                )}
-                                {/* Attach file to task */}
-                                <button
-                                  onClick={e => { e.stopPropagation(); triggerFileUpload(activeProject.id, null, null, task.id); }}
-                                  disabled={uploadingFor === task.id}
-                                  title="Attach file"
-                                  style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 13, padding: '2px 4px', flexShrink: 0 }}
-                                >
-                                  {uploadingFor === task.id ? '⏳' : '📎'}
-                                </button>
-                                {/* Add link to task */}
-                                <button
-                                  onClick={e => { e.stopPropagation(); openLinkModal(activeProject.id, null, task.id); }}
-                                  title="Add link"
-                                  style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 13, padding: '2px 4px', flexShrink: 0 }}
-                                >🔗</button>
-                                {/* Delete with confirmation */}
-                                <button
-                                  onClick={() => {
-                                    if (pendingDelete) {
-                                      handleDeleteTask(task.id);
-                                      setConfirmDeleteTask(null);
-                                    } else {
-                                      setConfirmDeleteTask(task.id);
+                                {/* ── Task action buttons ── */}
+                                <div className="task-actions" style={{ display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 }}>
+                                  {/* Edit / Assign */}
+                                  <button onClick={() => startEditTask(task)} title="Edit / assign task" style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: '4px 5px', borderRadius: 4, display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+                                    <svg width="15" height="15" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M9.5 2.5l2 2-7 7H2.5v-2l7-7z"/></svg>
+                                  </button>
+                                  {/* Proposal */}
+                                  {(activeProject.proposal_text || activeProject.proposal_pdf_url) && (
+                                    <button onClick={() => setProposalPanel({ task })} title="See in proposal" style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: '4px 5px', borderRadius: 4, display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+                                      <svg width="15" height="15" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="1" width="8" height="11" rx="1"/><path d="M5 1v3h5"/><path d="M4 7h4M4 9.5h3"/></svg>
+                                    </button>
+                                  )}
+                                  {/* Attach file */}
+                                  <button onClick={e => { e.stopPropagation(); triggerFileUpload(activeProject.id, null, null, task.id); }} disabled={uploadingFor === task.id} title="Attach file" style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: '4px 5px', borderRadius: 4, display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+                                    {uploadingFor === task.id
+                                      ? <svg width="15" height="15" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"><circle cx="7" cy="7" r="5"/><path d="M7 4v3l2 1"/></svg>
+                                      : <svg width="15" height="15" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M12 7L7 12a3.5 3.5 0 01-5-5l5-5a2 2 0 012.83 2.83L5 9.5a.71.71 0 01-1-1L8.5 4"/></svg>
                                     }
-                                  }}
-                                  style={{
-                                    background: pendingDelete ? '#fef2f2' : 'none',
-                                    border: pendingDelete ? '1px solid #fecaca' : 'none',
-                                    color: pendingDelete ? '#ef4444' : 'var(--text-faint)',
-                                    cursor: 'pointer', fontSize: pendingDelete ? 11 : 13,
-                                    padding: pendingDelete ? '2px 7px' : '2px 4px',
-                                    borderRadius: 4, fontWeight: pendingDelete ? 700 : 400,
-                                    flexShrink: 0, whiteSpace: 'nowrap',
-                                    transition: 'all .15s',
-                                  }}
-                                >
-                                  {pendingDelete ? 'Delete?' : '✕'}
-                                </button>
+                                  </button>
+                                  {/* Add link */}
+                                  <button onClick={e => { e.stopPropagation(); openLinkModal(activeProject.id, null, task.id); }} title="Add link" style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: '4px 5px', borderRadius: 4, display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+                                    <svg width="15" height="15" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M5.5 8.5l3-3"/><path d="M8.5 5.5L10 4a2.12 2.12 0 013 3l-1.5 1.5"/><path d="M5.5 8.5L4 10a2.12 2.12 0 01-3-3l1.5-1.5"/></svg>
+                                  </button>
+                                  {/* Delete */}
+                                  <button
+                                    onClick={() => { if (pendingDelete) { handleDeleteTask(task.id); setConfirmDeleteTask(null); } else { setConfirmDeleteTask(task.id); } }}
+                                    title="Delete task"
+                                    style={{ background: pendingDelete ? '#fef2f2' : 'none', border: pendingDelete ? '1px solid #fecaca' : 'none', color: pendingDelete ? '#ef4444' : 'var(--text-faint)', cursor: 'pointer', fontSize: 10, fontWeight: 700, padding: pendingDelete ? '2px 6px' : '4px 5px', borderRadius: 4, display: 'flex', alignItems: 'center', flexShrink: 0, whiteSpace: 'nowrap', transition: 'all .15s' }}
+                                  >
+                                    {pendingDelete ? 'Delete?' : <svg width="15" height="15" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"><path d="M2 3.5h10M5 3.5V2.5a.5.5 0 01.5-.5h3a.5.5 0 01.5.5v1M5.5 6v4M8.5 6v4M3 3.5l.7 7.5a1 1 0 001 .9h4.6a1 1 0 001-.9l.7-7.5"/></svg>}
+                                  </button>
+                                </div>
                               </div>
                             )}
 
@@ -2378,83 +2389,68 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                             {(() => {
                               const chain = task.review_chain || [];
                               const hasRejection = task.rejected_at;
-                              const hasApproval  = task.approved_at;
-                              if (chain.length === 0 && !hasRejection && !hasApproval) return null;
+                              if (chain.length === 0) return null;
 
                               const revisionsSent = chain.filter(e => e.type === 'revised_sent').length;
                               const nextRevNum    = revisionsSent + 1;
-                              const isExpanded    = expandedRejections.has(task.id);
-                              const toggleChain   = () => setExpandedRejections(s => { const n = new Set(s); n.has(task.id) ? n.delete(task.id) : n.add(task.id); return n; });
-
-                              const eventLabel = ev => {
-                                if (ev.type === 'sent')         return { dot: '#94a3b8', text: 'Sent to client',             weight: 500 };
-                                if (ev.type === 'rejected')     return { dot: '#ef4444', text: `Not approved by ${ev.by}`,   weight: 700 };
-                                if (ev.type === 'revised_sent') return { dot: '#94a3b8', text: `Revision ${ev.revNum} sent`, weight: 500 };
-                                if (ev.type === 'approved')     return { dot: '#10b981', text: `Approved by ${ev.by}`,       weight: 600 };
-                                return { dot: 'var(--border)', text: ev.type, weight: 400 };
-                              };
 
                               let rn = 0;
                               const displayChain = chain.map(ev => ev.type === 'revised_sent' ? { ...ev, revNum: ++rn } : ev);
 
+                              const pillFor = ev => {
+                                if (ev.type === 'sent')         return { label: 'Sent to client',                  color: '#6b7280', bg: '#f3f4f6' };
+                                if (ev.type === 'rejected')     return { label: `Not approved · ${ev.by || ''}`,   color: '#ef4444', bg: '#fef2f2' };
+                                if (ev.type === 'revised_sent') return { label: `Rev ${ev.revNum} sent`,            color: '#3b82f6', bg: '#eff6ff' };
+                                if (ev.type === 'approved')     return { label: `Approved · ${ev.by || ''}`,        color: '#10b981', bg: '#f0fdf4' };
+                                return { label: ev.type, color: '#94a3b8', bg: '#f9fafb' };
+                              };
+
+                              const lastRejection = hasRejection
+                                ? [...displayChain].reverse().find(e => e.type === 'rejected')
+                                : null;
+
                               return (
-                                <div style={{ margin: '2px 16px 10px 48px' }}>
-                                  {/* ── Always-visible CTA when there's an open rejection ── */}
-                                  {hasRejection && (
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                                      <button
-                                        onClick={() => openResendModal(task, activeProject)}
-                                        style={{ fontSize: 12, fontWeight: 700, padding: '5px 14px', borderRadius: 6, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer', whiteSpace: 'nowrap' }}
-                                      >📤 Send Revision {nextRevNum} →</button>
-                                      <span style={{ fontSize: 11, color: '#ef4444', fontWeight: 600 }}>
-                                        Changes requested by {task.rejected_by}
-                                      </span>
+                                <div style={{ margin: '4px 16px 10px 48px' }}>
+                                  {/* Stacked pill chain — always visible */}
+                                  <div style={{ display: 'flex', flexDirection: 'column' }}>
+                                    {displayChain.map((ev, i) => {
+                                      const p = pillFor(ev);
+                                      const isLast = i === displayChain.length - 1;
+                                      return (
+                                        <div key={i} style={{ display: 'flex', alignItems: 'stretch' }}>
+                                          {/* Vertical spine + dot */}
+                                          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: 12, flexShrink: 0, marginRight: 8 }}>
+                                            {i > 0 && <div style={{ width: 1.5, height: 5, background: 'var(--border)', flexShrink: 0 }} />}
+                                            <div style={{ width: 7, height: 7, borderRadius: '50%', background: p.color, flexShrink: 0, border: `2px solid ${p.color}40`, marginTop: i === 0 ? 4 : 0 }} />
+                                            {!isLast && <div style={{ width: 1.5, flex: 1, background: 'var(--border)', minHeight: 6 }} />}
+                                          </div>
+                                          {/* Pill + timestamp */}
+                                          <div style={{ display: 'flex', alignItems: 'center', gap: 7, paddingBottom: isLast ? 0 : 5, paddingTop: i === 0 ? 0 : 0 }}>
+                                            <div style={{
+                                              padding: '2px 10px', borderRadius: 20, fontSize: 10, fontWeight: 700,
+                                              color: p.color, background: p.bg, border: `1px solid ${p.color}28`,
+                                              whiteSpace: 'nowrap', lineHeight: 1.5,
+                                            }}>{p.label}</div>
+                                            {ev.at && <span style={{ fontSize: 10, color: 'var(--text-faint)', whiteSpace: 'nowrap' }}>{fmtDate(ev.at)}</span>}
+                                          </div>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+
+                                  {/* Rejection notes — show when open */}
+                                  {lastRejection?.notes && (
+                                    <div style={{ margin: '6px 0 6px 20px', padding: '6px 10px', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 5, fontSize: 11, color: '#7f1d1d', lineHeight: 1.55, whiteSpace: 'pre-wrap' }}>
+                                      {lastRejection.notes}
                                     </div>
                                   )}
 
-                                  {/* ── History toggle ── */}
-                                  {chain.length > 0 && (
-                                    <>
-                                      <button
-                                        onClick={toggleChain}
-                                        style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-faint)', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 4, padding: '2px 8px', cursor: 'pointer', marginBottom: isExpanded ? 10 : 0 }}
-                                      >{isExpanded ? '▲ Hide' : '▼ Show'} review history ({chain.length})</button>
-
-                                      {isExpanded && (
-                                        <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
-                                          {displayChain.map((ev, i) => {
-                                            const lbl = eventLabel(ev);
-                                            const isLast = i === displayChain.length - 1;
-                                            return (
-                                              <div key={i} style={{ display: 'flex', gap: 10, position: 'relative' }}>
-                                                {/* Timeline spine */}
-                                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0, width: 14 }}>
-                                                  <div style={{ width: 8, height: 8, borderRadius: '50%', background: lbl.dot, flexShrink: 0, marginTop: 4, zIndex: 1 }} />
-                                                  {!isLast && <div style={{ width: 1, flex: 1, background: 'var(--border)', minHeight: 12 }} />}
-                                                </div>
-                                                {/* Content */}
-                                                <div style={{ flex: 1, paddingBottom: isLast ? 0 : 10 }}>
-                                                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-                                                    <span style={{ fontSize: 12, color: lbl.dot === '#ef4444' ? '#ef4444' : lbl.dot === '#10b981' ? '#10b981' : 'var(--text-muted)', fontWeight: lbl.weight }}>{lbl.text}</span>
-                                                    <span style={{ fontSize: 10, color: 'var(--text-faint)', whiteSpace: 'nowrap' }}>{fmtDate(ev.at)}</span>
-                                                  </div>
-                                                  {ev.type === 'rejected' && ev.notes && (
-                                                    <div style={{ marginTop: 4, padding: '6px 10px', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 5, fontSize: 11, color: '#7f1d1d', lineHeight: 1.55, whiteSpace: 'pre-wrap' }}>
-                                                      {ev.notes}
-                                                    </div>
-                                                  )}
-                                                  {ev.type === 'revised_sent' && ev.response && (
-                                                    <div style={{ marginTop: 4, padding: '6px 10px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 5, fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.55, fontStyle: 'italic' }}>
-                                                      "{ev.response}"
-                                                    </div>
-                                                  )}
-                                                </div>
-                                              </div>
-                                            );
-                                          })}
-                                        </div>
-                                      )}
-                                    </>
+                                  {/* Send Revision CTA */}
+                                  {hasRejection && (
+                                    <button
+                                      onClick={() => openResendModal(task, activeProject)}
+                                      style={{ marginTop: 6, fontSize: 12, fontWeight: 700, padding: '5px 14px', borderRadius: 6, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                                    >Send Revision {nextRevNum} →</button>
                                   )}
                                 </div>
                               );
