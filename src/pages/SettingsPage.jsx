@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { saveIcp, loadTeamEmails, saveTeamEmails, saveTeamMembers } from '../lib/settings';
 import { supabase } from '../lib/supabase';
 
@@ -8,6 +8,32 @@ async function loadDocLink() {
 }
 async function saveDocLink(url) {
   await supabase.from('app_settings').upsert({ key: 'sales_doc_link', value: url }, { onConflict: 'key' });
+}
+
+// ── Reference document helpers ────────────────────────────────────────────────
+async function loadRefDocs() {
+  const { data } = await supabase.from('app_settings').select('value').eq('key', 'reference_docs').single();
+  return data?.value || [];
+}
+async function saveRefDocs(docs) {
+  await supabase.from('app_settings').upsert({ key: 'reference_docs', value: docs }, { onConflict: 'key' });
+}
+async function uploadRefDoc(file) {
+  const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+  const path = `reference-docs/${Date.now()}-${safeName}`;
+  const { error } = await supabase.storage.from('project-files').upload(path, file, { contentType: file.type });
+  if (error) throw new Error(error.message);
+  const { data: { publicUrl } } = supabase.storage.from('project-files').getPublicUrl(path);
+  return { name: file.name, url: publicUrl, path, size: file.size, uploaded_at: new Date().toISOString() };
+}
+async function deleteRefDoc(doc) {
+  await supabase.storage.from('project-files').remove([doc.path]);
+}
+function fmtFileSize(bytes) {
+  if (!bytes) return '';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 // ── ICP field definitions ─────────────────────────────────────────────────────
@@ -112,6 +138,13 @@ export default function SettingsPage({ icp, onIcpSaved, teamMembers = [], onTeam
   const [docSaving, setDocSaving]   = useState(false);
   const [docSaved, setDocSaved]     = useState(false);
 
+  // Reference documents (uploaded files)
+  const [refDocs, setRefDocs]         = useState([]);
+  const [uploading, setUploading]     = useState(false);
+  const [uploadErr, setUploadErr]     = useState('');
+  const [deletingDoc, setDeletingDoc] = useState(null); // path of doc being deleted
+  const refDocInputRef                = useRef(null);
+
   // Keep member draft in sync if parent reloads
   useEffect(() => { setMemberDraft(teamMembers); }, [teamMembers]);
   useEffect(() => {
@@ -120,6 +153,7 @@ export default function SettingsPage({ icp, onIcpSaved, teamMembers = [], onTeam
 
   useEffect(() => { loadTeamEmails().then(setTeamEmails); }, []);
   useEffect(() => { loadDocLink().then(setDocLink); }, []);
+  useEffect(() => { loadRefDocs().then(setRefDocs); }, []);
 
   // ── ICP handlers ────────────────────────────────────────────────────────────
   const handleSave = async () => {
@@ -500,10 +534,98 @@ export default function SettingsPage({ icp, onIcpSaved, teamMembers = [], onTeam
         </div>
       </div>
 
+      {/* Reference documents upload */}
+      <div className="card" style={{ padding: '16px 20px', marginBottom: 12 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 4 }}>
+          <div>
+            <label style={{ fontWeight: 700, display: 'block', fontSize: 13 }}>Reference documents</label>
+            <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 3, marginBottom: 0 }}>
+              Upload Dan Allard's source materials here — PDFs, decks, or docs. Stored permanently for reference.
+            </p>
+          </div>
+          <button
+            className="btn btn-primary"
+            onClick={() => refDocInputRef.current?.click()}
+            disabled={uploading}
+            style={{ whiteSpace: 'nowrap', flexShrink: 0, marginLeft: 16 }}
+          >{uploading ? '⏳ Uploading…' : '+ Upload file'}</button>
+        </div>
+
+        <input
+          ref={refDocInputRef}
+          type="file"
+          multiple
+          accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.md,.png,.jpg,.jpeg"
+          style={{ display: 'none' }}
+          onChange={async e => {
+            const files = Array.from(e.target.files || []);
+            if (!files.length) return;
+            setUploading(true);
+            setUploadErr('');
+            try {
+              const uploaded = await Promise.all(files.map(uploadRefDoc));
+              const next = [...refDocs, ...uploaded];
+              setRefDocs(next);
+              await saveRefDocs(next);
+            } catch (err) {
+              setUploadErr(`Upload failed: ${err.message}`);
+            } finally {
+              setUploading(false);
+              e.target.value = '';
+            }
+          }}
+        />
+
+        {uploadErr && <div style={{ fontSize: 12, color: '#ef4444', marginTop: 8 }}>{uploadErr}</div>}
+
+        {refDocs.length === 0 ? (
+          <div style={{ marginTop: 14, padding: '20px', border: '1px dashed var(--border)', borderRadius: 8, textAlign: 'center', color: 'var(--text-faint)', fontSize: 12 }}>
+            No documents uploaded yet — click "Upload file" to add one
+          </div>
+        ) : (
+          <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {refDocs.map((doc, i) => (
+              <div key={doc.path || i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 7 }}>
+                <span style={{ fontSize: 16, flexShrink: 0 }}>
+                  {doc.name.endsWith('.pdf') ? '📄' : doc.name.match(/\.(ppt|pptx)$/) ? '📊' : doc.name.match(/\.(doc|docx)$/) ? '📝' : '📁'}
+                </span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <a href={doc.url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 13, fontWeight: 600, color: 'var(--accent)', textDecoration: 'none', display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {doc.name}
+                  </a>
+                  <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 1 }}>
+                    {fmtFileSize(doc.size)}{doc.uploaded_at ? ` · Uploaded ${new Date(doc.uploaded_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}` : ''}
+                  </div>
+                </div>
+                <button
+                  onClick={async () => {
+                    if (!window.confirm(`Remove "${doc.name}"?`)) return;
+                    setDeletingDoc(doc.path);
+                    try {
+                      await deleteRefDoc(doc);
+                      const next = refDocs.filter((_, j) => j !== i);
+                      setRefDocs(next);
+                      await saveRefDocs(next);
+                    } catch (err) {
+                      setUploadErr(`Delete failed: ${err.message}`);
+                    } finally {
+                      setDeletingDoc(null);
+                    }
+                  }}
+                  disabled={deletingDoc === doc.path}
+                  title="Remove"
+                  style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 15, padding: '2px 4px', flexShrink: 0, lineHeight: 1 }}
+                >{deletingDoc === doc.path ? '⏳' : '✕'}</button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
       {/* Document link */}
       <div className="card" style={{ padding: '16px 20px' }}>
-        <label style={{ fontWeight: 700, marginBottom: 4, display: 'block', fontSize: 13 }}>Original document link</label>
-        <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 8, marginTop: 0 }}>Paste the URL to Dan Allard's source document (Google Drive, Notion, Dropbox, etc.)</p>
+        <label style={{ fontWeight: 700, marginBottom: 4, display: 'block', fontSize: 13 }}>External document link</label>
+        <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 8, marginTop: 0 }}>Link to a Google Drive, Notion, or Dropbox version of Dan's plan (shows as "Open original doc" button above).</p>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
           <input
             type="url"
