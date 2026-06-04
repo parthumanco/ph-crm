@@ -1840,46 +1840,46 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
         </div>
 
         {/* ── Contacts + Summary row ─────────────────────────────────── */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 24 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 }}>
 
           {/* Project Contacts */}
-          <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: '16px 18px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+          <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: '12px 14px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
               <div style={{ fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--text-faint)' }}>👤 Contacts</div>
               {!addingContact && (
-                <button onClick={() => { setAddingContact(true); setNewContactDraft({ name: '', title: '', email: '' }); }} style={{ fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 5, border: '1px solid var(--border)', background: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}>+ New</button>
+                <button onClick={() => { setAddingContact(true); setNewContactDraft({ name: '', title: '', email: '' }); }} style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 5, border: '1px solid var(--border)', background: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}>+ New</button>
               )}
             </div>
 
             {/* Selected contacts */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 10 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 8 }}>
               {(activeProject.contacts || []).length === 0 && !addingContact && (
                 <div style={{ fontSize: 12, color: 'var(--text-faint)', fontStyle: 'italic' }}>No contacts added</div>
               )}
               {(activeProject.contacts || []).map((c, i) => (
-                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', background: 'var(--bg)', border: `1px solid ${editingContactIdx === i ? 'var(--accent)' : 'var(--border)'}`, borderRadius: 7 }}>
+                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 8px', background: 'var(--bg)', border: `1px solid ${editingContactIdx === i ? 'var(--accent)' : 'var(--border)'}`, borderRadius: 6 }}>
                   {editingContactIdx === i ? (
                     /* ── inline edit mode ── */
-                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 5 }}>
-                      <input autoFocus placeholder="Name *" value={editContactDraft.name} onChange={e => setEditContactDraft(p => ({ ...p, name: e.target.value }))} style={{ fontSize: 12, padding: '4px 7px', borderRadius: 5, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)' }} />
-                      <input placeholder="Title / Role" value={editContactDraft.title} onChange={e => setEditContactDraft(p => ({ ...p, title: e.target.value }))} style={{ fontSize: 12, padding: '4px 7px', borderRadius: 5, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)' }} />
-                      <input placeholder="Email" value={editContactDraft.email} onChange={e => setEditContactDraft(p => ({ ...p, email: e.target.value }))} onKeyDown={e => { if (e.key === 'Enter') handleSaveEditContact(); if (e.key === 'Escape') { setEditingContactIdx(null); setEditContactDraft({ name: '', title: '', email: '' }); } }} style={{ fontSize: 12, padding: '4px 7px', borderRadius: 5, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)' }} />
+                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                      <input autoFocus placeholder="Name *" value={editContactDraft.name} onChange={e => setEditContactDraft(p => ({ ...p, name: e.target.value }))} style={{ fontSize: 12, padding: '3px 6px', borderRadius: 5, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)' }} />
+                      <input placeholder="Title / Role" value={editContactDraft.title} onChange={e => setEditContactDraft(p => ({ ...p, title: e.target.value }))} style={{ fontSize: 12, padding: '3px 6px', borderRadius: 5, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)' }} />
+                      <input placeholder="Email" value={editContactDraft.email} onChange={e => setEditContactDraft(p => ({ ...p, email: e.target.value }))} onKeyDown={e => { if (e.key === 'Enter') handleSaveEditContact(); if (e.key === 'Escape') { setEditingContactIdx(null); setEditContactDraft({ name: '', title: '', email: '' }); } }} style={{ fontSize: 12, padding: '3px 6px', borderRadius: 5, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)' }} />
                       <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end', marginTop: 2 }}>
-                        <button onClick={() => { setEditingContactIdx(null); setEditContactDraft({ name: '', title: '', email: '' }); }} style={{ fontSize: 11, padding: '3px 10px', borderRadius: 5, border: '1px solid var(--border)', background: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}>Cancel</button>
-                        <button onClick={handleSaveEditContact} disabled={!editContactDraft.name.trim()} style={{ fontSize: 11, padding: '3px 10px', borderRadius: 5, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer', fontWeight: 700 }}>Save</button>
+                        <button onClick={() => { setEditingContactIdx(null); setEditContactDraft({ name: '', title: '', email: '' }); }} style={{ fontSize: 11, padding: '2px 8px', borderRadius: 5, border: '1px solid var(--border)', background: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}>Cancel</button>
+                        <button onClick={handleSaveEditContact} disabled={!editContactDraft.name.trim()} style={{ fontSize: 11, padding: '2px 8px', borderRadius: 5, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer', fontWeight: 700 }}>Save</button>
                       </div>
                     </div>
                   ) : (
                     /* ── display mode ── */
                     <>
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>
+                        <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)' }}>
                           {c.name}{c.title ? <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}> · {c.title}</span> : ''}
                         </div>
                         {c.email && <a href={`mailto:${c.email}`} style={{ fontSize: 11, color: 'var(--accent)', textDecoration: 'none' }}>{c.email}</a>}
                       </div>
-                      <button onClick={() => { setEditingContactIdx(i); setEditContactDraft({ name: c.name || '', title: c.title || '', email: c.email || '' }); }} style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 13, padding: '0 2px', flexShrink: 0 }} title="Edit contact">✏️</button>
-                      <button onClick={() => handleRemoveProjectContact(i)} style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 14, padding: '0 2px', flexShrink: 0 }}>✕</button>
+                      <button onClick={() => { setEditingContactIdx(i); setEditContactDraft({ name: c.name || '', title: c.title || '', email: c.email || '' }); }} style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 12, padding: '0 2px', flexShrink: 0 }} title="Edit contact">✏️</button>
+                      <button onClick={() => handleRemoveProjectContact(i)} style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 13, padding: '0 2px', flexShrink: 0 }}>✕</button>
                     </>
                   )}
                 </div>
@@ -1889,14 +1889,14 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
             {/* Dropdown — contacts from this company */}
             {!addingContact && (
               projectCompany ? (
-                <select onChange={handleSelectContact} defaultValue="" style={{ fontSize: 12, padding: '5px 8px', width: '100%', color: 'var(--text-muted)' }}>
+                <select onChange={handleSelectContact} defaultValue="" style={{ fontSize: 12, padding: '4px 8px', width: '100%', color: 'var(--text-muted)' }}>
                   <option value="" disabled>Add contact from {projectCompany.name}…</option>
                   {(projectCompany.contacts || []).map((c, i) => (
                     <option key={i} value={i}>{c.name}{c.title ? ` — ${c.title}` : ''}</option>
                   ))}
                 </select>
               ) : (
-                <div style={{ fontSize: 12, color: 'var(--text-faint)', fontStyle: 'italic' }}>
+                <div style={{ fontSize: 11, color: 'var(--text-faint)', fontStyle: 'italic' }}>
                   {activeProject.client_name ? `No company card found for "${activeProject.client_name}"` : 'Set a client name to load contacts'}
                 </div>
               )
@@ -1904,41 +1904,41 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
 
             {/* Add new contact form */}
             {addingContact && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: 10, background: 'var(--bg)', border: '1px solid var(--accent)', borderRadius: 7 }}>
-                <input autoFocus placeholder="Name *" value={newContactDraft.name} onChange={e => setNewContactDraft(p => ({ ...p, name: e.target.value }))} style={{ fontSize: 12, padding: '5px 8px' }} />
-                <input placeholder="Title / Role" value={newContactDraft.title} onChange={e => setNewContactDraft(p => ({ ...p, title: e.target.value }))} style={{ fontSize: 12, padding: '5px 8px' }} />
-                <input placeholder="Email" value={newContactDraft.email} onChange={e => setNewContactDraft(p => ({ ...p, email: e.target.value }))} onKeyDown={e => e.key === 'Enter' && handleAddNewContact()} style={{ fontSize: 12, padding: '5px 8px' }} />
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 5, padding: 8, background: 'var(--bg)', border: '1px solid var(--accent)', borderRadius: 7 }}>
+                <input autoFocus placeholder="Name *" value={newContactDraft.name} onChange={e => setNewContactDraft(p => ({ ...p, name: e.target.value }))} style={{ fontSize: 12, padding: '4px 7px' }} />
+                <input placeholder="Title / Role" value={newContactDraft.title} onChange={e => setNewContactDraft(p => ({ ...p, title: e.target.value }))} style={{ fontSize: 12, padding: '4px 7px' }} />
+                <input placeholder="Email" value={newContactDraft.email} onChange={e => setNewContactDraft(p => ({ ...p, email: e.target.value }))} onKeyDown={e => e.key === 'Enter' && handleAddNewContact()} style={{ fontSize: 12, padding: '4px 7px' }} />
                 {!projectCompany && <div style={{ fontSize: 11, color: '#f59e0b' }}>⚠ No company card matched — contact won't be saved to company</div>}
                 <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-                  <button onClick={() => setAddingContact(false)} style={{ fontSize: 11, padding: '4px 12px', borderRadius: 5, border: '1px solid var(--border)', background: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}>Cancel</button>
-                  <button onClick={handleAddNewContact} disabled={!newContactDraft.name.trim()} style={{ fontSize: 11, padding: '4px 12px', borderRadius: 5, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer', fontWeight: 700 }}>Add</button>
+                  <button onClick={() => setAddingContact(false)} style={{ fontSize: 11, padding: '3px 10px', borderRadius: 5, border: '1px solid var(--border)', background: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}>Cancel</button>
+                  <button onClick={handleAddNewContact} disabled={!newContactDraft.name.trim()} style={{ fontSize: 11, padding: '3px 10px', borderRadius: 5, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer', fontWeight: 700 }}>Add</button>
                 </div>
               </div>
             )}
           </div>
 
           {/* Project Summary */}
-          <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: '16px 18px', display: 'flex', flexDirection: 'column' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-              <div style={{ fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--text-faint)' }}>📝 Summary</div>
+          <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: '12px 14px', display: 'flex', flexDirection: 'column' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+              <div style={{ fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--text-faint)' }}>📝 Project Summary</div>
               {activeProject.proposal_text ? (
                 <button
                   onClick={handleGenerateSummary}
                   disabled={summaryGenerating}
-                  style={{ fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 5, border: '1px solid var(--border)', background: 'none', color: summaryGenerating ? 'var(--text-faint)' : 'var(--text-muted)', cursor: summaryGenerating ? 'default' : 'pointer' }}
+                  style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 5, border: '1px solid var(--border)', background: 'none', color: summaryGenerating ? 'var(--text-faint)' : 'var(--text-muted)', cursor: summaryGenerating ? 'default' : 'pointer' }}
                 >{summaryGenerating ? '⏳ Generating…' : activeProject.description ? '↺ Regenerate' : '✦ Generate from proposal'}</button>
               ) : (
                 <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>Import a proposal to auto-generate</span>
               )}
             </div>
-            {summaryError && <div style={{ fontSize: 12, color: '#ef4444', marginBottom: 8 }}>{summaryError}</div>}
+            {summaryError && <div style={{ fontSize: 12, color: '#ef4444', marginBottom: 6 }}>{summaryError}</div>}
             <textarea
               value={activeProject.description || ''}
               onChange={e => setActiveProject(p => ({ ...p, description: e.target.value }))}
               onBlur={handleSaveProject}
               placeholder={activeProject.proposal_text ? 'Click "Generate from proposal" or type a summary…' : 'Add a project summary…'}
-              rows={5}
-              style={{ fontSize: 13, padding: '8px 10px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', resize: 'vertical', lineHeight: 1.6, fontFamily: 'inherit', flex: 1 }}
+              rows={4}
+              style={{ fontSize: 12, padding: '7px 10px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', resize: 'vertical', lineHeight: 1.55, fontFamily: 'inherit', flex: 1 }}
             />
           </div>
         </div>
