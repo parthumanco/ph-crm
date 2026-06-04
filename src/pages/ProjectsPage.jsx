@@ -405,6 +405,8 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
   const [linkUrl, setLinkUrl]                     = useState('');
   const [linkName, setLinkName]                   = useState('');
   const [taskCompleteEmail, setTaskCompleteEmail] = useState(null); // { task, project }
+  const [extraRecipients, setExtraRecipients]     = useState([]);   // [{ name, email }]
+  const [showContactDropdown, setShowContactDropdown] = useState(false);
   const [showShareModal, setShowShareModal]       = useState(false);
   const [projectCompany, setProjectCompany]       = useState(null);
   const [addingContact, setAddingContact]         = useState(false);
@@ -876,6 +878,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
     setAssignedTasks(prev => prev.map(patch));
     if (task.milestone_id) await syncMilestoneStatus(task.milestone_id, updated);
     if (nowComplete) {
+      setExtraRecipients([]);
       setTaskCompleteEmail({ task, project: activeProject });
     }
   };
@@ -905,6 +908,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
   // Opens Send Revision modal and always regenerates AI response from the
   // latest rejection notes so stale responses from prior cycles are never reused.
   const openResendModal = async (task, project) => {
+    setExtraRecipients([]);
     setResendEmail({ task, project });
     // Get the latest rejection notes — prefer the flat field, fall back to
     // the most recent 'rejected' event in the chain (in case flat field was cleared).
@@ -2758,11 +2762,13 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
           portalUrl ? `<p style="font-family:sans-serif;font-size:14px;">Please visit your project dashboard to review and approve it:</p><p><a href="${portalUrl}" style="display:inline-block;background:#fbbf24;color:#111;font-weight:800;font-size:13px;padding:6px 14px;border-radius:20px;text-decoration:none;font-family:sans-serif;">PH &times; ${companyLabel}</a></p>` : '',
           `<p style="font-family:sans-serif;font-size:14px;">Best,<br>Part Human</p>`,
         ].join('');
-        const gmailUrl     = toEmail ? `https://mail.google.com/mail/?view=cm&to=${encodeURIComponent(toEmail)}&su=${encodeURIComponent(subject)}` : null;
+        const ccEmails     = extraRecipients.map(c => c.email).filter(Boolean);
+        const gmailUrl     = toEmail ? `https://mail.google.com/mail/?view=cm&to=${encodeURIComponent(toEmail)}&su=${encodeURIComponent(subject)}${ccEmails.length ? `&cc=${encodeURIComponent(ccEmails.join(','))}` : ''}` : null;
+        const allContacts  = (project.contacts || []).filter(c => c.email && c.email !== toEmail && !extraRecipients.find(r => r.email === c.email));
 
         return (
           <div style={{ position: 'fixed', inset: 0, zIndex: 900, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.4)' }} onClick={() => setTaskCompleteEmail(null)} />
+            <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.4)' }} onClick={() => { setTaskCompleteEmail(null); setShowContactDropdown(false); }} />
             <div style={{
               position: 'relative', zIndex: 1, background: 'var(--bg)', borderRadius: 14,
               padding: '28px 28px 24px',
@@ -2839,14 +2845,46 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                 <>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
                     <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--text)' }}>📬 Email draft</div>
-                    <button onClick={() => setTaskCompleteEmail(null)} style={{ background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: 'var(--text-muted)', padding: '2px 4px' }}>✕</button>
+                    <button onClick={() => { setTaskCompleteEmail(null); setShowContactDropdown(false); }} style={{ background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: 'var(--text-muted)', padding: '2px 4px' }}>✕</button>
                   </div>
 
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                     <div>
                       <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 4 }}>To</div>
-                      <div style={{ fontSize: 13, padding: '8px 12px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 7, color: 'var(--text-muted)' }}>
-                        {primaryContact ? `${primaryContact.name}${primaryContact.email ? ` <${primaryContact.email}>` : ''}` : toEmail || '—'}
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, padding: '6px 10px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 7, alignItems: 'center', minHeight: 38 }}>
+                        <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>
+                          {primaryContact ? `${primaryContact.name}${primaryContact.email ? ` <${primaryContact.email}>` : ''}` : toEmail || '—'}
+                        </span>
+                        {extraRecipients.map(c => (
+                          <span key={c.email} style={{ display: 'inline-flex', alignItems: 'center', gap: 3, background: 'var(--accent)', color: '#fff', fontSize: 11, fontWeight: 600, padding: '3px 8px 3px 10px', borderRadius: 20 }}>
+                            {c.name || c.email}
+                            <button onClick={() => setExtraRecipients(prev => prev.filter(r => r.email !== c.email))} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'rgba(255,255,255,0.8)', fontSize: 14, lineHeight: 1, padding: 0, marginLeft: 2, display: 'flex', alignItems: 'center' }}>×</button>
+                          </span>
+                        ))}
+                        {allContacts.length > 0 && (
+                          <div style={{ position: 'relative' }}>
+                            <button
+                              onClick={() => setShowContactDropdown(v => !v)}
+                              style={{ background: 'none', border: '1px dashed var(--border)', borderRadius: 20, padding: '2px 10px', fontSize: 11, color: 'var(--text-faint)', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                            >+ CC contact</button>
+                            {showContactDropdown && (
+                              <div style={{ position: 'absolute', top: 'calc(100% + 4px)', left: 0, zIndex: 10, background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.14)', minWidth: 210 }}>
+                                {allContacts.map(c => (
+                                  <button
+                                    key={c.email}
+                                    onClick={() => { setExtraRecipients(prev => [...prev, c]); setShowContactDropdown(false); }}
+                                    style={{ display: 'block', width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', borderBottom: '1px solid var(--border)', cursor: 'pointer', fontSize: 13, color: 'var(--text)' }}
+                                    onMouseEnter={e => e.currentTarget.style.background = 'var(--surface)'}
+                                    onMouseLeave={e => e.currentTarget.style.background = 'none'}
+                                  >
+                                    <div style={{ fontWeight: 600, fontSize: 13 }}>{c.name}</div>
+                                    <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 1 }}>{c.email}</div>
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </div>
                     </div>
                     <div>
@@ -2954,21 +2992,55 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
           portalUrl ? `<p><a href="${portalUrl}" style="display:inline-block;background:#fbbf24;color:#111;font-weight:800;font-size:13px;padding:6px 14px;border-radius:20px;text-decoration:none;font-family:sans-serif;">PH &times; ${companyLabel}</a></p>` : '',
           `<p style="font-family:sans-serif;font-size:14px;">Best,<br>Part Human</p>`,
         ].join('');
-        const gmailUrl = toEmail ? `https://mail.google.com/mail/?view=cm&to=${encodeURIComponent(toEmail)}&su=${encodeURIComponent(subject)}` : null;
+        const ccEmailsResend = extraRecipients.map(c => c.email).filter(Boolean);
+        const gmailUrl = toEmail ? `https://mail.google.com/mail/?view=cm&to=${encodeURIComponent(toEmail)}&su=${encodeURIComponent(subject)}${ccEmailsResend.length ? `&cc=${encodeURIComponent(ccEmailsResend.join(','))}` : ''}` : null;
+        const allContactsResend = (project?.contacts || []).filter(c => c.email && c.email !== toEmail && !extraRecipients.find(r => r.email === c.email));
 
         return (
           <div style={{ position: 'fixed', inset: 0, zIndex: 900, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.4)' }} onClick={() => setResendEmail(null)} />
+            <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.4)' }} onClick={() => { setResendEmail(null); setShowContactDropdown(false); }} />
             <div style={{ position: 'relative', zIndex: 1, background: 'var(--bg)', borderRadius: 14, padding: '28px 28px 24px', width: 500, maxWidth: '95vw', boxShadow: '0 20px 60px rgba(0,0,0,0.22)' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
                 <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--text)' }}>📤 Send Revision {revNum}</div>
-                <button onClick={() => setResendEmail(null)} style={{ background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: 'var(--text-muted)', padding: '2px 4px' }}>✕</button>
+                <button onClick={() => { setResendEmail(null); setShowContactDropdown(false); }} style={{ background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: 'var(--text-muted)', padding: '2px 4px' }}>✕</button>
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                 <div>
                   <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 4 }}>To</div>
-                  <div style={{ fontSize: 13, padding: '8px 12px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 7, color: 'var(--text-muted)' }}>
-                    {primaryContact ? `${primaryContact.name}${primaryContact.email ? ` <${primaryContact.email}>` : ''}` : toEmail || '—'}
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, padding: '6px 10px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 7, alignItems: 'center', minHeight: 38 }}>
+                    <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>
+                      {primaryContact ? `${primaryContact.name}${primaryContact.email ? ` <${primaryContact.email}>` : ''}` : toEmail || '—'}
+                    </span>
+                    {extraRecipients.map(c => (
+                      <span key={c.email} style={{ display: 'inline-flex', alignItems: 'center', gap: 3, background: 'var(--accent)', color: '#fff', fontSize: 11, fontWeight: 600, padding: '3px 8px 3px 10px', borderRadius: 20 }}>
+                        {c.name || c.email}
+                        <button onClick={() => setExtraRecipients(prev => prev.filter(r => r.email !== c.email))} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'rgba(255,255,255,0.8)', fontSize: 14, lineHeight: 1, padding: 0, marginLeft: 2, display: 'flex', alignItems: 'center' }}>×</button>
+                      </span>
+                    ))}
+                    {allContactsResend.length > 0 && (
+                      <div style={{ position: 'relative' }}>
+                        <button
+                          onClick={() => setShowContactDropdown(v => !v)}
+                          style={{ background: 'none', border: '1px dashed var(--border)', borderRadius: 20, padding: '2px 10px', fontSize: 11, color: 'var(--text-faint)', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                        >+ CC contact</button>
+                        {showContactDropdown && (
+                          <div style={{ position: 'absolute', top: 'calc(100% + 4px)', left: 0, zIndex: 10, background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.14)', minWidth: 210 }}>
+                            {allContactsResend.map(c => (
+                              <button
+                                key={c.email}
+                                onClick={() => { setExtraRecipients(prev => [...prev, c]); setShowContactDropdown(false); }}
+                                style={{ display: 'block', width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', borderBottom: '1px solid var(--border)', cursor: 'pointer', fontSize: 13, color: 'var(--text)' }}
+                                onMouseEnter={e => e.currentTarget.style.background = 'var(--surface)'}
+                                onMouseLeave={e => e.currentTarget.style.background = 'none'}
+                              >
+                                <div style={{ fontWeight: 600, fontSize: 13 }}>{c.name}</div>
+                                <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 1 }}>{c.email}</div>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
                 <div>
