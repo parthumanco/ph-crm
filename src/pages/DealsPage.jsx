@@ -593,7 +593,8 @@ export default function DealsPage({ refreshKey = 0 }) {
       </div>
 
       {/* ═══ Retro Arcade Trash Bin ═══════════════════════════════════════════ */}
-      <div style={{
+      {/* Hide when any modal is open so it doesn't float above overlays */}
+      {!(selectedDeal || showNewDeal || showProspectImporter || showLostPanel) && <div style={{
         position: 'fixed', bottom: 28, right: 32, zIndex: 600,
         display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
       }}>
@@ -732,7 +733,7 @@ export default function DealsPage({ refreshKey = 0 }) {
         }}>
           {lostAnim ? '…' : isDragging ? (trashHover ? 'Drop to lose' : 'Drag here') : `${lostDeals.length} lost`}
         </span>
-      </div>
+      </div>}
 
       {/* ═══ Win Celebration Overlay ════════════════════════════════════════════ */}
       {wonAnim && (() => {
