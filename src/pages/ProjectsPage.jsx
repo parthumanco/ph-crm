@@ -2727,22 +2727,17 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                 return { ...f, _context: null };
               });
               return (
-                <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: '16px 20px', marginTop: 10 }}>
-                  <div style={{ fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--text-faint)', marginBottom: 10 }}>
+                <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: '12px 16px', marginTop: 10 }}>
+                  <div style={{ fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--text-faint)', marginBottom: 8 }}>
                     Project Files <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>· {projectFiles.length}</span>
                   </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                     {annotated.map(f => (
-                      <div key={f.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 10px', borderRadius: 6, background: 'var(--bg)', border: '1px solid var(--border-light)' }}>
-                        <span style={{ fontSize: 16, flexShrink: 0 }}>{fileIcon(f.mime_type)}</span>
-                        <a href={f.url} target="_blank" rel="noopener noreferrer" style={{ flex: 1, fontSize: 13, fontWeight: 600, color: 'var(--accent)', textDecoration: 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</a>
-                        {f._context && (
-                          <span style={{ fontSize: 10, color: 'var(--text-faint)', whiteSpace: 'nowrap', flexShrink: 0, maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis' }} title={f._context}>
-                            {f._context}
-                          </span>
-                        )}
-                        <span style={{ fontSize: 11, color: 'var(--text-faint)', whiteSpace: 'nowrap', flexShrink: 0 }}>{fmtFileSize(f.size)}</span>
-                        <button onClick={() => handleDeleteFile(f)} style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 13, padding: '2px 4px', flexShrink: 0 }} title="Remove file">✕</button>
+                      <div key={f.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '4px 8px 4px 7px', borderRadius: 20, background: 'var(--bg)', border: '1px solid var(--border-light)', maxWidth: 280 }}>
+                        <span style={{ fontSize: 13, flexShrink: 0, lineHeight: 1 }}>{fileIcon(f.mime_type)}</span>
+                        <a href={f.url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, fontWeight: 600, color: 'var(--accent)', textDecoration: 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 160 }} title={f.name}>{f.name}</a>
+                        {f.size && <span style={{ fontSize: 10, color: 'var(--text-faint)', whiteSpace: 'nowrap', flexShrink: 0 }}>{fmtFileSize(f.size)}</span>}
+                        <button onClick={() => handleDeleteFile(f)} style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 11, padding: '0 0 0 2px', flexShrink: 0, lineHeight: 1 }} title="Remove">✕</button>
                       </div>
                     ))}
                   </div>
