@@ -1876,7 +1876,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                         <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)' }}>
                           {c.name}{c.title ? <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}> · {c.title}</span> : ''}
                         </div>
-                        {c.email && <a href={`mailto:${c.email}`} style={{ fontSize: 11, color: 'var(--accent)', textDecoration: 'none' }}>{c.email}</a>}
+                        {c.email && <a href={`mailto:${c.email}?subject=Project%20Update`} style={{ fontSize: 11, color: 'var(--accent)', textDecoration: 'none' }}>{c.email}</a>}
                       </div>
                       <button onClick={() => { setEditingContactIdx(i); setEditContactDraft({ name: c.name || '', title: c.title || '', email: c.email || '' }); }} style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 12, padding: '0 2px', flexShrink: 0 }} title="Edit contact">✏️</button>
                       <button onClick={() => handleRemoveProjectContact(i)} style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 13, padding: '0 2px', flexShrink: 0 }}>✕</button>
