@@ -2454,7 +2454,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                                               border: ev.type === 'awaiting' ? `1.5px dashed ${p.color}` : `1px solid ${p.color}28`,
                                               whiteSpace: 'nowrap', lineHeight: 1.5,
                                             }}>{p.label}</div>
-                                            {ev.at && <span style={{ fontSize: 10, color: 'var(--text-faint)', whiteSpace: 'nowrap' }}>{fmtDate(ev.at)}</span>}
+                                            {ev.at && <span style={{ fontSize: 10, color: 'var(--text-faint)', whiteSpace: 'nowrap' }}>{fmtDate(ev.at)} · {new Date(ev.at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }).toLowerCase()}</span>}
                                           </div>
                                         </div>
                                       );
