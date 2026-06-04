@@ -263,19 +263,19 @@ export default function ClientsPage({ onNavigate, refreshKey, icp }) {
                       {scanning ? <><span style={{ display: 'inline-block', width: 10, height: 10, border: '2px solid var(--accent)', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} /> {scanStatus || 'Scanning…'}</> : '🔍 Deep Scan'}
                     </button>
                   )}
-                  <button onClick={() => { setEditing(true); setTab('overview'); }} style={{ fontSize: 11, fontWeight: 700, padding: '6px 12px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-muted)', cursor: 'pointer' }}>✏️ Edit</button>
+                  <button onClick={() => { setEditing(true); setTab('contacts'); }} style={{ fontSize: 11, fontWeight: 700, padding: '6px 12px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-muted)', cursor: 'pointer' }}>✏️ Edit</button>
                 </div>
               </div>
 
               {/* Tab bar */}
               <div style={{ display: 'flex' }}>
                 {[
-                  { id: 'overview',      label: 'Overview' },
-                  { id: 'projects',      label: `Projects${detail.projects.length > 0 ? ` (${detail.projects.length})` : ''}` },
-                  { id: 'intelligence',  label: `Intelligence${intel?.scan_date ? ' ✓' : ''}` },
-                  { id: 'history',       label: `History${historyItems.length > 0 ? ` (${historyItems.length})` : ''}` },
-                  { id: 'research',      label: `Research${detail.items.length > 0 ? ` (${detail.items.length})` : ''}` },
-                  { id: 'ai',            label: '✦ Ask AI' },
+                  { id: 'overview',  label: `Overview${intel?.scan_date ? ' ✓' : ''}` },
+                  { id: 'projects',  label: `Projects${detail.projects.length > 0 ? ` (${detail.projects.length})` : ''}` },
+                  { id: 'contacts',  label: 'Contacts' },
+                  { id: 'history',   label: `History${historyItems.length > 0 ? ` (${historyItems.length})` : ''}` },
+                  { id: 'research',  label: `Research${detail.items.length > 0 ? ` (${detail.items.length})` : ''}` },
+                  { id: 'ai',        label: '✦ Ask AI' },
                 ].map(t => (
                   <button key={t.id} onClick={() => setTab(t.id)} style={{ fontSize: 12, fontWeight: 600, padding: '8px 14px', border: 'none', background: 'none', cursor: 'pointer', color: tab === t.id ? 'var(--accent)' : 'var(--text-muted)', borderBottom: tab === t.id ? '2px solid var(--accent)' : '2px solid transparent', marginBottom: -1, whiteSpace: 'nowrap' }}>{t.label}</button>
                 ))}
@@ -285,85 +285,8 @@ export default function ClientsPage({ onNavigate, refreshKey, icp }) {
             {/* Tab content */}
             <div style={{ flex: 1, overflowY: 'auto', padding: '24px 28px' }}>
 
-              {/* ── Overview ── */}
+              {/* ── Overview (Intelligence) ── */}
               {tab === 'overview' && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 20, maxWidth: 640 }}>
-                  {editing ? (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 12, padding: '20px', background: 'var(--surface)', borderRadius: 12, border: '1px solid var(--border)' }}>
-                      <div style={{ fontSize: 13, fontWeight: 700 }}>Edit Client</div>
-                      {[{ key: 'name', label: 'Company Name' }, { key: 'website', label: 'Website', placeholder: 'https://…' }, { key: 'linkedin_url', label: 'LinkedIn', placeholder: 'https://linkedin.com/company/…' }].map(f => (
-                        <div key={f.key}>
-                          <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 4 }}>{f.label}</label>
-                          <input value={editDraft[f.key] || ''} onChange={e => setEditDraft(d => ({ ...d, [f.key]: e.target.value }))} placeholder={f.placeholder} style={{ width: '100%', fontSize: 13, padding: '7px 10px' }} />
-                        </div>
-                      ))}
-                      <div>
-                        <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 4 }}>Notes</label>
-                        <textarea value={editDraft.notes || ''} onChange={e => setEditDraft(d => ({ ...d, notes: e.target.value }))} rows={4} style={{ width: '100%', fontSize: 13, padding: '8px 10px', resize: 'vertical', fontFamily: 'inherit' }} />
-                      </div>
-                      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-                        <button onClick={() => setEditing(false)} style={{ fontSize: 12, padding: '7px 14px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', cursor: 'pointer' }}>Cancel</button>
-                        <button onClick={handleSaveClient} disabled={saving} style={{ fontSize: 12, fontWeight: 700, padding: '7px 18px', borderRadius: 7, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer', opacity: saving ? 0.6 : 1 }}>{saving ? 'Saving…' : 'Save'}</button>
-                      </div>
-                    </div>
-                  ) : detail.client.notes ? (
-                    <div style={{ padding: '14px 16px', background: 'var(--surface)', borderRadius: 10, border: '1px solid var(--border)' }}>
-                      <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 6 }}>Notes</div>
-                      <p style={{ fontSize: 13, color: 'var(--text)', margin: 0, lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>{detail.client.notes}</p>
-                    </div>
-                  ) : null}
-
-                  {/* Contacts */}
-                  {allContacts.length > 0 && (
-                    <div>
-                      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 10 }}>Contacts</div>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                        {allContacts.map((c, i) => (
-                          <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', background: 'var(--surface)', borderRadius: 9, border: '1px solid var(--border)' }}>
-                            <div style={{ width: 34, height: 34, borderRadius: '50%', background: 'var(--accent)', color: '#fff', fontSize: 13, fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{c.name[0].toUpperCase()}</div>
-                            <div style={{ flex: 1, minWidth: 0 }}>
-                              <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>{c.name}</div>
-                              {c.title && <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{c.title}</div>}
-                            </div>
-                            <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
-                              {c.email    && <a href={`mailto:${c.email}`}    style={{ fontSize: 11, color: 'var(--accent)',  textDecoration: 'none' }}>{c.email}</a>}
-                              {c.linkedin && <a href={c.linkedin} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: '#0077b5', textDecoration: 'none' }}>in</a>}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {!detail.client.notes && allContacts.length === 0 && !editing && (
-                    <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--text-faint)' }}>
-                      <div style={{ fontSize: 24, marginBottom: 8 }}>🏢</div>
-                      <div style={{ fontSize: 13 }}>Click Edit to add a website, notes, or LinkedIn.</div>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* ── Projects ── */}
-              {tab === 'projects' && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 12, maxWidth: 680 }}>
-                  {detail.projects.length === 0 ? (
-                    <div style={{ fontSize: 13, color: 'var(--text-faint)', textAlign: 'center', padding: '40px 0' }}>No projects yet.</div>
-                  ) : detail.projects.map(p => (
-                    <div key={p.id} onClick={() => onNavigate?.('projects')} style={{ padding: '14px 16px', background: 'var(--surface)', borderRadius: 10, border: '1px solid var(--border)', cursor: 'pointer', transition: 'border-color .15s' }} onMouseEnter={e => e.currentTarget.style.borderColor = 'var(--accent)'} onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--border)'}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
-                        <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>{p.name}</div>
-                        <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 10, background: (STATUS_COLOR[p.status] || '#9ca3af') + '22', color: STATUS_COLOR[p.status] || '#9ca3af', flexShrink: 0 }}>{p.status}</span>
-                      </div>
-                      {p.description && <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '4px 0 0', lineHeight: 1.5 }}>{p.description}</p>}
-                      <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 6 }}>Started {fmtDate(p.start_date)}{p.end_date ? ` · Ends ${fmtDate(p.end_date)}` : ''}</div>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {/* ── Intelligence ── */}
-              {tab === 'intelligence' && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 20, maxWidth: 720 }}>
                   {!intel ? (
                     <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--text-faint)' }}>
@@ -376,14 +299,14 @@ export default function ClientsPage({ onNavigate, refreshKey, icp }) {
                       {/* Score + meta row */}
                       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 10 }}>
                         {[
-                          intel.icp_score     != null && { label: 'ICP Score',      value: `${intel.icp_score}/10`,  color: scoreColor(intel.icp_score) },
-                          intel.overall_score != null && { label: 'Overall Score',   value: `${intel.overall_score}/10`, color: scoreColor(intel.overall_score) },
-                          intel.icp_tier              && { label: 'Tier',            value: intel.icp_tier },
-                          intel.funding_stage         && { label: 'Funding',         value: intel.funding_stage },
-                          intel.employee_count        && { label: 'Employees',       value: intel.employee_count },
-                          intel.engagement_type       && { label: 'Engagement',      value: intel.engagement_type },
-                          intel.hq                    && { label: 'HQ',              value: intel.hq },
-                          intel.industry              && { label: 'Industry',        value: intel.industry },
+                          intel.icp_score     != null && { label: 'ICP Score',    value: `${intel.icp_score}/10`,     color: scoreColor(intel.icp_score) },
+                          intel.overall_score != null && { label: 'Overall Score', value: `${intel.overall_score}/10`, color: scoreColor(intel.overall_score) },
+                          intel.icp_tier              && { label: 'Tier',          value: intel.icp_tier },
+                          intel.funding_stage         && { label: 'Funding',       value: intel.funding_stage },
+                          intel.employee_count        && { label: 'Employees',     value: intel.employee_count },
+                          intel.engagement_type       && { label: 'Engagement',    value: intel.engagement_type },
+                          intel.hq                    && { label: 'HQ',            value: intel.hq },
+                          intel.industry              && { label: 'Industry',      value: intel.industry },
                         ].filter(Boolean).map((item, i) => (
                           <div key={i} style={{ padding: '12px 14px', background: 'var(--surface)', borderRadius: 9, border: '1px solid var(--border)' }}>
                             <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 4 }}>{item.label}</div>
@@ -451,6 +374,82 @@ export default function ClientsPage({ onNavigate, refreshKey, icp }) {
                       )}
                     </>
                   )}
+                </div>
+              )}
+
+              {/* ── Contacts ── */}
+              {tab === 'contacts' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 20, maxWidth: 640 }}>
+                  {editing ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 12, padding: '20px', background: 'var(--surface)', borderRadius: 12, border: '1px solid var(--border)' }}>
+                      <div style={{ fontSize: 13, fontWeight: 700 }}>Edit Client</div>
+                      {[{ key: 'name', label: 'Company Name' }, { key: 'website', label: 'Website', placeholder: 'https://…' }, { key: 'linkedin_url', label: 'LinkedIn', placeholder: 'https://linkedin.com/company/…' }].map(f => (
+                        <div key={f.key}>
+                          <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 4 }}>{f.label}</label>
+                          <input value={editDraft[f.key] || ''} onChange={e => setEditDraft(d => ({ ...d, [f.key]: e.target.value }))} placeholder={f.placeholder} style={{ width: '100%', fontSize: 13, padding: '7px 10px' }} />
+                        </div>
+                      ))}
+                      <div>
+                        <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 4 }}>Notes</label>
+                        <textarea value={editDraft.notes || ''} onChange={e => setEditDraft(d => ({ ...d, notes: e.target.value }))} rows={4} style={{ width: '100%', fontSize: 13, padding: '8px 10px', resize: 'vertical', fontFamily: 'inherit' }} />
+                      </div>
+                      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                        <button onClick={() => setEditing(false)} style={{ fontSize: 12, padding: '7px 14px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', cursor: 'pointer' }}>Cancel</button>
+                        <button onClick={handleSaveClient} disabled={saving} style={{ fontSize: 12, fontWeight: 700, padding: '7px 18px', borderRadius: 7, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer', opacity: saving ? 0.6 : 1 }}>{saving ? 'Saving…' : 'Save'}</button>
+                      </div>
+                    </div>
+                  ) : detail.client.notes ? (
+                    <div style={{ padding: '14px 16px', background: 'var(--surface)', borderRadius: 10, border: '1px solid var(--border)' }}>
+                      <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 6 }}>Notes</div>
+                      <p style={{ fontSize: 13, color: 'var(--text)', margin: 0, lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>{detail.client.notes}</p>
+                    </div>
+                  ) : null}
+
+                  {allContacts.length > 0 && (
+                    <div>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 10 }}>Contacts</div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        {allContacts.map((c, i) => (
+                          <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', background: 'var(--surface)', borderRadius: 9, border: '1px solid var(--border)' }}>
+                            <div style={{ width: 34, height: 34, borderRadius: '50%', background: 'var(--accent)', color: '#fff', fontSize: 13, fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{c.name[0].toUpperCase()}</div>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>{c.name}</div>
+                              {c.title && <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{c.title}</div>}
+                            </div>
+                            <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+                              {c.email    && <a href={`mailto:${c.email}`}    style={{ fontSize: 11, color: 'var(--accent)',  textDecoration: 'none' }}>{c.email}</a>}
+                              {c.linkedin && <a href={c.linkedin} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: '#0077b5', textDecoration: 'none' }}>in</a>}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {!detail.client.notes && allContacts.length === 0 && !editing && (
+                    <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--text-faint)' }}>
+                      <div style={{ fontSize: 24, marginBottom: 8 }}>👤</div>
+                      <div style={{ fontSize: 13 }}>No contacts yet. Click Edit to add notes or a website, or log a meeting to capture contacts automatically.</div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* ── Projects ── */}
+              {tab === 'projects' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 12, maxWidth: 680 }}>
+                  {detail.projects.length === 0 ? (
+                    <div style={{ fontSize: 13, color: 'var(--text-faint)', textAlign: 'center', padding: '40px 0' }}>No projects yet.</div>
+                  ) : detail.projects.map(p => (
+                    <div key={p.id} onClick={() => onNavigate?.('projects')} style={{ padding: '14px 16px', background: 'var(--surface)', borderRadius: 10, border: '1px solid var(--border)', cursor: 'pointer', transition: 'border-color .15s' }} onMouseEnter={e => e.currentTarget.style.borderColor = 'var(--accent)'} onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--border)'}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
+                        <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>{p.name}</div>
+                        <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 10, background: (STATUS_COLOR[p.status] || '#9ca3af') + '22', color: STATUS_COLOR[p.status] || '#9ca3af', flexShrink: 0 }}>{p.status}</span>
+                      </div>
+                      {p.description && <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '4px 0 0', lineHeight: 1.5 }}>{p.description}</p>}
+                      <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 6 }}>Started {fmtDate(p.start_date)}{p.end_date ? ` · Ends ${fmtDate(p.end_date)}` : ''}</div>
+                    </div>
+                  ))}
                 </div>
               )}
 
