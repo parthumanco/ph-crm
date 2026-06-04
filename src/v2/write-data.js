@@ -46,4 +46,7 @@ export {
     upsertDeal,
     moveStage as moveDealStage,
     deleteDeal,
+    // Deal activities
+    addActivity,
+    deleteActivity,
 } from '../lib/deals.js';

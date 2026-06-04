@@ -46,6 +46,7 @@ export {
     ACTIVE_STAGES as DEAL_ACTIVE_STAGES,
     CLOSED_STAGES as DEAL_CLOSED_STAGES,
     OWNERS as DEAL_OWNERS,
+    ACTIVITY_TYPES,
     stageColor,
     stageLabel,
     dealValue,

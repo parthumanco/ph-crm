@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
     fetchProjects,
     fetchDeals,
@@ -10,6 +10,9 @@ import {
     DEAL_CLOSED_STAGES,
     stageLabel,
 } from './safe-data.js';
+import V2Modal from './V2Modal.jsx';
+import DealForm from './forms/DealForm.jsx';
+import ActivityForm from './forms/ActivityForm.jsx';
 
 /* ============================================
    V2 ACCOUNT HUB
@@ -64,36 +67,44 @@ export default function V2AccountPage({ accountName, onBack, onSelectProject }) 
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
 
-    useEffect(() => {
-        let cancelled = false;
-        (async () => {
-            try {
-                setLoading(true);
-                setError(null);
-                const [allProjects, allDeals, allCases] = await Promise.all([
-                    fetchProjects().catch(() => []),
-                    fetchDeals().catch(() => []),
-                    fetchCases().catch(() => []),
-                ]);
-                if (cancelled) return;
-                const matchedProjects = allProjects.filter((p) => p.client_name === accountName || p.name === accountName);
-                const matchedDeals    = allDeals.filter((d) => d.company_name === accountName);
-                const matchedCases    = allCases.filter((c) => (c.client_name || c.company_name) === accountName);
-                setProjects(matchedProjects);
-                setDeals(matchedDeals);
-                setCases(matchedCases);
+    // Modal state
+    const [dealModal, setDealModal] = useState(null);    // null | { mode: 'new' | 'edit', target?: deal }
+    const [activityOpen, setActivityOpen] = useState(false);
+    const [toast, setToast] = useState(null);
 
-                // Pull activities for every matched deal in parallel
-                const acts = await Promise.all(matchedDeals.map((d) => fetchActivities(d.id).catch(() => [])));
-                if (!cancelled) setActivities(acts.flat());
-            } catch (err) {
-                if (!cancelled) setError(err.message || 'Failed to load account');
-            } finally {
-                if (!cancelled) setLoading(false);
-            }
-        })();
-        return () => { cancelled = true; };
+    const load = useCallback(async () => {
+        try {
+            setLoading(true);
+            setError(null);
+            const [allProjects, allDeals, allCases] = await Promise.all([
+                fetchProjects().catch(() => []),
+                fetchDeals().catch(() => []),
+                fetchCases().catch(() => []),
+            ]);
+            const matchedProjects = allProjects.filter((p) => p.client_name === accountName || p.name === accountName);
+            const matchedDeals    = allDeals.filter((d) => d.company_name === accountName);
+            const matchedCases    = allCases.filter((c) => (c.client_name || c.company_name) === accountName);
+            setProjects(matchedProjects);
+            setDeals(matchedDeals);
+            setCases(matchedCases);
+            // Pull activities for every matched deal in parallel
+            const acts = await Promise.all(matchedDeals.map((d) => fetchActivities(d.id).catch(() => [])));
+            setActivities(acts.flat());
+        } catch (err) {
+            setError(err.message || 'Failed to load account');
+        } finally {
+            setLoading(false);
+        }
     }, [accountName]);
+
+    useEffect(() => { load(); }, [load]);
+
+    // Auto-dismiss toast
+    useEffect(() => {
+        if (!toast) return;
+        const t = setTimeout(() => setToast(null), 4000);
+        return () => clearTimeout(t);
+    }, [toast]);
 
     const currentStep = pickCurrentStep(deals, projects);
     const openDeals = deals.filter((d) => !DEAL_CLOSED_STAGES.find((s) => s.id === d.stage));
@@ -166,6 +177,23 @@ export default function V2AccountPage({ accountName, onBack, onSelectProject }) 
                     </div>
                     <div className="v2-account-actions">
                         <button type="button" className="v2-btn" onClick={onBack}>← All accounts</button>
+                        <button
+                            type="button"
+                            className="v2-btn"
+                            onClick={() => setActivityOpen(true)}
+                            title={deals.length === 0 ? 'Create a deal first — activities attach to deals' : 'Log activity to this account'}
+                        >
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H5a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h13a2 2 0 0 0 2-2v-6"/><path d="M19 3l3 3-9 9H10v-3z"/></svg>
+                            Log activity
+                        </button>
+                        <button
+                            type="button"
+                            className="v2-btn v2-btn--primary"
+                            onClick={() => setDealModal({ mode: 'new' })}
+                        >
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+                            New deal
+                        </button>
                     </div>
                 </div>
 
@@ -220,14 +248,19 @@ export default function V2AccountPage({ accountName, onBack, onSelectProject }) 
                                     </button>
                                 ))}
                                 {openDeals.map((d) => (
-                                    <div key={d.id} className="v2-work-card">
+                                    <button
+                                        key={d.id}
+                                        type="button"
+                                        className="v2-work-card"
+                                        onClick={() => setDealModal({ mode: 'edit', target: d })}
+                                    >
                                         <div className="v2-work-card__type v2-work-card__type--deal">Deal · {stageLabel(d.stage)}</div>
                                         <div className="v2-work-card__title">{d.title || d.company_name}</div>
                                         <div className="v2-work-card__meta">
                                             {d.contact_name && `${d.contact_name} · `}
                                             {fmt$(dealValue(d))}
                                         </div>
-                                    </div>
+                                    </button>
                                 ))}
                                 {openCases.map((c) => (
                                     <div key={c.id} className="v2-work-card">
@@ -272,6 +305,59 @@ export default function V2AccountPage({ accountName, onBack, onSelectProject }) 
                     </div>
                 </div>
             </div>
+
+            {/* Toast */}
+            {toast && (
+                <div className={`v2-toast v2-toast--${toast.kind}`}>
+                    <span className="v2-toast__icon">{toast.kind === 'win' ? '✓' : toast.kind === 'warn' ? '!' : '·'}</span>
+                    <span>{toast.text}</span>
+                </div>
+            )}
+
+            {/* New / edit deal modal — company_name pre-filled when creating new */}
+            <V2Modal
+                open={dealModal !== null}
+                onClose={() => setDealModal(null)}
+                eyebrow={dealModal?.mode === 'edit' ? 'edit deal' : 'new deal'}
+                title={dealModal?.mode === 'edit'
+                    ? (dealModal.target?.title || dealModal.target?.company_name || 'Edit deal')
+                    : `New deal · ${accountName}`}
+            >
+                {dealModal && (
+                    <DealForm
+                        initial={dealModal.mode === 'edit'
+                            ? dealModal.target
+                            : { company_name: accountName }}
+                        onSaved={() => {
+                            const wasNew = dealModal.mode === 'new';
+                            setDealModal(null);
+                            load();
+                            if (wasNew) setToast({ kind: 'win', text: `Deal added to ${accountName}.` });
+                        }}
+                        onCancel={() => setDealModal(null)}
+                    />
+                )}
+            </V2Modal>
+
+            {/* Log activity modal — picks from this account's deals */}
+            <V2Modal
+                open={activityOpen}
+                onClose={() => setActivityOpen(false)}
+                eyebrow="log activity"
+                title={`Activity · ${accountName}`}
+            >
+                {activityOpen && (
+                    <ActivityForm
+                        deals={deals}
+                        onSaved={() => {
+                            setActivityOpen(false);
+                            load();
+                            setToast({ kind: 'win', text: 'Activity logged.' });
+                        }}
+                        onCancel={() => setActivityOpen(false)}
+                    />
+                )}
+            </V2Modal>
         </>
     );
 }
