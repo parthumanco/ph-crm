@@ -993,21 +993,23 @@ export default function ClientPortalPage({ token }) {
                                 {fmtDate(task.due_date)}
                               </span>
                             )}
-                            {task.completed && (
-                              task.approved_at ? (
+                            {task.completed && (() => {
+                              if (task.approved_at) return (
                                 <span style={{
                                   fontSize: 11, fontWeight: 700, color: '#10b981',
                                   background: '#f0fdf4', border: '1px solid #bbf7d0',
                                   borderRadius: 4, padding: '2px 8px', flexShrink: 0,
                                   whiteSpace: 'nowrap',
-                                }}>✓ Approved</span>
-                              ) : task.rejected_at ? (
+                                }}>&#x2713; Approved</span>
+                              );
+                              if (task.rejected_at) return (
                                 <span style={{
                                   background: '#fef2f2', border: '1px solid #fca5a5',
                                   color: '#ef4444', fontSize: 11, fontWeight: 700, padding: '2px 8px',
                                   borderRadius: 4, flexShrink: 0, whiteSpace: 'nowrap',
                                 }}>Changes Requested</span>
-                              ) : (
+                              );
+                              return (
                                 <div style={{ display: 'flex', gap: 5, flexShrink: 0 }}>
                                   <button
                                     onClick={e => { e.stopPropagation(); openApproveModal({ task }); }}
@@ -1018,7 +1020,7 @@ export default function ClientPortalPage({ token }) {
                                       borderRadius: 4, whiteSpace: 'nowrap',
                                       fontFamily: 'Inter, sans-serif',
                                     }}
-                                  >Approve ✓</button>
+                                  >Approve &#x2713;</button>
                                   <button
                                     onClick={e => { e.stopPropagation(); setRejectName(''); setRejectNotes(''); setRejectModal({ task }); }}
                                     style={{
@@ -1028,10 +1030,10 @@ export default function ClientPortalPage({ token }) {
                                       borderRadius: 4, whiteSpace: 'nowrap',
                                       fontFamily: 'Inter, sans-serif',
                                     }}
-                                  >Not Approved ✕</button>
+                                  >Not Approved &#x2715;</button>
                                 </div>
-                              )
-                            )}
+                              );
+                            })()}
                             {(project.proposal_text || project.proposal_pdf_url) && (
                               <button
                                 onClick={e => { e.stopPropagation(); setProposalPanel({ task }); }}
@@ -1054,11 +1056,17 @@ export default function ClientPortalPage({ token }) {
                               let rn = 0;
                               const displayChain = chain.map(ev => ev.type === 'revised_sent' ? { ...ev, revNum: ++rn } : ev);
 
+                              // Append synthetic 'awaiting' pill while pending client response
+                              const lastSentEv = [...chain].reverse().find(e => e.type === 'sent' || e.type === 'revised_sent');
+                              const isAwaiting = !task.approved_at && !task.rejected_at && !!lastSentEv;
+                              if (isAwaiting) displayChain.push({ type: 'awaiting', at: null });
+
                               const pillFor = ev => {
                                 if (ev.type === 'sent')         return { label: 'Sent for review',                  color: '#6b7280', bg: '#f3f4f6' };
                                 if (ev.type === 'rejected')     return { label: `Not approved · ${ev.by || ''}`,    color: '#ef4444', bg: '#fef2f2' };
                                 if (ev.type === 'revised_sent') return { label: `Rev ${ev.revNum} sent`,             color: '#3b82f6', bg: '#eff6ff' };
                                 if (ev.type === 'approved')     return { label: `Approved · ${ev.by || ''}`,         color: '#10b981', bg: '#f0fdf4' };
+                                if (ev.type === 'awaiting')     return { label: 'Awaiting your review',              color: '#f59e0b', bg: '#fffbeb' };
                                 return { label: ev.type, color: '#9ca3af', bg: '#f9fafb' };
                               };
 
@@ -1066,8 +1074,8 @@ export default function ClientPortalPage({ token }) {
                                 ? [...displayChain].reverse().find(e => e.type === 'rejected')
                                 : null;
 
-                              const lastEv = displayChain[displayChain.length - 1];
-                              const awaitingResponse = lastEv?.type === 'revised_sent' && lastEv.response;
+                              const lastRevEv = [...displayChain].reverse().find(e => e.type === 'revised_sent' && e.response);
+                              const awaitingResponse = !!lastRevEv;
 
                               return (
                                 <div style={{ margin: '6px 0 4px 28px' }}>
@@ -1088,7 +1096,8 @@ export default function ClientPortalPage({ token }) {
                                           <div style={{ display: 'flex', alignItems: 'center', gap: 7, paddingBottom: isLast ? 0 : 5 }}>
                                             <div style={{
                                               padding: '2px 10px', borderRadius: 20, fontSize: 10, fontWeight: 700,
-                                              color: p.color, background: p.bg, border: `1px solid ${p.color}28`,
+                                              color: p.color, background: p.bg,
+                                              border: ev.type === 'awaiting' ? `1.5px dashed ${p.color}` : `1px solid ${p.color}28`,
                                               whiteSpace: 'nowrap', lineHeight: 1.5,
                                               fontFamily: 'Inter, sans-serif',
                                             }}>{p.label}</div>
@@ -1109,7 +1118,7 @@ export default function ClientPortalPage({ token }) {
                                   {/* Latest revision response */}
                                   {awaitingResponse && (
                                     <div style={{ margin: '4px 0 0 20px', padding: '6px 10px', background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: 5, fontSize: 11, color: '#6b7280', lineHeight: 1.6, whiteSpace: 'pre-wrap', fontStyle: 'italic', fontFamily: 'Inter, sans-serif' }}>
-                                      "{lastEv.response}"
+                                      "{lastRevEv.response}"
                                     </div>
                                   )}
                                 </div>
@@ -1211,7 +1220,7 @@ export default function ClientPortalPage({ token }) {
                   {generalFiles.map((f, i) => (
                     <div key={f.id} style={{
                       display: 'flex', alignItems: 'center', gap: 12, padding: '12px 18px',
-                      borderBottom: i < files.length - 1 ? '1px solid #f3f4f6' : 'none',
+                      borderBottom: i < generalFiles.length - 1 ? '1px solid #f3f4f6' : 'none',
                     }}>
                       <span style={{ fontSize: 18, flexShrink: 0 }}>{fileIcon(f.mime_type)}</span>
                       <a href={f.url} target="_blank" rel="noopener noreferrer" style={{

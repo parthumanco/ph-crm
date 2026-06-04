@@ -12,22 +12,23 @@ import {
   projColor, projLabel, msColor, msLabel,
   daysBetween, addDays, projectProgress, fmtDate,
 } from '../lib/projects';
-
-async function sendPortalNotification(project, subject, bodyHtml) {
-  try {
-    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-    await fetch(`${supabaseUrl}/functions/v1/project-notification`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ to: project.client_email, subject, html: bodyHtml }),
-    });
-  } catch (e) {
-    console.warn('Portal notification failed:', e.message);
-  }
-}
 import { fetchDeals } from '../lib/deals';
 import ProposalImporter from '../components/ProposalImporter';
 
+async function sendPortalNotification(toEmail, subject, bodyHtml, ccEmails = []) {
+  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+  const { data: { session } } = await supabase.auth.getSession();
+  const headers = { 'Content-Type': 'application/json' };
+  if (session?.access_token) headers['Authorization'] = `Bearer ${session.access_token}`;
+  const res = await fetch(`${supabaseUrl}/functions/v1/project-notification`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ to: toEmail, cc: ccEmails, subject, html: bodyHtml }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Send failed');
+  return data;
+}
 // ── Small shared components ───────────────────────────────────────────────────
 
 function Badge({ label, color, small }) {
@@ -405,6 +406,8 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
   const [linkUrl, setLinkUrl]                     = useState('');
   const [linkName, setLinkName]                   = useState('');
   const [taskCompleteEmail, setTaskCompleteEmail] = useState(null); // { task, project }
+  const [sendingEmail, setSendingEmail]           = useState(false);
+  const [emailSentFor, setEmailSentFor]           = useState(null); // task.id
   const [extraRecipients, setExtraRecipients]     = useState([]);   // [{ name, email }]
   const [showContactDropdown, setShowContactDropdown] = useState(false);
   const [showShareModal, setShowShareModal]       = useState(false);
@@ -750,10 +753,10 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
     // Notify client if milestone just became complete
     if (saved.status === 'completed' && prevMs?.status !== 'completed' && activeProject?.client_email) {
       sendPortalNotification(
-        activeProject,
+        activeProject.client_email,
         `Phase complete: ${saved.title}`,
         `<p>Hi,</p><p>The phase <strong>${saved.title}</strong> has been marked complete on your project <strong>${activeProject.name}</strong>.</p><p>View your project portal to review and approve this phase.</p>`,
-      );
+      ).catch(e => console.warn('Milestone notify failed:', e.message));
     }
   };
 
@@ -1256,10 +1259,10 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
       // Notify client if email is set
       if (activeProject?.id === projectId && activeProject?.client_email) {
         sendPortalNotification(
-          activeProject,
+          activeProject.client_email,
           `New file added: ${file.name}`,
           `<p>Hi,</p><p>A new file <strong>${file.name}</strong> has been added to your project <strong>${activeProject.name}</strong>.</p><p>Visit your project portal to view it.</p>`,
-        );
+        ).catch(e => console.warn('File notify failed:', e.message));
       }
     } catch (err) {
       console.error('Upload failed:', err.message);
@@ -2291,15 +2294,15 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                                     const hasPortalEmail = !!(activeProject.share_token && portalEmail);
                                     return (
                                       <div style={{ fontSize: 10, marginTop: 2, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                                        {hasOpenRejection ? (
-                                          <span style={{ color: '#f59e0b', fontWeight: 700 }}>⟳ In Progress — changes requested</span>
-                                        ) : task.approved_at ? (
-                                          <span style={{ color: '#10b981', fontWeight: 600 }}>✓ Approved{task.approved_by ? ` by ${task.approved_by}` : ''}</span>
-                                        ) : isAwaiting ? (
-                                          <span style={{ color: 'var(--text-muted)', fontWeight: 600 }}>⏳ Awaiting client review</span>
-                                        ) : (
+                                        {hasOpenRejection && (
+                                          <span style={{ color: '#f59e0b', fontWeight: 700 }}>&#x27F3; In Progress — changes requested</span>
+                                        )}
+                                        {!hasOpenRejection && task.approved_at && (
+                                          <span style={{ color: '#10b981', fontWeight: 600 }}>&#x2713; Approved{task.approved_by ? ` by ${task.approved_by}` : ''}</span>
+                                        )}
+                                        {!hasOpenRejection && !task.approved_at && !isAwaiting && (
                                           <>
-                                            <span style={{ color: 'var(--text-faint)' }}>✓ Completed {fmtDate(task.completed_at)}</span>
+                                            <span style={{ color: 'var(--text-faint)' }}>&#x2713; Completed {fmtDate(task.completed_at)}</span>
                                             {isUnsent && hasPortalEmail && (
                                               <button
                                                 onClick={() => { setExtraRecipients([]); setShowContactDropdown(false); setTaskCompleteEmail({ task, project: activeProject }); }}
@@ -2394,14 +2397,21 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                               const revisionsSent = chain.filter(e => e.type === 'revised_sent').length;
                               const nextRevNum    = revisionsSent + 1;
 
+                              // Determine if task is awaiting a client response
+                              const lastSentEvent = [...chain].reverse().find(e => e.type === 'sent' || e.type === 'revised_sent');
+                              const isAwaiting    = !task.approved_at && !task.rejected_at && !!lastSentEvent;
+
                               let rn = 0;
                               const displayChain = chain.map(ev => ev.type === 'revised_sent' ? { ...ev, revNum: ++rn } : ev);
+                              // Append synthetic 'awaiting' pill while pending client response
+                              if (isAwaiting) displayChain.push({ type: 'awaiting', at: null });
 
                               const pillFor = ev => {
                                 if (ev.type === 'sent')         return { label: 'Sent to client',                  color: '#6b7280', bg: '#f3f4f6' };
                                 if (ev.type === 'rejected')     return { label: `Not approved · ${ev.by || ''}`,   color: '#ef4444', bg: '#fef2f2' };
                                 if (ev.type === 'revised_sent') return { label: `Rev ${ev.revNum} sent`,            color: '#3b82f6', bg: '#eff6ff' };
                                 if (ev.type === 'approved')     return { label: `Approved · ${ev.by || ''}`,        color: '#10b981', bg: '#f0fdf4' };
+                                if (ev.type === 'awaiting')     return { label: 'Awaiting review',                  color: '#f59e0b', bg: '#fffbeb' };
                                 return { label: ev.type, color: '#94a3b8', bg: '#f9fafb' };
                               };
 
@@ -2428,7 +2438,8 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                                           <div style={{ display: 'flex', alignItems: 'center', gap: 7, paddingBottom: isLast ? 0 : 5, paddingTop: i === 0 ? 0 : 0 }}>
                                             <div style={{
                                               padding: '2px 10px', borderRadius: 20, fontSize: 10, fontWeight: 700,
-                                              color: p.color, background: p.bg, border: `1px solid ${p.color}28`,
+                                              color: p.color, background: p.bg,
+                                              border: ev.type === 'awaiting' ? `1.5px dashed ${p.color}` : `1px solid ${p.color}28`,
                                               whiteSpace: 'nowrap', lineHeight: 1.5,
                                             }}>{p.label}</div>
                                             {ev.at && <span style={{ fontSize: 10, color: 'var(--text-faint)', whiteSpace: 'nowrap' }}>{fmtDate(ev.at)}</span>}
@@ -2445,13 +2456,21 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                                     </div>
                                   )}
 
-                                  {/* Send Revision CTA */}
-                                  {hasRejection && (
-                                    <button
-                                      onClick={() => openResendModal(task, activeProject)}
-                                      style={{ marginTop: 6, fontSize: 12, fontWeight: 700, padding: '5px 14px', borderRadius: 6, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer', whiteSpace: 'nowrap' }}
-                                    >Send Revision {nextRevNum} →</button>
-                                  )}
+                                  {/* CTAs below chain */}
+                                  <div style={{ display: 'flex', gap: 8, marginTop: 6, flexWrap: 'wrap' }}>
+                                    {isAwaiting && (
+                                      <button
+                                        onClick={() => { setExtraRecipients([]); setShowContactDropdown(false); setTaskCompleteEmail({ task, project: activeProject }); }}
+                                        style={{ fontSize: 11, fontWeight: 700, padding: '4px 12px', borderRadius: 6, border: '1px solid #f59e0b', background: 'transparent', color: '#f59e0b', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                                      >Resend to client</button>
+                                    )}
+                                    {hasRejection && (
+                                      <button
+                                        onClick={() => openResendModal(task, activeProject)}
+                                        style={{ fontSize: 11, fontWeight: 700, padding: '4px 12px', borderRadius: 6, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                                      >Send Revision {nextRevNum} →</button>
+                                    )}
+                                  </div>
                                 </div>
                               );
                             })()}
@@ -2868,7 +2887,6 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
           `<p style="font-family:sans-serif;font-size:14px;">Best,<br>Part Human</p>`,
         ].join('');
         const ccEmails    = extraRecipients.map(c => c.email).filter(Boolean);
-        const gmailUrl    = toEmail ? `https://mail.google.com/mail/?view=cm&to=${encodeURIComponent(toEmail)}&su=${encodeURIComponent(subject)}${ccEmails.length ? `&cc=${encodeURIComponent(ccEmails.join(','))}` : ''}` : null;
         const allContacts = (project.contacts || []).filter(c => c.email && c.email !== toEmail && !extraRecipients.find(r => r.email === c.email));
 
         return (
@@ -2931,7 +2949,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                 </div>
               </div>
 
-              {portalUrl && <div style={{ marginTop: 12, fontSize: 11, color: 'var(--text-faint)', textAlign: 'right' }}>💡 Once Gmail opens, paste to drop in the styled message</div>}
+
 
               {/* Footer */}
               <div style={{ display: 'flex', alignItems: 'center', marginTop: 14, gap: 10 }}>
@@ -2957,20 +2975,26 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                   style={{ padding: '9px 16px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}
                 >Copy</button>
                 <button
+                  disabled={sendingEmail || emailSentFor === task.id}
                   onClick={async () => {
-                    try { await navigator.clipboard.write([new ClipboardItem({ 'text/html': new Blob([htmlBody], { type: 'text/html' }), 'text/plain': new Blob([body], { type: 'text/plain' }) })]); }
-                    catch { /* skip */ }
+                    if (!toEmail) return;
+                    setSendingEmail(true);
                     try {
+                      await sendPortalNotification(toEmail, subject, htmlBody, ccEmails);
                       const chain = await addToReviewChain(task.id, { type: 'sent', by: 'Part Human' });
                       const chainPatch = t => t.id === task.id ? { ...t, review_chain: chain } : t;
                       setTasks(prev => prev.map(chainPatch));
                       setAllTasks(prev => ({ ...prev, [project.id]: (prev[project.id] || []).map(chainPatch) }));
-                    } catch { /* non-fatal */ }
-                    window.open(gmailUrl, '_blank');
-                    setTaskCompleteEmail(null);
+                      setEmailSentFor(task.id);
+                      setTimeout(() => { setTaskCompleteEmail(null); setEmailSentFor(null); }, 1200);
+                    } catch (err) {
+                      alert('Failed to send: ' + err.message);
+                    } finally {
+                      setSendingEmail(false);
+                    }
                   }}
-                  style={{ padding: '9px 20px', borderRadius: 8, border: 'none', background: 'var(--accent)', color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
-                >Open in Gmail ↗</button>
+                  style={{ padding: '9px 20px', borderRadius: 8, border: 'none', background: emailSentFor === task.id ? '#10b981' : 'var(--accent)', color: '#fff', fontSize: 13, fontWeight: 700, cursor: sendingEmail ? 'wait' : 'pointer', opacity: sendingEmail ? 0.7 : 1, transition: 'background .3s' }}
+                >{emailSentFor === task.id ? '&#x2713; Sent!' : sendingEmail ? 'Sending…' : 'Send Email'}</button>
               </div>
             </div>
           </div>
@@ -3009,7 +3033,6 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
           fileHtml,
         ].join('');
         const ccEmailsResend = extraRecipients.map(c => c.email).filter(Boolean);
-        const gmailUrl = toEmail ? `https://mail.google.com/mail/?view=cm&to=${encodeURIComponent(toEmail)}&su=${encodeURIComponent(subject)}${ccEmailsResend.length ? `&cc=${encodeURIComponent(ccEmailsResend.join(','))}` : ''}` : null;
         const allContactsResend = (project?.contacts || []).filter(c => c.email && c.email !== toEmail && !extraRecipients.find(r => r.email === c.email));
 
         return (
@@ -3093,11 +3116,6 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                   </div>
                 </div>
               </div>
-              {portalUrl && (
-                <div style={{ marginTop: 14, fontSize: 11, color: 'var(--text-faint)', textAlign: 'right' }}>
-                  💡 Once Gmail opens, just paste to drop in the styled message
-                </div>
-              )}
               <div style={{ display: 'flex', gap: 10, marginTop: 8, justifyContent: 'flex-end' }}>
                 <button
                   onClick={async () => {
@@ -3110,12 +3128,10 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                 {gmailUrl && (
                   <button
                     onClick={async () => {
+                      if (!toEmail) return;
+                      setSendingEmail(true);
                       try {
-                        await navigator.clipboard.write([new ClipboardItem({ 'text/html': new Blob([htmlBody], { type: 'text/html' }), 'text/plain': new Blob([body], { type: 'text/plain' }) })]);
-                      } catch { /* skip */ }
-                      // Record "revised_sent" event in chain, then clear rejection fields
-                      // so the portal resets to "awaiting approval" for the revised work.
-                      try {
+                        await sendPortalNotification(toEmail, subject, htmlBody, ccEmailsResend);
                         const chain = await addToReviewChain(task.id, { type: 'revised_sent', by: 'Part Human', response: messageBody });
                         await clearRejectionFields(task.id);
                         const patchTask = t => t.id === task.id
@@ -3128,12 +3144,16 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                           return { ...prev, [pid]: (prev[pid] || []).map(patchTask) };
                         });
                         setAssignedTasks(prev => prev.map(patchTask));
-                      } catch { /* non-fatal */ }
-                      window.open(gmailUrl, '_blank');
-                      setResendEmail(null);
+                        setEmailSentFor(task.id);
+                        setTimeout(() => { setResendEmail(null); setEmailSentFor(null); }, 1200);
+                      } catch (err) {
+                        alert('Failed to send: ' + err.message);
+                      } finally {
+                        setSendingEmail(false);
+                      }
                     }}
-                    style={{ padding: '9px 20px', borderRadius: 8, border: 'none', background: 'var(--accent)', color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
-                  >Open in Gmail ↗</button>
+                    style={{ padding: '9px 20px', borderRadius: 8, border: 'none', background: emailSentFor === task.id ? '#10b981' : 'var(--accent)', color: '#fff', fontSize: 13, fontWeight: 700, cursor: sendingEmail ? 'wait' : 'pointer', opacity: sendingEmail ? 0.7 : 1, transition: 'background .3s' }}
+                  >{emailSentFor === task.id ? '&#x2713; Sent!' : sendingEmail ? 'Sending…' : 'Send Email'}</button>
                 )}
               </div>
             </div>
