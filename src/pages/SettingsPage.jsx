@@ -2,14 +2,6 @@ import { useState, useEffect, useRef } from 'react';
 import { saveIcp, loadTeamEmails, saveTeamEmails, saveTeamMembers } from '../lib/settings';
 import { supabase } from '../lib/supabase';
 
-async function loadDocLink() {
-  const { data } = await supabase.from('app_settings').select('value').eq('key', 'sales_doc_link').single();
-  return data?.value || '';
-}
-async function saveDocLink(url) {
-  await supabase.from('app_settings').upsert({ key: 'sales_doc_link', value: url }, { onConflict: 'key' });
-}
-
 // ── Reference document helpers ────────────────────────────────────────────────
 async function loadRefDocs() {
   const { data } = await supabase.from('app_settings').select('value').eq('key', 'reference_docs').single();
@@ -133,11 +125,6 @@ export default function SettingsPage({ icp, onIcpSaved, teamMembers = [], onTeam
   const [testStatus, setTestStatus]   = useState('');
   const [testMsg, setTestMsg]         = useState('');
 
-  // Sales methodology doc link
-  const [docLink, setDocLink]       = useState('');
-  const [docSaving, setDocSaving]   = useState(false);
-  const [docSaved, setDocSaved]     = useState(false);
-
   // Reference documents (uploaded files)
   const [refDocs, setRefDocs]         = useState([]);
   const [uploading, setUploading]     = useState(false);
@@ -152,7 +139,6 @@ export default function SettingsPage({ icp, onIcpSaved, teamMembers = [], onTeam
   }, [teamMembers]);
 
   useEffect(() => { loadTeamEmails().then(setTeamEmails); }, []);
-  useEffect(() => { loadDocLink().then(setDocLink); }, []);
   useEffect(() => { loadRefDocs().then(setRefDocs); }, []);
 
   // ── ICP handlers ────────────────────────────────────────────────────────────
@@ -452,17 +438,7 @@ export default function SettingsPage({ icp, onIcpSaved, teamMembers = [], onTeam
       <SectionHeader
         title="📖 Sales Methodology"
         description="The Dan Allard 5-touch outreach framework this program is built on. Reference this when writing emails or coaching the cadence."
-      >
-        {docLink && (
-          <a
-            href={docLink}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="btn btn-ghost btn-sm"
-            style={{ textDecoration: 'none' }}
-          >↗ Open original doc</a>
-        )}
-      </SectionHeader>
+      />
 
       {/* Touch cadence cards */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 10, marginBottom: 20 }}>
@@ -620,36 +596,6 @@ export default function SettingsPage({ icp, onIcpSaved, teamMembers = [], onTeam
             ))}
           </div>
         )}
-      </div>
-
-      {/* Document link */}
-      <div className="card" style={{ padding: '16px 20px' }}>
-        <label style={{ fontWeight: 700, marginBottom: 4, display: 'block', fontSize: 13 }}>External document link</label>
-        <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 8, marginTop: 0 }}>Link to a Google Drive, Notion, or Dropbox version of Dan's plan (shows as "Open original doc" button above).</p>
-        <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-          <input
-            type="url"
-            value={docLink}
-            onChange={e => { setDocLink(e.target.value); setDocSaved(false); }}
-            placeholder="https://…"
-            style={{ flex: 1, fontSize: 13, padding: '7px 10px' }}
-          />
-          {docLink && (
-            <a href={docLink} target="_blank" rel="noopener noreferrer" className="btn btn-ghost btn-sm" style={{ textDecoration: 'none', whiteSpace: 'nowrap' }}>↗ Open</a>
-          )}
-          <button
-            className="btn btn-primary"
-            onClick={async () => {
-              setDocSaving(true);
-              await saveDocLink(docLink);
-              setDocSaving(false);
-              setDocSaved(true);
-              setTimeout(() => setDocSaved(false), 2000);
-            }}
-            disabled={docSaving}
-            style={{ whiteSpace: 'nowrap' }}
-          >{docSaving ? 'Saving…' : docSaved ? '✅ Saved!' : '💾 Save'}</button>
-        </div>
       </div>
 
       {/* bottom breathing room */}
