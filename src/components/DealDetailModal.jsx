@@ -8,6 +8,7 @@ import {
 import { fetchDealMeetings, deleteProjectMeeting } from '../lib/projects';
 import { fetchCompanyIntel, runBuildThesis, findOrCreateCompany, addCompanyResearchItem, removeCompanyResearchItem, addCompanyContact } from '../lib/clients';
 import { loadIcp } from '../lib/settings';
+import { requestAndSave, clearReminder, hasReminder } from '../lib/reminders';
 import TranscriptImporter from './TranscriptImporter';
 import DealProposalDraft from './DealProposalDraft';
 
@@ -32,7 +33,7 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
   const [addingTask, setAddingTask] = useState(false);
   const [savingAct, setSavingAct] = useState(false);
   const [savingTask, setSavingTask] = useState(false);
-  const [tab, setTab]             = useState('tasks');
+  const [tab, setTab]             = useState('nextsteps');
   const [meetings, setMeetings]   = useState([]);
   const [showTranscript, setShowTranscript] = useState(null);
   const [showTranscriptImporter, setShowTranscriptImporter] = useState(false);
@@ -73,16 +74,15 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
     }
   }, [initialDeal.id, isNew]);
 
-  // Load company intel once when research or contacts tab first opens
+  // Load company intel silently on mount so AI suggestions are ready on first tab
   useEffect(() => {
-    if ((tab === 'research' || tab === 'contacts') && deal.company_name && !intelFetchedRef.current && !intelLoading) {
+    if (!isNew && deal.company_name) {
       intelFetchedRef.current = true;
-      setIntelLoading(true);
       fetchCompanyIntel(deal.company_name)
-        .then(intel => { setCompanyIntel(intel); setIntelLoading(false); })
-        .catch(() => setIntelLoading(false));
+        .then(intel => setCompanyIntel(intel))
+        .catch(() => {});
     }
-  }, [tab]);
+  }, []);
 
   // Auto-scroll thesis log
   useEffect(() => {
@@ -442,14 +442,17 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
           {!isNew && (
             <>
               {overdueTasks.length > 0 && (
-                <div style={{ background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: 6, padding: '8px 12px', marginBottom: 12, fontSize: 12, color: '#b91c1c', fontWeight: 600 }}>
-                  ⚠️ {overdueTasks.length} overdue task{overdueTasks.length > 1 ? 's' : ''}
+                <div
+                  style={{ background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: 6, padding: '8px 12px', marginBottom: 12, fontSize: 12, color: '#b91c1c', fontWeight: 600, cursor: 'pointer' }}
+                  onClick={() => setTab('nextsteps')}
+                >
+                  ⚠️ {overdueTasks.length} overdue next step{overdueTasks.length > 1 ? 's' : ''} — click to view
                 </div>
               )}
 
               <div style={{ display: 'flex', gap: 0, borderBottom: '2px solid var(--border)', marginBottom: 16, overflowX: 'auto' }}>
                 {[
-                  { id: 'tasks',      label: openTasks.length > 0 ? `Tasks (${openTasks.length})` : 'Tasks' },
+                  { id: 'nextsteps',  label: openTasks.length > 0 ? `Next Steps (${openTasks.length})` : 'Next Steps' },
                   { id: 'activities', label: 'Activity' },
                   { id: 'meetings',   label: meetings.length > 0 ? `Meetings (${meetings.length})` : 'Meetings' },
                   { id: 'research',   label: companyIntel?.thesis_built ? '🔬 Research ✓' : '🔬 Research' },
@@ -519,17 +522,81 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
                 </div>
               )}
 
-              {/* ── Tasks ── */}
-              {tab === 'tasks' && (
+              {/* ── Next Steps ── */}
+              {tab === 'nextsteps' && (
                 <div>
+
+                  {/* AI-recommended next steps from thesis */}
+                  {(companyIntel?.thesis_next_step || companyIntel?.entry_contact || companyIntel?.recommended_angle) && (
+                    <div style={{ marginBottom: 20 }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 8 }}>
+                        AI Recommended
+                      </div>
+
+                      {/* Recommended next action */}
+                      {companyIntel.thesis_next_step && (
+                        <div style={{ padding: '10px 12px', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8, marginBottom: 8, display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                          <span style={{ fontSize: 15, flexShrink: 0 }}>🎯</span>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: 11, fontWeight: 700, color: '#15803d', marginBottom: 3 }}>NEXT ACTION</div>
+                            <p style={{ fontSize: 12, color: '#14532d', lineHeight: 1.6, margin: '0 0 6px' }}>{companyIntel.thesis_next_step}</p>
+                            <button
+                              onClick={() => { setTaskForm(f => ({ ...f, title: companyIntel.thesis_next_step })); setAddingTask(true); }}
+                              style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 4, border: '1px solid #86efac', background: '#dcfce7', color: '#15803d', cursor: 'pointer' }}
+                            >
+                              + Add as Next Step
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Entry contact outreach hook */}
+                      {companyIntel.entry_contact?.name && (
+                        <div style={{ padding: '10px 12px', background: '#ede9fe', border: '1px solid #c4b5fd', borderRadius: 8, marginBottom: 8, display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                          <span style={{ fontSize: 15, flexShrink: 0 }}>✉️</span>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: 11, fontWeight: 700, color: '#6d28d9', marginBottom: 3 }}>
+                              OUTREACH — {companyIntel.entry_contact.name}{companyIntel.entry_contact.title ? `, ${companyIntel.entry_contact.title}` : ''}
+                            </div>
+                            {companyIntel.entry_contact.hook && (
+                              <p style={{ fontSize: 12, color: '#4c1d95', lineHeight: 1.6, margin: '0 0 6px' }}>{companyIntel.entry_contact.hook}</p>
+                            )}
+                            <button
+                              onClick={() => {
+                                const text = `Reach out to ${companyIntel.entry_contact.name}${companyIntel.entry_contact.hook ? ` — ${companyIntel.entry_contact.hook}` : ''}`;
+                                setTaskForm(f => ({ ...f, title: text }));
+                                setAddingTask(true);
+                              }}
+                              style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 4, border: '1px solid #c4b5fd', background: '#ede9fe', color: '#6d28d9', cursor: 'pointer' }}
+                            >
+                              + Add as Next Step
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Positioning angle */}
+                      {companyIntel.recommended_angle && (
+                        <div style={{ padding: '10px 12px', background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 8, marginBottom: 8, display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                          <span style={{ fontSize: 15, flexShrink: 0 }}>💡</span>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: 11, fontWeight: 700, color: '#c2410c', marginBottom: 3 }}>POSITIONING ANGLE</div>
+                            <p style={{ fontSize: 12, color: '#7c2d12', lineHeight: 1.6, margin: 0 }}>{companyIntel.recommended_angle}</p>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Manual next steps */}
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-                    <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em' }}>Tasks</span>
-                    <button className="btn btn-secondary btn-xs" onClick={() => setAddingTask(a => !a)}>+ Add Task</button>
+                    <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em' }}>My Next Steps</span>
+                    <button className="btn btn-secondary btn-xs" onClick={() => setAddingTask(a => !a)}>+ Add Step</button>
                   </div>
 
                   {addingTask && (
                     <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: 12, marginBottom: 12 }}>
-                      <input type="text" placeholder="Task title…" value={taskForm.title} onChange={e => setTaskForm(f => ({ ...f, title: e.target.value }))} style={{ width: '100%', fontSize: 12, marginBottom: 8 }} />
+                      <input type="text" placeholder="What needs to happen next?" value={taskForm.title} onChange={e => setTaskForm(f => ({ ...f, title: e.target.value }))} style={{ width: '100%', fontSize: 12, marginBottom: 8 }} />
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
                         <input type="date" value={taskForm.due_date} onChange={e => setTaskForm(f => ({ ...f, due_date: e.target.value }))} style={{ fontSize: 12 }} />
                         <select value={taskForm.assigned_to} onChange={e => setTaskForm(f => ({ ...f, assigned_to: e.target.value }))} style={{ fontSize: 12 }}>
@@ -543,22 +610,51 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
                     </div>
                   )}
 
-                  {tasks.length === 0 && !addingTask && (
-                    <p style={{ fontSize: 12, color: 'var(--text-faint)', textAlign: 'center', padding: '16px 0' }}>No tasks yet.</p>
+                  {tasks.length === 0 && !addingTask && !companyIntel?.thesis_next_step && (
+                    <p style={{ fontSize: 12, color: 'var(--text-faint)', textAlign: 'center', padding: '16px 0' }}>
+                      No next steps yet. Build a thesis to get AI recommendations, or add one manually.
+                    </p>
                   )}
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                     {tasks.map(t => {
                       const overdue = !t.completed && t.due_date && new Date(t.due_date) < new Date();
+                      const reminded = t.id && hasReminder(t.id);
                       return (
                         <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: t.completed ? 'var(--surface)' : overdue ? '#fef2f2' : 'var(--surface)', borderRadius: 6, border: `1px solid ${overdue && !t.completed ? '#fca5a5' : 'var(--border)'}`, opacity: t.completed ? 0.6 : 1 }}>
                           <input type="checkbox" checked={t.completed} onChange={() => toggleTask(t)} style={{ cursor: 'pointer', flexShrink: 0 }} />
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <span style={{ fontSize: 13, textDecoration: t.completed ? 'line-through' : 'none', color: t.completed ? 'var(--text-muted)' : 'var(--text)' }}>{t.title}</span>
-                            <div style={{ display: 'flex', gap: 6, marginTop: 2, alignItems: 'center' }}>
+                            <div style={{ display: 'flex', gap: 6, marginTop: 2, alignItems: 'center', flexWrap: 'wrap' }}>
                               {t.due_date && <span style={{ fontSize: 11, color: overdue && !t.completed ? '#b91c1c' : 'var(--text-faint)', fontWeight: overdue && !t.completed ? 700 : 400 }}>{overdue && !t.completed ? '⚠ ' : ''}{t.due_date}</span>}
                               {t.assigned_to && <span style={{ fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 3, background: t.assigned_to === 'Mike' ? '#f3e8ff' : '#eff6ff', color: t.assigned_to === 'Mike' ? '#7c3aed' : '#1d4ed8' }}>{t.assigned_to}</span>}
+                              {reminded && <span style={{ fontSize: 10, color: '#f59e0b' }}>🔔</span>}
                             </div>
                           </div>
+                          {/* Reminder toggle */}
+                          {!t.completed && t.due_date && t.id && (
+                            <button
+                              title={reminded ? 'Cancel reminder' : 'Set reminder'}
+                              onClick={async () => {
+                                if (reminded) {
+                                  clearReminder(t.id);
+                                } else {
+                                  const ok = await requestAndSave({
+                                    id: t.id,
+                                    title: t.title,
+                                    company: deal.company_name,
+                                    assigned_to: t.assigned_to,
+                                    due_date: t.due_date,
+                                  });
+                                  if (!ok) alert('Enable browser notifications to set reminders.');
+                                }
+                                // force re-render
+                                setTasks(ts => [...ts]);
+                              }}
+                              style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, flexShrink: 0, padding: '0 2px', opacity: reminded ? 1 : 0.35 }}
+                            >
+                              🔔
+                            </button>
+                          )}
                           <button onClick={() => removeTask(t.id)} style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 14, flexShrink: 0, padding: '0 2px' }}>×</button>
                         </div>
                       );

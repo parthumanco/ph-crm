@@ -10,6 +10,7 @@ import WeeklyReportPage from './pages/WeeklyReportPage';
 import ChatPage from './pages/ChatPage';
 import SettingsPage from './pages/SettingsPage';
 import { loadIcp, DEFAULT_ICP, loadTeamMembers, DEFAULT_TEAM_MEMBERS } from './lib/settings';
+import { checkAndFireReminders } from './lib/reminders';
 
 const NAV = [
   { id: 'clients',  label: 'Clients',            icon: '🏢' },
@@ -59,6 +60,7 @@ export default function App() {
   useEffect(() => {
     loadIcp().then(loaded => setIcp(loaded));
     loadTeamMembers().then(setTeamMembers);
+    checkAndFireReminders(); // fire any due/overdue task reminders on load
   }, []);
 
   // Increment the refresh key for a page every time the user navigates to it,
