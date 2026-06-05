@@ -411,6 +411,198 @@ Return JSON only.`,
   return jsonObj;
 }
 
+// ── Build Company Thesis — multi-phase deep research ─────────────────────────
+// onProgress(phase 1-4, status 'running'|'done'|'error', data)
+// clientDetail = { projects, meetings, activities, items }
+
+function extractJsonBlock(data, type = 'object') {
+  const open = type === 'object' ? '{' : '[';
+  const close = type === 'object' ? '}' : ']';
+  const blocks = (data.content || []).filter(b => b.type === 'text');
+  for (let i = blocks.length - 1; i >= 0; i--) {
+    const raw = blocks[i]?.text || '';
+    const stripped = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
+    const s = stripped.indexOf(open);
+    const e = stripped.lastIndexOf(close);
+    if (s !== -1 && e !== -1) {
+      try { return JSON.parse(stripped.slice(s, e + 1)); } catch { /* try next */ }
+    }
+  }
+  return null;
+}
+
+function buildClientContext(clientDetail) {
+  const lines = [];
+  const { projects = [], meetings = [], activities = [], items = [] } = clientDetail;
+  if (projects.length) {
+    lines.push('PROJECTS:');
+    projects.forEach(p => lines.push(`  - ${p.name} (${p.archived_at ? 'archived' : p.status})${p.description ? ': ' + p.description : ''}`));
+  }
+  if (meetings.length) {
+    lines.push('MEETINGS:');
+    meetings.slice(0, 8).forEach(m => {
+      lines.push(`  - [${m.meeting_date || 'no date'}] ${m.title || 'Meeting'}${m.summary ? ': ' + m.summary : ''}`);
+      if (m.transcript) lines.push(`    Excerpt: ${m.transcript.slice(0, 300)}…`);
+    });
+  }
+  if (activities.length) {
+    lines.push('ACTIVITIES:');
+    activities.slice(0, 12).forEach(a => lines.push(`  - [${a.activity_date}] ${a.type}: ${a.summary}`));
+  }
+  if (items.length) {
+    lines.push('RESEARCH NOTES & LINKS:');
+    items.forEach(it => {
+      if (it.type === 'note') lines.push(`  - Note: ${it.body || it.title}`);
+      else lines.push(`  - Link: ${it.title}${it.url ? ' (' + it.url + ')' : ''}${it.body ? ' — ' + it.body : ''}`);
+    });
+  }
+  return lines.join('\n');
+}
+
+export async function buildCompanyThesis(company, icp, clientDetail = {}, onProgress = () => {}) {
+  const PHASE_TIMEOUT = 150000; // 2.5 min per phase
+  const name = company.name;
+  const site = company.website || '';
+  const internalCtx = buildClientContext(clientDetail);
+
+  // ── Phase 1: Company foundation + full leadership discovery ───────────────
+  onProgress(1, 'running', null);
+  const p1raw = await withTimeout(callClaude({
+    model: 'claude-sonnet-4-6',
+    max_tokens: 3000,
+    system: 'You are a B2B research analyst. Search thoroughly. Return only valid JSON, no markdown.',
+    tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 5 }],
+    messages: [{ role: 'user', content:
+`Research ${name}${site ? ` (${site})` : ''} thoroughly. Do at least 2 searches.
+
+TASK A — Company overview: Confirm website URL, HQ city/country, employee count, funding stage, industry, founding year, what they do in 2-3 sentences.
+
+TASK B — Leadership team: Search "${name} team", "${name} leadership", and their website /about or /team page AND their LinkedIn company page. Find every C-suite and VP-level person especially: CEO, CMO, VP/Director of Marketing, VP/Head of Brand, Head of Communications, Creative Director, Chief Brand Officer. For each person record their full name, exact title, and LinkedIn profile URL (only if you actually found it in search results — never construct one).
+
+Return JSON only:
+{"website":"str","hq":"City, State/Country","employee_count_num":number_or_null,"funding_stage":"str","industry":"str","description":"str","leaders":[{"name":"str","title":"str","linkedin":"url_or_null","email":"str_or_null"}]}`
+    }],
+  }), PHASE_TIMEOUT);
+  const p1 = extractJsonBlock(p1raw) || {};
+  onProgress(1, 'done', { leaders: (p1.leaders || []).length });
+
+  // ── Phase 2: Per-contact signal mining ───────────────────────────────────
+  onProgress(2, 'running', null);
+  const knownContacts = company.contacts || [];
+  // Merge phase1 leaders with existing contacts, deduping by name
+  const seenNames = new Set(knownContacts.map(c => c.name?.toLowerCase()));
+  const allContacts = [
+    ...knownContacts,
+    ...(p1.leaders || []).filter(l => l.name && !seenNames.has(l.name.toLowerCase())),
+  ];
+
+  let p2contacts = allContacts;
+  if (allContacts.length > 0) {
+    const contactList = allContacts
+      .map(c => `${c.name}${c.title ? ', ' + c.title : ''}${c.linkedin ? ' — ' + c.linkedin : ''}`)
+      .join('\n');
+    const p2raw = await withTimeout(callClaude({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 3500,
+      system: 'You are a sales intelligence researcher. Return only valid JSON, no markdown.',
+      tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 6 }],
+      messages: [{ role: 'user', content:
+`For each of these ${name} leaders, search LinkedIn and the web for recent activity (last 90 days). Find their most recent posts, interviews, podcasts, articles, or public statements about: brand, growth, company direction, team challenges, product, culture, or hiring.
+
+Also confirm or find each person's LinkedIn URL and email if publicly available.
+
+Leaders to research:
+${contactList}
+
+Return JSON only:
+{"contacts":[{"name":"str","title":"str","linkedin":"url_or_null","email":"str_or_null","signals":[{"headline":"max 12 words","summary":"2-3 sentences: what they said and why it matters for a brand conversation","date":"str_or_null","url":"str_or_null","category":"leadership|expansion|product|pain|hiring|social"}]}]}`
+      }],
+    }), PHASE_TIMEOUT);
+    p2contacts = extractJsonBlock(p2raw)?.contacts || allContacts;
+  }
+  onProgress(2, 'done', { contacts: p2contacts.length });
+
+  // ── Phase 3: Trigger events, job postings, competitive context ────────────
+  onProgress(3, 'running', null);
+  const p3raw = await withTimeout(callClaude({
+    model: 'claude-sonnet-4-6',
+    max_tokens: 3000,
+    system: 'You are a sales intelligence researcher. Return only valid JSON, no markdown.',
+    tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 4 }],
+    messages: [{ role: 'user', content:
+`Find recent intelligence for ${name}${site ? ` (${site})` : ''} — last 90 days.
+
+Search 1: Company news, press releases, funding announcements, acquisitions, product launches, rebrands, awards, conference speaking
+Search 2: Open job postings in brand, marketing, creative, or communications roles (search LinkedIn Jobs or their careers page) — rapid hiring signals investment in those areas
+Search 3: Competitive landscape — who are their top 2-3 direct competitors? How does ${name} differentiate?
+
+Return JSON only:
+{"triggers":[{"headline":"str","detail":"str","category":"leadership|funding|expansion|product|pain|hiring|social","urgency":"high|medium|low","date":"str_or_null","url":"str_or_null"}],"job_postings":[{"title":"str","signal":"why this matters for a brand agency conversation"}],"competitors":["str"],"market_position":"1-2 sentences on how they compete"}`
+    }],
+  }), PHASE_TIMEOUT);
+  const p3 = extractJsonBlock(p3raw) || {};
+  onProgress(3, 'done', { triggers: (p3.triggers || []).length });
+
+  // ── Phase 4: Full thesis synthesis ───────────────────────────────────────
+  onProgress(4, 'running', null);
+  const icpProfile = buildIcpProfile(icp);
+  const p4raw = await withTimeout(callClaude({
+    model: 'claude-sonnet-4-6',
+    max_tokens: 6000,
+    system: `You are a senior brand strategist at Part Human, a brand strategy agency. Your job is to synthesise research into a precise sales thesis. Return only valid JSON, no markdown.\n\n${icpProfile}`,
+    messages: [{ role: 'user', content:
+`Synthesise all research into a complete sales thesis for ${name}.
+
+COMPANY PROFILE:
+${JSON.stringify({ website: p1.website, hq: p1.hq, employees: p1.employee_count_num, funding: p1.funding_stage, industry: p1.industry, description: p1.description }, null, 2)}
+
+LEADERSHIP & PERSONAL SIGNALS:
+${JSON.stringify(p2contacts, null, 2)}
+
+TRIGGER EVENTS & COMPETITIVE:
+${JSON.stringify(p3, null, 2)}
+
+${internalCtx ? `OUR EXISTING RELATIONSHIP:\n${internalCtx}` : ''}
+
+Write a full thesis covering:
+1. Why they need brand strategy help RIGHT NOW — tie to specific signals, not generic reasons
+2. ICP fit and scoring
+3. The single best entry point: who to contact first and exactly why, with a specific hook referencing their actual posts or news
+4. Supporting angles for 2-3 other contacts
+5. Risks or sensitivities to avoid
+6. Recommended next action
+
+RULES: Never use em dashes (—). Use commas or "and" instead. Only include LinkedIn URLs you actually found in the research data above — never construct them.
+
+Return JSON only:
+{
+  "icp_score": 1-10,
+  "icp_tier": "str",
+  "overall_score": 1-10,
+  "funding_stage": "str",
+  "employee_count": "str",
+  "employee_count_num": number_or_null,
+  "hq": "str",
+  "industry": "str",
+  "website": "str_or_null",
+  "summary": "3-4 sentence company overview",
+  "thesis": "3-5 paragraph sales thesis — why Part Human, why now, why these contacts. Specific, not generic.",
+  "recommended_angle": "the primary positioning hook in 1-2 sentences",
+  "entry_contact": {"name":"str","title":"str","linkedin":"url_or_null","angle":"str","hook":"1-2 sentences referencing a specific post, news item, or signal"},
+  "contact_angles": [{"name":"str","title":"str","linkedin":"url_or_null","angle":"str","hook":"str"}],
+  "triggers": [{"headline":"str","detail":"str","category":"str","urgency":"str","date":"str_or_null"}],
+  "risks": ["str"],
+  "next_step": "str",
+  "thesis_built": true
+}`
+    }],
+  }), PHASE_TIMEOUT);
+  const synthesis = extractJsonBlock(p4raw);
+  if (!synthesis) throw new Error('Thesis synthesis returned no JSON');
+  onProgress(4, 'done', synthesis);
+  return synthesis;
+}
+
 // ── LinkedIn post scan — trigger events from contact activity ─────────────────
 
 export async function scanLinkedInPosts(contacts, companyName, existingPosts = []) {

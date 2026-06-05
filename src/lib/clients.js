@@ -97,6 +97,43 @@ export async function runClientDeepScan(companyId, company, icp, detail = {}) {
   return { ...company, ...update };
 }
 
+export async function runBuildThesis(companyId, company, icp, detail = {}, onProgress = () => {}) {
+  const { buildCompanyThesis } = await import('./anthropic.js');
+  const result = await buildCompanyThesis(company, icp, detail, onProgress);
+
+  const stripEmDash = s => (s || '').replace(/\s*—\s*/g, ' - ');
+  const update = {
+    icp_score:          result.icp_score      ? Math.round(result.icp_score)      : null,
+    overall_score:      result.overall_score  ? Math.round(result.overall_score)  : null,
+    icp_tier:           result.icp_tier       || null,
+    funding_stage:      result.funding_stage  || null,
+    employee_count_num: result.employee_count_num ? Math.round(result.employee_count_num) : null,
+    employee_count:     result.employee_count_num ? String(Math.round(result.employee_count_num)) : null,
+    hq:                 result.hq             || null,
+    industry:           result.industry       || null,
+    summary:            stripEmDash(result.summary) || null,
+    recommended_angle:  stripEmDash(result.recommended_angle) || null,
+    triggers:           (result.triggers || []).map(t => ({ ...t, headline: stripEmDash(t.headline), detail: stripEmDash(t.detail) })),
+    contact_angles:     [
+      ...(result.entry_contact ? [{ ...result.entry_contact, angle: stripEmDash(result.entry_contact.angle), hook: stripEmDash(result.entry_contact.hook), is_primary: true }] : []),
+      ...(result.contact_angles || []).map(ca => ({ ...ca, angle: stripEmDash(ca.angle), hook: stripEmDash(ca.hook) })),
+    ],
+    thesis:             result.thesis         || null,
+    thesis_risks:       result.risks          || [],
+    thesis_next_step:   result.next_step      || null,
+    thesis_built:       true,
+    thesis_date:        new Date().toISOString(),
+    deep_scanned:       true,
+    scan_date:          new Date().toISOString(),
+    ...(result.website ? { website: result.website } : {}),
+    ...(result.companyLinkedinUrl ? { company_linkedin: result.companyLinkedinUrl } : {}),
+  };
+
+  const { error } = await supabase.from('companies').update(update).eq('id', companyId);
+  if (error) throw new Error(error.message);
+  return { ...company, ...update };
+}
+
 export async function upsertClient(client) {
   const { data, error } = await supabase
     .from('clients')

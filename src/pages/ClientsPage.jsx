@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import {
-  fetchClients, fetchClientDetail, fetchCompanyIntel, runClientDeepScan,
+  fetchClients, fetchClientDetail, fetchCompanyIntel, runClientDeepScan, runBuildThesis,
   upsertClient, addClientItem, deleteClientItem, askClientQuestion,
 } from '../lib/clients';
 
@@ -50,6 +50,11 @@ export default function ClientsPage({ onNavigate, refreshKey, icp }) {
   // Deep scan
   const [scanning, setScanning]   = useState(false);
   const [scanStatus, setScanStatus] = useState('');
+
+  // Build Thesis
+  const [buildingThesis, setBuildingThesis] = useState(false);
+  const [thesisPhases, setThesisPhases]     = useState([]); // [{phase,status,detail}]
+  const [thesisError, setThesisError]       = useState('');
 
   // AI chat
   const [aiQ, setAiQ]           = useState('');
@@ -133,6 +138,31 @@ export default function ClientsPage({ onNavigate, refreshKey, icp }) {
       setTimeout(() => setScanStatus(''), 4000);
     } finally {
       setScanning(false);
+    }
+  };
+
+  const THESIS_PHASES = [
+    { phase: 1, label: 'Company & Leadership Discovery',  icon: '🏢' },
+    { phase: 2, label: 'Contact Signal Mining',           icon: '👤' },
+    { phase: 3, label: 'Trigger Events & Competitive',    icon: '📡' },
+    { phase: 4, label: 'Synthesising Full Thesis',        icon: '🧠' },
+  ];
+
+  const handleBuildThesis = async () => {
+    if (!intel?.id || buildingThesis) return;
+    setBuildingThesis(true);
+    setThesisError('');
+    setThesisPhases(THESIS_PHASES.map(p => ({ ...p, status: 'waiting', detail: null })));
+    setTab('overview');
+    try {
+      const updated = await runBuildThesis(intel.id, intel, icp, detail || {}, (phase, status, data) => {
+        setThesisPhases(prev => prev.map(p => p.phase === phase ? { ...p, status, detail: data } : p));
+      });
+      setIntel(updated);
+    } catch (e) {
+      setThesisError(e.message || 'Thesis build failed');
+    } finally {
+      setBuildingThesis(false);
     }
   };
 
@@ -223,7 +253,7 @@ export default function ClientsPage({ onNavigate, refreshKey, icp }) {
       </div>
 
       {/* ── Right panel ── */}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', position: 'relative' }}>
         {!selected || (!detail && !loadingDetail) ? (
           <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 12, color: 'var(--text-faint)' }}>
             <div style={{ fontSize: 32 }}>🏢</div>
@@ -255,15 +285,24 @@ export default function ClientsPage({ onNavigate, refreshKey, icp }) {
                     {detail.client.linkedin_url && <a href={detail.client.linkedin_url} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: '#0077b5', textDecoration: 'none' }}>in LinkedIn</a>}
                   </div>
                 </div>
-                <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+                <div style={{ display: 'flex', gap: 8, flexShrink: 0, flexWrap: 'wrap' }}>
                   {intel?.id && (
-                    <button
-                      onClick={handleDeepScan}
-                      disabled={scanning}
-                      style={{ fontSize: 11, fontWeight: 700, padding: '6px 12px', borderRadius: 7, border: '1px solid var(--border)', background: scanning ? 'var(--surface)' : 'var(--surface)', color: scanning ? 'var(--text-faint)' : 'var(--text-muted)', cursor: scanning ? 'default' : 'pointer', display: 'flex', alignItems: 'center', gap: 5 }}
-                    >
-                      {scanning ? <><span style={{ display: 'inline-block', width: 10, height: 10, border: '2px solid var(--accent)', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} /> {scanStatus || 'Scanning…'}</> : '🔍 Deep Scan'}
-                    </button>
+                    <>
+                      <button
+                        onClick={handleDeepScan}
+                        disabled={scanning || buildingThesis}
+                        style={{ fontSize: 11, fontWeight: 700, padding: '6px 12px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--surface)', color: (scanning || buildingThesis) ? 'var(--text-faint)' : 'var(--text-muted)', cursor: (scanning || buildingThesis) ? 'default' : 'pointer', display: 'flex', alignItems: 'center', gap: 5 }}
+                      >
+                        {scanning ? <><span style={{ display: 'inline-block', width: 10, height: 10, border: '2px solid var(--accent)', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} /> {scanStatus || 'Scanning…'}</> : '🔍 Quick Scan'}
+                      </button>
+                      <button
+                        onClick={handleBuildThesis}
+                        disabled={scanning || buildingThesis}
+                        style={{ fontSize: 11, fontWeight: 700, padding: '6px 14px', borderRadius: 7, border: '1px solid var(--accent)', background: buildingThesis ? 'var(--surface)' : 'var(--accent)', color: buildingThesis ? 'var(--text-faint)' : '#fff', cursor: (scanning || buildingThesis) ? 'default' : 'pointer', display: 'flex', alignItems: 'center', gap: 5 }}
+                      >
+                        {buildingThesis ? <><span style={{ display: 'inline-block', width: 10, height: 10, border: '2px solid var(--accent)', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} /> Building…</> : '🧠 Build Thesis'}
+                      </button>
+                    </>
                   )}
                   <button onClick={() => { setEditing(true); setTab('contacts'); }} style={{ fontSize: 11, fontWeight: 700, padding: '6px 12px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-muted)', cursor: 'pointer' }}>✏️ Edit</button>
                 </div>
@@ -368,10 +407,53 @@ export default function ClientsPage({ onNavigate, refreshKey, icp }) {
                         </div>
                       )}
 
+                      {/* ── Full Thesis (only if thesis_built) ── */}
+                      {intel.thesis_built && intel.thesis && (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 12, borderTop: '2px solid var(--accent)', paddingTop: 20, marginTop: 4 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--text)' }}>🧠 Full Thesis</span>
+                            {intel.thesis_date && <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>Built {fmtDate(intel.thesis_date.slice(0,10))}</span>}
+                          </div>
+                          <div style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.8, whiteSpace: 'pre-wrap', padding: '14px 16px', background: 'var(--surface)', borderRadius: 10, border: '1px solid var(--border)' }}>
+                            {intel.thesis}
+                          </div>
+                          {/* Entry contact */}
+                          {(() => {
+                            const entry = (intel.contact_angles || []).find(ca => ca.is_primary);
+                            if (!entry) return null;
+                            return (
+                              <div style={{ padding: '14px 16px', background: '#f0fdf4', borderRadius: 10, border: '1px solid #bbf7d0' }}>
+                                <div style={{ fontSize: 10, fontWeight: 700, color: '#059669', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 8 }}>Primary Entry Point</div>
+                                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>{entry.name} {entry.title && <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>· {entry.title}</span>}</div>
+                                {entry.linkedin && <a href={entry.linkedin} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: '#0077b5', textDecoration: 'none', display: 'block', marginTop: 2 }}>↗ LinkedIn</a>}
+                                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 6, lineHeight: 1.5, fontStyle: 'italic' }}>"{entry.angle}"</div>
+                                {entry.hook && <div style={{ fontSize: 12, color: '#059669', marginTop: 6, lineHeight: 1.5 }}>Hook: {entry.hook}</div>}
+                              </div>
+                            );
+                          })()}
+                          {/* Risks */}
+                          {(intel.thesis_risks || []).length > 0 && (
+                            <div style={{ padding: '12px 16px', background: '#fff7ed', borderRadius: 9, border: '1px solid #fed7aa' }}>
+                              <div style={{ fontSize: 10, fontWeight: 700, color: '#c2410c', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 8 }}>Risks & Sensitivities</div>
+                              <ul style={{ margin: 0, paddingLeft: 16, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                {intel.thesis_risks.map((r, i) => <li key={i} style={{ fontSize: 12, color: '#78350f', lineHeight: 1.5 }}>{r}</li>)}
+                              </ul>
+                            </div>
+                          )}
+                          {/* Next step */}
+                          {intel.thesis_next_step && (
+                            <div style={{ padding: '10px 14px', background: 'var(--surface)', borderRadius: 9, border: '1px solid var(--border)' }}>
+                              <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 4 }}>Recommended Next Step</div>
+                              <div style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.5 }}>{intel.thesis_next_step}</div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
                       {/* Scan date */}
                       {intel.scan_date && (
                         <div style={{ fontSize: 11, color: 'var(--text-faint)', textAlign: 'right' }}>
-                          Last scanned {fmtDate(intel.scan_date.slice(0,10))} · {intel.deep_scanned ? 'Deep scan ✓' : 'Surface scan only'}
+                          Last scanned {fmtDate(intel.scan_date.slice(0,10))} · {intel.thesis_built ? 'Full thesis ✓' : intel.deep_scanned ? 'Deep scan ✓' : 'Surface scan only'}
                         </div>
                       )}
                     </>
@@ -561,6 +643,48 @@ export default function ClientsPage({ onNavigate, refreshKey, icp }) {
             </div>
           </>
         ) : null}
+
+        {/* ── Thesis progress overlay ── */}
+        {(buildingThesis || (thesisPhases.length > 0 && thesisPhases.every(p => p.status === 'done'))) && (
+          <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50 }}>
+            <div style={{ background: 'var(--bg)', borderRadius: 14, padding: '28px 32px', width: 420, boxShadow: '0 20px 60px rgba(0,0,0,0.3)', display: 'flex', flexDirection: 'column', gap: 16 }}>
+              <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--text)' }}>
+                {buildingThesis ? `Building Thesis for ${detail?.client?.name}…` : `Thesis Complete ✓`}
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {thesisPhases.map(p => (
+                  <div key={p.phase} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                    <div style={{ width: 28, height: 28, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+                      background: p.status === 'done' ? '#dcfce7' : p.status === 'running' ? '#eff6ff' : 'var(--surface)',
+                      border: `2px solid ${p.status === 'done' ? '#10b981' : p.status === 'running' ? '#3b82f6' : 'var(--border)'}`,
+                    }}>
+                      {p.status === 'done'    && <span style={{ fontSize: 13, color: '#10b981' }}>✓</span>}
+                      {p.status === 'running' && <span style={{ display: 'inline-block', width: 10, height: 10, border: '2px solid #3b82f6', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} />}
+                      {p.status === 'waiting' && <span style={{ fontSize: 12 }}>{p.icon}</span>}
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: p.status === 'waiting' ? 'var(--text-faint)' : 'var(--text)' }}>
+                        Phase {p.phase} — {p.label}
+                      </div>
+                      {p.status === 'done' && p.detail && (
+                        <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 1 }}>
+                          {p.phase === 1 && `Found ${p.detail.leaders || 0} leaders`}
+                          {p.phase === 2 && `Profiled ${p.detail.contacts || 0} contacts`}
+                          {p.phase === 3 && `${p.detail.triggers || 0} trigger events`}
+                          {p.phase === 4 && 'Thesis ready'}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              {thesisError && <div style={{ fontSize: 12, color: '#ef4444', padding: '8px 12px', background: '#fef2f2', borderRadius: 7 }}>{thesisError}</div>}
+              {!buildingThesis && (
+                <button onClick={() => setThesisPhases([])} style={{ alignSelf: 'flex-end', fontSize: 12, fontWeight: 700, padding: '7px 18px', borderRadius: 7, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer' }}>View Thesis →</button>
+              )}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
