@@ -378,20 +378,14 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
         addLog('⚠ Thesis built but NOT saved — see banner above for required DB migration');
       } else {
         setThesisMigrationError(null);
-        addLog('✓ Thesis complete and saved — verifying…');
-        // Re-fetch from DB to confirm the persisted state matches what we built
-        // This is the source of truth — if it comes back with thesis, we're good
+        addLog('✓ Thesis complete and saved');
+        // Re-fetch from DB to sync in-memory state with what was persisted
+        // Note: new columns (thesis_built etc) may return null from PostgREST if schema
+        // cache is still warming — merge rather than replace so in-memory thesis stays visible
         try {
           const persisted = await fetchCompanyIntel(deal.company_name);
-          if (persisted?.thesis_built) {
-            setCompanyIntel(persisted);
-            addLog('✓ Confirmed saved to database');
-          } else {
-            // Saved according to API but DB doesn't reflect it — surface clearly
-            setThesisMigrationError('Thesis appeared to save but is not confirmed in the database. Run the migration SQL shown below and rebuild.');
-            addLog('⚠ Could not confirm save — see banner above');
-          }
-        } catch { /* non-fatal — in-memory state is still set */ }
+          if (persisted) setCompanyIntel(prev => ({ ...prev, ...persisted }));
+        } catch { /* non-fatal — in-memory state is correct */ }
       }
     } catch (e) {
       setThesisError(e.message);

@@ -220,9 +220,11 @@ export async function runBuildThesis(companyId, company, icp, detail = {}, onPro
   if (!safeRows?.length) throw new Error(`Company record not found (id=${companyId}). The deal may point to a stale or missing company row.`);
 
   // Try to save thesis columns separately — these require DB migration
+  // Use .select('id') so we can detect a 0-row update without reading new columns
+  // (reading new columns via PostgREST can return null if schema cache is still warming up)
   const thesisUpdate = { thesis, thesis_risks, thesis_next_step, thesis_built, thesis_date };
-  const { error: thesisError } = await supabase
-    .from('companies').update(thesisUpdate).eq('id', companyId);
+  const { data: thesisRows, error: thesisError } = await supabase
+    .from('companies').update(thesisUpdate).eq('id', companyId).select('id');
 
   // Auto-populate client contacts from thesis results
   if (clientId) {
@@ -233,12 +235,8 @@ export async function runBuildThesis(companyId, company, icp, detail = {}, onPro
   if (thesisError) {
     return { ...company, ...update, _thesisSaveError: thesisError.message };
   }
-
-  // Verify thesis_built actually persisted — catches silent failures (missing columns, schema cache, RLS)
-  const { data: verified } = await supabase
-    .from('companies').select('thesis_built').eq('id', companyId).maybeSingle();
-  if (!verified?.thesis_built) {
-    return { ...company, ...update, _thesisSaveError: 'Thesis update returned no error but thesis_built is still false in the DB. The migration SQL may not have been applied — run it in the Supabase SQL editor and rebuild.' };
+  if (!thesisRows?.length) {
+    return { ...company, ...update, _thesisSaveError: 'Thesis columns are missing from the DB — run the migration SQL in the Supabase SQL editor.' };
   }
 
   return { ...company, ...update };
