@@ -21,12 +21,12 @@ const today = new Date().toISOString().slice(0, 10);
  *   resolveDealId — async fn(companyName, contactName, contactEmail) => dealId
  *                   called before saving; creates or finds the deal
  */
-export default function TranscriptImporter({ projectId, dealId, milestones = [], owners = OWNERS, defaultMsId, onImported, onClose, prospectMode = false, allDeals = [], resolveDealId }) {
+export default function TranscriptImporter({ projectId, dealId, milestones = [], owners = OWNERS, defaultMsId, onImported, onClose, prospectMode = false, allDeals = [], resolveDealId, initialTranscript = '' }) {
   const isDealMode     = !!dealId && !projectId;
   const isProspectMode = prospectMode && !dealId && !projectId;
 
   const [step, setStep]             = useState('paste');   // paste | parsing | preview | saving
-  const [transcript, setTranscript] = useState('');
+  const [transcript, setTranscript] = useState(initialTranscript);
   const [error, setError]           = useState('');
   const [parsed, setParsed]         = useState(null);      // raw AI output
 

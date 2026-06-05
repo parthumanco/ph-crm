@@ -41,6 +41,8 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
   const [showProposalDraft, setShowProposalDraft] = useState(false);
   const [dragOverMtgId, setDragOverMtgId] = useState(null); // id of card being hovered during drag
   const dragMtgIdRef = useRef(null); // id of card being dragged
+  const [fileDropActive, setFileDropActive] = useState(false); // file being dragged over meeting log
+  const [initialTranscript, setInitialTranscript] = useState(''); // pre-filled transcript from dropped file
 
   // Research tab state
   const [companyIntel, setCompanyIntel]   = useState(null);
@@ -1000,21 +1002,47 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
 
               {/* ── Meetings ── */}
               {tab === 'meetings' && (
-                <div>
+                <div
+                  onDragOver={e => { if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); setFileDropActive(true); } }}
+                  onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget)) setFileDropActive(false); }}
+                  onDrop={e => {
+                    e.preventDefault();
+                    setFileDropActive(false);
+                    const file = e.dataTransfer.files?.[0];
+                    if (!file) return;
+                    const reader = new FileReader();
+                    reader.onload = ev => {
+                      setInitialTranscript(ev.target.result || '');
+                      setShowTranscriptImporter(true);
+                    };
+                    reader.onerror = () => alert('Could not read file. Try a plain text (.txt) file.');
+                    reader.readAsText(file);
+                  }}
+                  style={{ position: 'relative' }}
+                >
+                  {/* File drop overlay */}
+                  {fileDropActive && (
+                    <div style={{ position: 'absolute', inset: 0, zIndex: 10, borderRadius: 10, border: '2px dashed var(--accent)', background: 'color-mix(in srgb, var(--accent) 8%, transparent)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 6, pointerEvents: 'none' }}>
+                      <span style={{ fontSize: 28 }}>📄</span>
+                      <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--accent)' }}>Drop to import transcript</span>
+                    </div>
+                  )}
+
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
                     <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em' }}>Meeting Log</span>
                     <div style={{ display: 'flex', gap: 8 }}>
                       {meetings.length > 0 && (
                         <button className="btn btn-primary btn-xs" onClick={() => setShowProposalDraft(true)}>✦ Draft Proposal</button>
                       )}
-                      <button className="btn btn-secondary btn-xs" onClick={() => setShowTranscriptImporter(true)}>+ Add Meeting</button>
+                      <button className="btn btn-secondary btn-xs" onClick={() => { setInitialTranscript(''); setShowTranscriptImporter(true); }}>+ Add Meeting</button>
                     </div>
                   </div>
 
                   {meetings.length === 0 && (
                     <div style={{ textAlign: 'center', padding: '24px 0' }}>
-                      <p style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 10 }}>No meetings logged yet.</p>
-                      <button className="btn btn-secondary btn-sm" onClick={() => setShowTranscriptImporter(true)}>📝 Add first meeting</button>
+                      <p style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 6 }}>No meetings logged yet.</p>
+                      <p style={{ fontSize: 11, color: 'var(--text-faint)', marginBottom: 10 }}>Drag a transcript file here or click below</p>
+                      <button className="btn btn-secondary btn-sm" onClick={() => { setInitialTranscript(''); setShowTranscriptImporter(true); }}>📝 Add first meeting</button>
                     </div>
                   )}
 
@@ -1689,11 +1717,13 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
       <TranscriptImporter
         dealId={deal.id}
         owners={OWNERS}
+        initialTranscript={initialTranscript}
         onImported={({ meeting }) => {
           setMeetings(prev => [meeting, ...prev]);
           setShowTranscriptImporter(false);
+          setInitialTranscript('');
         }}
-        onClose={() => setShowTranscriptImporter(false)}
+        onClose={() => { setShowTranscriptImporter(false); setInitialTranscript(''); }}
       />
     )}
 
