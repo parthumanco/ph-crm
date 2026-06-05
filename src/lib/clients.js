@@ -58,13 +58,13 @@ export async function findOrCreateClient(name) {
 
 export async function fetchCompanyIntel(clientName) {
   if (!clientName) return null;
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from('companies')
     .select('*')
     .ilike('name', clientName)
-    .limit(1)
-    .maybeSingle();
-  return data || null;
+    .limit(1);
+  if (error) console.error('[fetchCompanyIntel] Supabase error:', error);
+  return data?.[0] || null;
 }
 
 export async function findOrCreateCompany(name) {
