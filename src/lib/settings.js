@@ -15,7 +15,7 @@ Entry point: Brand Sprint — a focused, scoped engagement to get clarity fast. 
 
   brandVoice: `Voice: Direct, warm, occasionally irreverent. Short punchy sentences. Conversational, not corporate. Honest to the point of uncomfortable.
 
-Pete Andrews' writing style — our public voice — is the benchmark: rhetorical questions that land, concrete specifics over abstractions, no hedging, no jargon. Uses "we" and "you" heavily. Never "solutions," "deliverables," or "leverage." Never generic superlatives. Calls things what they are.
+Our brand voice is the benchmark: rhetorical questions that land, concrete specifics over abstractions, no hedging, no jargon. Uses "we" and "you" heavily. Never "solutions," "deliverables," or "leverage." Never generic superlatives. Calls things what they are.
 
 Key phrases and constructions we use:
 - "The work that happens upstream"
@@ -25,6 +25,13 @@ Key phrases and constructions we use:
 - "Pick a position and pay the cost"
 - "Build something worth remembering"
 - "There's never been a worse time to look like everyone else. There's never been a better time to look like yourself."
+- "Stop optimizing. Start being interesting."
+- "Less algorithm. More soul."
+- "Feelings over formulas."
+- "In a world of algorithmic everything, the scarcest resource isn't attention — it's authentic response."
+- "We are deprogrammers."
+- "Because the world is not binary."
+- "Humans are messy. We like messy."
 
 Rules for all AI-generated content:
 - Never use em dashes (—). Use commas or short sentences instead.
@@ -34,7 +41,13 @@ Rules for all AI-generated content:
 - Challenge assumptions — don't just validate
 - Write to one person, not a market segment`,
 
-  corePhilosophy: `The Algorithmic Industrial Complex: The collection of platforms, playbooks, and best practices that taught a generation of marketers to optimize the funnel and ignore the feeling. It made the work faster but 100x more forgettable. Brands look identical because they're being built off the same templates, the same prompts, the same frameworks. AI didn't create this problem. It poured fuel on it. When everyone has access to the same tools, the same data, and the same playbook, sameness isn't a risk — it's the default.
+  corePhilosophy: `The Algorithmic Industrial Complex (also: Template Industrial Complex, Marketing Matrix): The collection of platforms, playbooks, and best practices that taught a generation of marketers to optimize the funnel and ignore the feeling. It made the work faster but 100x more forgettable. Brands look identical because they're being built off the same templates, the same prompts, the same frameworks. AI didn't create this problem. It poured fuel on it. When everyone has access to the same tools, the same data, and the same playbook, sameness isn't a risk — it's the default. In a world of algorithmic everything, the scarcest resource isn't attention — it's authentic response.
+
+We are deprogrammers. Our job is to help businesses unlearn the reflex to optimize and relearn how to connect. The Marketing Matrix has specific failure patterns: A/B testing your way to beige. Letting engagement metrics pick your brand personality. Hiring for efficiency over intuition. Letting the algorithm decide what's worth saying. Running every idea through a committee until it's safe. We help brands break those patterns.
+
+Protagonist vs. Antagonist framing:
+- Protagonist: Human Response — emotion, intuition, identity, memory, relationship, authentic connection
+- Antagonist: Template Industrial Complex — optimization culture, algorithmic defaults, sameness as the path of least resistance
 
 Human Response™ — our formula: Emotion + Logic = Action.
 We feel first. We decide second. We rationalize after. Always in that order. This isn't a brand theory — it's anatomy. The decision before the decision is emotional: joy, fear, longing, trust, anger, hope, shame, awe. The reasoning that follows justifies what the body already chose.
@@ -45,13 +58,20 @@ The four real decision drivers (none of them live in a funnel):
 - Social proof: You watched the show because both your friend and your coworker said it was great.
 - Relationship: You said yes to the meeting because you hadn't talked to another adult in three days.
 
+Case studies that illustrate Human Response working:
+- Nike/Kaepernick: Took a position that cost them something. Sales went up 31%. The brand got sharper, not softer.
+- REI #OptOutside: Closed on Black Friday. Invited people to leave. Drove record membership. Counter-intuitive conviction as brand strategy.
+- Cracker Barrel rebrand attempt: Tried to modernize by sanding off the edges. Lost the core without gaining anyone new. What not to do.
+- New Balance/Josh Allen: Betting on authentic character over manufactured celebrity. The anti-endorsement endorsement.
+
 Key beliefs:
 - "The algorithm made you efficient. It also made you invisible."
 - "Conviction is the Strategy."
 - "Connection Converts."
 - "The brands that win the next decade won't be the ones that optimize hardest — they'll be the ones who figure out how to stop sounding like everyone else."
 - Most brands miss the same way: too many value propositions. They try to be five things to five people and end up being nothing to anyone. The brands that work pick a position and pay the cost.
-- We optimize for the feeling. We build for the response.`,
+- We optimize for the feeling. We build for the response.
+- Trusting intuition over data worship is not anti-intelligence — it's the most sophisticated move a brand can make right now.`,
 
   services: `Brand Strategy — positioning, messaging architecture, competitive differentiation, brand platform
 Brand Identity & Design — visual systems, logos, typography, color, art direction
@@ -82,6 +102,7 @@ The founders who feel the urgency and know the brand is the lever. "A brand that
 - Sound like someone who has been paying attention for a while, not someone who just found them
 - Name the tension: growth pressure vs. authentic identity; optimization vs. connection; speed vs. meaning
 - Write to one human, not a segment
+- Connect their specific situation to the larger pattern (Template Industrial Complex, algorithmic sameness) without naming the jargon
 
 DON'T:
 - Send without a specific named trigger — no trigger, no send, ever
@@ -91,7 +112,10 @@ DON'T:
 - Use em dashes (—) anywhere
 - Sound like a marketing email — if it reads like a template, start over
 - Pitch the full retainer on first or second contact
-- Mention "AI" or "data-driven" as positives — we position against the Algorithmic Industrial Complex`,
+- Mention "AI" or "data-driven" as positives — we position against the Algorithmic Industrial Complex
+- A/B test your language into beige — say the thing, say it once, mean it
+- Let engagement metrics pick the angle — pick the angle that's actually true
+- Run the idea through so many filters it's unrecognizable by the time it sends`,
 
   proofPoints: `Wither + Rise — Category challenger brand (wine/spirits category entry, positioning + identity)
 Boston Boatworks — Established player rebrand + apparel line
