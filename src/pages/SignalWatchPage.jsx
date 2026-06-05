@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { scanBatch, scanDeepDive, weeklyRescanBatch, geocodeHqBatch, enrichContactsWithSearch, scanLinkedInPosts, ENGAGEMENT_META, ENGAGEMENT_OPTIONS } from '../lib/anthropic';
 import { loadLastWeeklyScan, saveLastWeeklyScan, isWeeklyScanDue, markWeeklyScanViewed } from '../lib/settings';
+import { mergeContactAngles, mergeTriggers } from '../lib/clients';
 
 const TRIGGER_CATEGORIES = [
   { id: 'leadership', label: 'Leadership Change', color: '#f59e0b' },
@@ -386,9 +387,19 @@ export default function SignalWatchPage({ onNavigate, icp, refreshKey = 0 }) {
 
   // ── Save scan result to Supabase ─────────────────────────────────────────────
 
-  const stripEmDash = str => str ? str.replace(/—/g, ',') : str;
+  const stripEmDash = str => str ? str.replace(/[—–]/g, ',') : str;
 
   const saveScanResult = useCallback(async (companyId, result, overwriteWebsite = false) => {
+    // Use existing company data from ref for additive merging — no extra DB read needed
+    const prev = companiesRef.current.find(c => c.id === companyId) || {};
+    const prevAngles   = prev.contact_angles || [];
+    const prevTriggers = prev.triggers       || [];
+
+    const incomingAngles = (result.contactAngles || []).map(ca => ({
+      ...ca,
+      linkedin: ca.linkedinUrl || ca.linkedin || null,
+    }));
+
     const update = {
       icp_tier: result.icpTier || null,
       icp_score: result.icpScore ? Math.round(result.icpScore) : null,
@@ -397,9 +408,9 @@ export default function SignalWatchPage({ onNavigate, icp, refreshKey = 0 }) {
       employee_count_num: result.employeeCountNum ? Math.round(result.employeeCountNum) : null,
       employee_count: result.employeeCountNum ? String(Math.round(result.employeeCountNum)) : null,
       summary: stripEmDash(result.summary) || null,
-      triggers: (result.triggers || []).map(t => ({ ...t, headline: stripEmDash(t.headline), detail: stripEmDash(t.detail) })),
+      triggers: mergeTriggers(prevTriggers, result.triggers || []),
       recommended_angle: stripEmDash(result.recommendedAngle) || null,
-      contact_angles: (result.contactAngles || []).map(ca => ({ ...ca, angle: stripEmDash(ca.angle) })),
+      contact_angles: mergeContactAngles(prevAngles, incomingAngles),
       lat: result.lat || null,
       lng: result.lng || null,
       scan_date: new Date().toISOString(),

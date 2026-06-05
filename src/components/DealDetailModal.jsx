@@ -33,6 +33,7 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
   const [addingTask, setAddingTask] = useState(false);
   const [savingAct, setSavingAct] = useState(false);
   const [savingTask, setSavingTask] = useState(false);
+  const [confirmDeleteActId, setConfirmDeleteActId] = useState(null); // activity id pending delete confirm
   const [tab, setTab]             = useState('nextsteps');
   const [meetings, setMeetings]   = useState([]);
   const [showTranscript, setShowTranscript] = useState(null);
@@ -71,6 +72,12 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
   const [composeEmail, setComposeEmail] = useState(null); // { to, toName } | null
   const [composeDraft, setComposeDraft] = useState({ subject: '', body: '' });
   const [loggingEmail, setLoggingEmail] = useState(false);
+
+  // AI email draft state
+  const [draftingEmail, setDraftingEmail] = useState(false);
+  const [emailDraftError, setEmailDraftError] = useState(null);
+  const [contextualAdvice, setContextualAdvice] = useState(null); // { situation, recommendation, timing, emailType, subject, body }
+  const [draftContactName, setDraftContactName] = useState('');
 
   const isNew = !initialDeal.id;
   const [showEditForm, setShowEditForm]   = useState(isNew); // open for new deals, collapsed for existing
@@ -188,14 +195,29 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
     }
   };
 
-  const handleDeleteContact = async (contactName) => {
+  const handleDeleteContact = async (c) => {
+    if (!window.confirm(`Remove ${c.name}? This cannot be undone.`)) return;
+
+    // "Deal" source = the contact is stored on deal.contact_name, not in contact_angles
+    if (c.source === 'deal') {
+      try {
+        const updated = await upsertDeal({ ...deal, contact_name: null, contact_email: null });
+        setDeal(updated);
+        onSaved(updated);
+        if (expandedContact === c.name) setExpandedContact(null);
+      } catch (e) {
+        alert('Error removing contact: ' + e.message);
+      }
+      return;
+    }
+
+    // All other sources: remove from company contact_angles
     if (!companyIntel?.id) return;
-    if (!window.confirm(`Delete ${contactName}? This cannot be undone.`)) return;
     try {
-      const updated = await deleteCompanyContact(companyIntel.id, contactName);
+      const updated = await deleteCompanyContact(companyIntel.id, c.name);
       setCompanyIntel(prev => ({ ...prev, contact_angles: updated }));
-      if (editingContact === contactName) { setEditingContact(null); setEditDraft({}); }
-      if (expandedContact === contactName) setExpandedContact(null);
+      if (editingContact === c.name) { setEditingContact(null); setEditDraft({}); }
+      if (expandedContact === c.name) setExpandedContact(null);
     } catch (e) {
       alert('Error deleting contact: ' + e.message);
     }
@@ -218,6 +240,59 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
   const openCompose = (email, name) => {
     setComposeEmail({ to: email, toName: name });
     setComposeDraft({ subject: '', body: '' });
+  };
+
+  // Build merged contact list (deal contact + thesis contacts), same logic as Contacts tab
+  const mergedContacts = (() => {
+    const map = new Map();
+    if (deal.contact_name?.trim()) {
+      const name = deal.contact_name.trim();
+      map.set(name.toLowerCase(), { name, email: deal.contact_email?.trim() || null, title: null, source: 'deal' });
+    }
+    (companyIntel?.contact_angles || []).forEach(c => {
+      if (!c.name?.trim()) return;
+      const name = c.name.trim();
+      const key = name.toLowerCase();
+      const existing = map.get(key) || {};
+      map.set(key, { ...existing, ...c, name, email: c.email || existing.email || null });
+    });
+    return Array.from(map.values());
+  })();
+
+  const handleDraftEmail = async () => {
+    if (draftingEmail) return;
+    setDraftingEmail(true);
+    setEmailDraftError(null);
+    setContextualAdvice(null);
+    try {
+      const { generateContextualOutreach } = await import('../lib/anthropic.js');
+      const icp = await loadIcp();
+
+      // Pick contact: selected by name, or primary, or first
+      const contact = mergedContacts.find(c => c.name === draftContactName)
+        || mergedContacts.find(c => c.is_primary)
+        || mergedContacts[0];
+
+      if (!contact) throw new Error('No contacts found — build a thesis first to discover contacts, or add one manually on the Contacts tab.');
+
+      const advice = await generateContextualOutreach(
+        deal,
+        companyIntel,
+        activities,
+        tasks,
+        contact,
+        icp,
+      );
+
+      // Store advice for display; pre-fill compose but don't open the overlay yet
+      setContextualAdvice({ ...advice, contactName: contact.name, contactEmail: contact.email || '' });
+      setComposeDraft({ subject: advice.subject || '', body: advice.body || '' });
+      // composeEmail intentionally NOT set here — user opens compose via the advice card button
+    } catch (e) {
+      setEmailDraftError(e.message);
+    } finally {
+      setDraftingEmail(false);
+    }
   };
 
   const sendEmail = async () => {
@@ -591,7 +666,7 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
                   )}
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                     {activities.map(a => (
-                      <div key={a.id} style={{ display: 'flex', gap: 10, padding: '10px 12px', background: 'var(--surface)', borderRadius: 6, border: '1px solid var(--border)' }}>
+                      <div key={a.id} style={{ display: 'flex', gap: 10, padding: '10px 12px', background: 'var(--surface)', borderRadius: 6, border: `1px solid ${confirmDeleteActId === a.id ? '#fca5a5' : 'var(--border)'}`, transition: 'border-color .15s' }}>
                         <span style={{ fontSize: 16, flexShrink: 0, marginTop: 1 }}>{ACTIVITY_ICONS[a.type] || '📝'}</span>
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 2 }}>
@@ -600,6 +675,29 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
                             {a.assigned_to && <span style={{ fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 3, background: a.assigned_to === 'Mike' ? '#f3e8ff' : '#eff6ff', color: a.assigned_to === 'Mike' ? '#7c3aed' : '#1d4ed8' }}>{a.assigned_to}</span>}
                           </div>
                           <p style={{ fontSize: 12, color: 'var(--text)', margin: 0, lineHeight: 1.5 }}>{a.summary}</p>
+                        </div>
+                        {/* Delete control */}
+                        <div style={{ flexShrink: 0, display: 'flex', alignItems: 'flex-start', gap: 4, paddingTop: 1 }}>
+                          {confirmDeleteActId === a.id ? (
+                            <>
+                              <button
+                                onClick={() => { removeActivity(a.id); setConfirmDeleteActId(null); }}
+                                style={{ fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 4, border: '1px solid #fca5a5', background: '#fee2e2', color: '#dc2626', cursor: 'pointer' }}
+                              >Delete</button>
+                              <button
+                                onClick={() => setConfirmDeleteActId(null)}
+                                style={{ fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text-muted)', cursor: 'pointer' }}
+                              >Cancel</button>
+                            </>
+                          ) : (
+                            <button
+                              onClick={() => setConfirmDeleteActId(a.id)}
+                              title="Delete activity"
+                              style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 14, lineHeight: 1, padding: '1px 3px', borderRadius: 3, opacity: 0.5 }}
+                              onMouseEnter={e => e.currentTarget.style.opacity = '1'}
+                              onMouseLeave={e => e.currentTarget.style.opacity = '0.5'}
+                            >🗑</button>
+                          )}
                         </div>
                       </div>
                     ))}
@@ -672,6 +770,140 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
                       )}
                     </div>
                   )}
+
+                  {/* ── AI Outreach Advisor ── */}
+                  <div style={{ marginBottom: 20 }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 8 }}>
+                      ✦ Outreach Advisor
+                    </div>
+                    <div style={{ padding: '12px 14px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8 }}>
+                      {mergedContacts.length === 0 ? (
+                        <p style={{ fontSize: 12, color: 'var(--text-faint)', margin: 0, lineHeight: 1.6 }}>
+                          No contacts found. Build a thesis first to discover contacts, or add one on the Contacts tab.
+                        </p>
+                      ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+
+                          {/* Contact picker — only shown when there's more than one */}
+                          {mergedContacts.length > 1 && (
+                            <div>
+                              <label style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>Contact</label>
+                              <select
+                                value={draftContactName}
+                                onChange={e => { setDraftContactName(e.target.value); setContextualAdvice(null); }}
+                                style={{ width: '100%', fontSize: 12 }}
+                              >
+                                <option value="">— primary / first —</option>
+                                {mergedContacts.map(c => (
+                                  <option key={c.name} value={c.name}>
+                                    {c.name}{c.title ? ` — ${c.title}` : ''}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          )}
+
+                          {/* Advise & Draft button */}
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                            <button
+                              className="btn btn-primary btn-sm"
+                              onClick={handleDraftEmail}
+                              disabled={draftingEmail}
+                              style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+                            >
+                              {draftingEmail ? (
+                                <>
+                                  <span style={{ display: 'inline-block', width: 12, height: 12, border: '2px solid #fff', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin .7s linear infinite' }} />
+                                  Analyzing deal…
+                                </>
+                              ) : '✦ Advise & Draft'}
+                            </button>
+                            {!draftingEmail && !contextualAdvice && (
+                              <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>
+                                {(() => {
+                                  const c = mergedContacts.find(x => x.name === draftContactName) || mergedContacts.find(x => x.is_primary) || mergedContacts[0];
+                                  return c ? `→ ${c.name}${c.title ? `, ${c.title}` : ''}` : '';
+                                })()}
+                              </span>
+                            )}
+                          </div>
+
+                          {emailDraftError && (
+                            <p style={{ fontSize: 12, color: '#ef4444', margin: 0, lineHeight: 1.5 }}>
+                              ⚠ {emailDraftError}
+                            </p>
+                          )}
+
+                          {/* Advice card — shown after generation */}
+                          {contextualAdvice && (
+                            <div style={{ border: '1px solid #c4b5fd', borderRadius: 8, background: '#faf5ff', overflow: 'hidden' }}>
+                              {/* Email type badge */}
+                              <div style={{ padding: '6px 12px', background: '#ede9fe', borderBottom: '1px solid #c4b5fd', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                <span style={{ fontSize: 10, fontWeight: 700, color: '#6d28d9', textTransform: 'uppercase', letterSpacing: '.06em' }}>
+                                  {{
+                                    cold_intro: '❄ Cold Intro',
+                                    follow_up: '↩ Follow-up',
+                                    post_meeting: '🤝 Post-Meeting',
+                                    post_proposal: '📋 Post-Proposal',
+                                    re_engagement: '🔄 Re-engagement',
+                                    nurture: '🌱 Nurture',
+                                    check_in: '👋 Check-in',
+                                  }[contextualAdvice.emailType] || '✉ Outreach'}
+                                </span>
+                                <button
+                                  onClick={() => setContextualAdvice(null)}
+                                  style={{ background: 'none', border: 'none', color: '#a78bfa', cursor: 'pointer', fontSize: 14, lineHeight: 1, padding: 0 }}
+                                >×</button>
+                              </div>
+
+                              <div style={{ padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                                {/* Situation */}
+                                <div>
+                                  <div style={{ fontSize: 10, fontWeight: 700, color: '#7c3aed', textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 3 }}>Situation</div>
+                                  <p style={{ fontSize: 12, color: '#4c1d95', fontStyle: 'italic', margin: 0, lineHeight: 1.6 }}>
+                                    {contextualAdvice.situation}
+                                  </p>
+                                </div>
+
+                                {/* Recommendation */}
+                                <div>
+                                  <div style={{ fontSize: 10, fontWeight: 700, color: '#7c3aed', textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 3 }}>Recommendation</div>
+                                  <p style={{ fontSize: 12, color: '#3b0764', fontWeight: 600, margin: 0, lineHeight: 1.6 }}>
+                                    {contextualAdvice.recommendation}
+                                  </p>
+                                </div>
+
+                                {/* Timing */}
+                                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6, padding: '7px 10px', background: '#f3e8ff', borderRadius: 6 }}>
+                                  <span style={{ fontSize: 13, flexShrink: 0, marginTop: 1 }}>🕐</span>
+                                  <div>
+                                    <div style={{ fontSize: 10, fontWeight: 700, color: '#7c3aed', textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 2 }}>Timing</div>
+                                    <p style={{ fontSize: 12, color: '#6d28d9', margin: 0, lineHeight: 1.5 }}>{contextualAdvice.timing}</p>
+                                  </div>
+                                </div>
+
+                                {/* Subject preview */}
+                                <div style={{ background: 'white', border: '1px solid #ddd6fe', borderRadius: 6, padding: '8px 10px' }}>
+                                  <div style={{ fontSize: 10, fontWeight: 700, color: '#7c3aed', textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 3 }}>Draft Subject</div>
+                                  <div style={{ fontSize: 12, color: '#1e1b4b', fontWeight: 500 }}>{contextualAdvice.subject}</div>
+                                </div>
+
+                                {/* Open in compose */}
+                                <button
+                                  className="btn btn-primary btn-sm"
+                                  onClick={() => setComposeEmail({ to: contextualAdvice.contactEmail, toName: contextualAdvice.contactName })}
+                                  style={{ alignSelf: 'flex-start', display: 'flex', alignItems: 'center', gap: 6 }}
+                                >
+                                  ✉ Open Draft in Compose
+                                </button>
+                              </div>
+                            </div>
+                          )}
+
+                        </div>
+                      )}
+                    </div>
+                  </div>
 
                   {/* Manual next steps */}
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
@@ -955,7 +1187,7 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
                       {buildingThesis
                         ? <><span style={{ display: 'inline-block', width: 10, height: 10, border: '2px solid var(--text-muted)', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} /> Running…</>
                         : companyIntel?.thesis_built
-                          ? '↺ Rebuild Thesis'
+                          ? '↺ Expand Thesis'
                           : '🔬 Build Thesis'
                       }
                     </button>
@@ -1154,7 +1386,7 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
                         onClick={handleBuildThesis}
                         style={{ background: 'linear-gradient(135deg, #7c3aed, #4f46e5)', color: '#fff', border: 'none', borderRadius: 8, padding: '9px 20px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
                       >
-                        🔬 Build Thesis
+                        {companyIntel?.thesis_built ? '↺ Expand Thesis' : '🔬 Build Thesis'}
                       </button>
                     </div>
                   )}
@@ -1165,18 +1397,20 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
               {tab === 'contacts' && (() => {
                 // Merge: primary deal contact + company intel contact_angles
                 const map = new Map();
-                if (deal.contact_name) {
-                  map.set(deal.contact_name.toLowerCase(), {
-                    name: deal.contact_name,
-                    email: deal.contact_email || null,
+                if (deal.contact_name?.trim()) {
+                  const name = deal.contact_name.trim();
+                  map.set(name.toLowerCase(), {
+                    name,
+                    email: deal.contact_email?.trim() || null,
                     source: 'deal',
                   });
                 }
                 (companyIntel?.contact_angles || []).forEach(c => {
-                  if (!c.name) return;
-                  const key = c.name.toLowerCase();
+                  if (!c.name?.trim()) return;
+                  const name = c.name.trim();
+                  const key = name.toLowerCase();
                   const existing = map.get(key) || {};
-                  map.set(key, { ...existing, ...c, email: c.email || existing.email || null });
+                  map.set(key, { ...existing, ...c, name, email: c.email || existing.email || null });
                 });
                 const contacts = Array.from(map.values());
 
@@ -1314,7 +1548,7 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
                                         {savingEdit ? 'Saving…' : 'Save'}
                                       </button>
                                       <button
-                                        onClick={() => handleDeleteContact(c.name)}
+                                        onClick={() => handleDeleteContact(c)}
                                         style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 700, padding: '4px 12px', borderRadius: 6, border: '1px solid #fca5a5', background: '#fef2f2', color: '#b91c1c', cursor: 'pointer' }}
                                       >
                                         🗑 Delete
@@ -1345,12 +1579,16 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
                                           🔗 LinkedIn profile
                                         </a>
                                       )}
-                                      <button
-                                        onClick={e => { e.stopPropagation(); setEditingContact(c.name); setEditDraft({}); }}
-                                        style={{ marginLeft: 'auto', fontSize: 10, fontWeight: 700, color: 'var(--text-faint)', background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontFamily: 'inherit' }}
-                                      >
-                                        ✏ Edit
-                                      </button>
+                                      <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center' }}>
+                                        <button
+                                          onClick={e => { e.stopPropagation(); setEditingContact(c.name); setEditDraft({}); }}
+                                          style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-faint)', background: 'none', border: '1px solid var(--border)', borderRadius: 4, padding: '2px 8px', cursor: 'pointer', fontFamily: 'inherit' }}
+                                        >✏ Edit</button>
+                                        <button
+                                          onClick={e => { e.stopPropagation(); handleDeleteContact(c); }}
+                                          style={{ fontSize: 10, fontWeight: 700, color: '#b91c1c', background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: 4, padding: '2px 8px', cursor: 'pointer', fontFamily: 'inherit' }}
+                                        >🗑 Remove</button>
+                                      </div>
                                     </div>
 
                                     {/* Outreach angle */}

@@ -54,6 +54,46 @@ export async function findOrCreateClient(name) {
   return data;
 }
 
+// ── Additive merge helpers ────────────────────────────────────────────────────
+// Exported so SignalWatchPage (and any future callers) use the same logic.
+// All AI scan/thesis functions should call these instead of replacing arrays outright.
+
+const _strip = s => (s || '').replace(/\s*—\s*/g, ' - ');
+
+// Merge contact_angles: prev contacts are the base; incoming overwrites matching names.
+// Manual enrichment (email, linkedin URL, notes) is preserved if the new scan didn't find it.
+export function mergeContactAngles(prev = [], incoming = []) {
+  const map = new Map(prev.map(c => [c.name?.toLowerCase().trim(), c]));
+  for (const c of incoming) {
+    const key = c.name?.toLowerCase().trim();
+    if (!key) continue;
+    const old = map.get(key) || {};
+    map.set(key, {
+      ...old,
+      ...c,
+      angle:    _strip(c.angle    || old.angle    || ''),
+      hook:     _strip(c.hook     || old.hook     || ''),
+      email:    c.email    || old.email    || null,
+      linkedin: c.linkedin || c.linkedinUrl || old.linkedin || null,
+      notes:    old.notes  || c.notes      || null, // always preserve manual notes
+    });
+  }
+  return Array.from(map.values());
+}
+
+// Merge triggers: dedupe by headline. Incoming wins if the same headline exists.
+// Unique prior triggers are preserved — weekly rescans that find nothing
+// won't silently erase previously-identified signals.
+export function mergeTriggers(prev = [], incoming = []) {
+  const map = new Map(prev.map(t => [t.headline?.toLowerCase().trim(), t]));
+  for (const t of incoming) {
+    const key = t.headline?.toLowerCase().trim();
+    if (!key) continue;
+    map.set(key, { ...t, headline: _strip(t.headline), detail: _strip(t.detail) });
+  }
+  return Array.from(map.values());
+}
+
 // ── Company intelligence (from companies table) ───────────────────────────────
 
 export async function fetchCompanyIntel(clientName) {
@@ -110,7 +150,7 @@ export async function addCompanyContact(companyId, contact) {
 
 export async function deleteCompanyContact(companyId, contactName) {
   const { data: row } = await supabase.from('companies').select('contact_angles').eq('id', companyId).single();
-  const updated = (row?.contact_angles || []).filter(c => c.name !== contactName);
+  const updated = (row?.contact_angles || []).filter(c => c.name?.trim() !== contactName?.trim());
   const { error } = await supabase.from('companies').update({ contact_angles: updated }).eq('id', companyId);
   if (error) throw new Error(error.message);
   return updated;
@@ -120,7 +160,7 @@ export async function updateCompanyContact(companyId, contactName, patch) {
   const { data: row } = await supabase.from('companies').select('contact_angles').eq('id', companyId).single();
   const contacts = row?.contact_angles || [];
   const updated = contacts.map(c => {
-    if (c.name !== contactName) return c;
+    if (c.name?.trim() !== contactName?.trim()) return c;
     const merged = { ...c };
     for (const [k, v] of Object.entries(patch)) {
       const trimmed = typeof v === 'string' ? v.trim() : v;
@@ -145,7 +185,20 @@ export async function runClientDeepScan(companyId, company, icp, detail = {}, cl
   const { scanDeepDive } = await import('./anthropic.js');
   const result = await scanDeepDive(company, icp, company.engagement_type || null, detail);
 
-  const stripEmDash = s => (s || '').replace(/\s*—\s*/g, ' – ');
+  // Fetch existing arrays so this scan adds to accumulated knowledge rather than replacing it
+  let prevAngles = [];
+  let prevTriggers = [];
+  try {
+    const { data: ex } = await supabase.from('companies').select('contact_angles, triggers').eq('id', companyId).single();
+    prevAngles   = ex?.contact_angles || [];
+    prevTriggers = ex?.triggers       || [];
+  } catch { /* non-fatal — fall back to new data only */ }
+
+  const incomingAngles = (result.contactAngles || []).map(ca => ({
+    ...ca,
+    linkedin: ca.linkedinUrl || ca.linkedin || null,
+  }));
+
   const update = {
     icp_tier:          result.icpTier    || null,
     icp_score:         result.icpScore   ? Math.round(result.icpScore)   : null,
@@ -153,10 +206,10 @@ export async function runClientDeepScan(companyId, company, icp, detail = {}, cl
     funding_stage:     result.fundingStage || null,
     employee_count_num: result.employeeCountNum ? Math.round(result.employeeCountNum) : null,
     employee_count:    result.employeeCountNum  ? String(Math.round(result.employeeCountNum)) : null,
-    summary:           stripEmDash(result.summary) || null,
-    triggers:          (result.triggers || []).map(t => ({ ...t, headline: stripEmDash(t.headline), detail: stripEmDash(t.detail) })),
-    recommended_angle: stripEmDash(result.recommendedAngle) || null,
-    contact_angles:    (result.contactAngles || []).map(ca => ({ ...ca, angle: stripEmDash(ca.angle) })),
+    summary:           _strip(result.summary) || null,
+    triggers:          mergeTriggers(prevTriggers, result.triggers || []),
+    recommended_angle: _strip(result.recommendedAngle) || null,
+    contact_angles:    mergeContactAngles(prevAngles, incomingAngles),
     scan_date:         new Date().toISOString(),
     deep_scanned:      true,
     ...(result.website         ? { website:          result.website }         : {}),
@@ -181,7 +234,32 @@ export async function runBuildThesis(companyId, company, icp, detail = {}, onPro
   const { buildCompanyThesis } = await import('./anthropic.js');
   const result = await buildCompanyThesis(company, icp, detail, (phase, status, data, message) => onProgress(phase, status, data, message));
 
-  const stripEmDash = s => (s || '').replace(/\s*—\s*/g, ' - ');
+  // Build the new contact list from this run's results
+  const newContacts = [
+    ...(result.entry_contact ? [{ ...result.entry_contact, is_primary: true }] : []),
+    ...(result.contact_angles || []),
+  ];
+
+  // Fetch existing arrays so this run adds to accumulated knowledge
+  let prevAngles   = [];
+  let prevTriggers = [];
+  try {
+    const { data: ex } = await supabase.from('companies').select('contact_angles, triggers').eq('id', companyId).single();
+    prevAngles   = ex?.contact_angles || [];
+    prevTriggers = ex?.triggers       || [];
+  } catch { /* non-fatal */ }
+
+  // Merge contacts — new data wins on overlap; prior contacts not re-discovered are kept
+  let mergedContacts = mergeContactAngles(prevAngles, newContacts);
+  // Re-apply is_primary: the new entry_contact wins; everyone else keeps their flag
+  const primaryName = result.entry_contact?.name?.toLowerCase().trim();
+  if (primaryName) {
+    mergedContacts = mergedContacts.map(c => ({
+      ...c,
+      is_primary: c.name?.toLowerCase().trim() === primaryName,
+    }));
+  }
+
   const update = {
     icp_score:          result.icp_score      ? Math.round(result.icp_score)      : null,
     overall_score:      result.overall_score  ? Math.round(result.overall_score)  : null,
@@ -191,13 +269,10 @@ export async function runBuildThesis(companyId, company, icp, detail = {}, onPro
     employee_count:     result.employee_count_num ? String(Math.round(result.employee_count_num)) : null,
     hq:                 result.hq             || null,
     industry:           result.industry       || null,
-    summary:            stripEmDash(result.summary) || null,
-    recommended_angle:  stripEmDash(result.recommended_angle) || null,
-    triggers:           (result.triggers || []).map(t => ({ ...t, headline: stripEmDash(t.headline), detail: stripEmDash(t.detail) })),
-    contact_angles:     [
-      ...(result.entry_contact ? [{ ...result.entry_contact, angle: stripEmDash(result.entry_contact.angle), hook: stripEmDash(result.entry_contact.hook), is_primary: true }] : []),
-      ...(result.contact_angles || []).map(ca => ({ ...ca, angle: stripEmDash(ca.angle), hook: stripEmDash(ca.hook) })),
-    ],
+    summary:            _strip(result.summary) || null,
+    recommended_angle:  _strip(result.recommended_angle) || null,
+    triggers:           mergeTriggers(prevTriggers, result.triggers || []),
+    contact_angles:     mergedContacts,
     thesis:             result.thesis         || null,
     thesis_risks:       result.risks          || [],
     thesis_next_step:   result.next_step      || null,

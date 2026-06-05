@@ -963,6 +963,7 @@ Return JSON:
 }
 
 export async function generateEmailDraft(touchNumber, company, contact, angle, icp = DEFAULT_ICP, t1Subject = null, engagementType = 'Sprint', linkedinPosts = []) {
+  if (touchNumber === 3) throw new Error('Touch 3 is LinkedIn — use generateLinkedInDrafts() instead of generateEmailDraft()');
   const promptFn = TOUCH_PROMPTS[touchNumber];
   if (!promptFn) throw new Error(`No prompt for touch ${touchNumber}`);
 
@@ -992,13 +993,17 @@ export async function generateEmailDraft(touchNumber, company, contact, angle, i
   const e = cleaned.lastIndexOf('}');
   if (s === -1 || e === -1) throw new Error('No JSON found in draft response');
   const result = JSON.parse(cleaned.slice(s, e + 1));
-  // Strip any em dashes that slipped through
-  if (result.body) result.body = result.body.replace(/—/g, ',');
-  if (result.subject) result.subject = result.subject.replace(/—/g, ',');
+  // Strip any em/en dashes that slipped through
+  if (result.body) result.body = result.body.replace(/[—–]/g, ',');
+  if (result.subject) result.subject = result.subject.replace(/[—–]/g, ',');
+  // Append ICP email signature if one is set in settings
+  if (icp.emailSignature?.trim() && result.body) {
+    result.body = result.body.trimEnd() + '\n\n' + icp.emailSignature.trim();
+  }
   return result;
 }
 
-export async function generateLinkedInDrafts(company, contact, t1Subject = null, engagementType = 'Sprint', linkedinPosts = []) {
+export async function generateLinkedInDrafts(company, contact, t1Subject = null, engagementType = 'Sprint', linkedinPosts = [], icp = DEFAULT_ICP) {
   const eng = ENGAGEMENT_META[engagementType] || ENGAGEMENT_META.Sprint;
   const contactPosts = linkedinPosts.filter(p =>
     p.contact_name?.toLowerCase().trim() === contact.name?.toLowerCase().trim()
@@ -1007,7 +1012,7 @@ export async function generateLinkedInDrafts(company, contact, t1Subject = null,
     callClaude({
       model: 'claude-sonnet-4-6',
       max_tokens: 600,
-      system: `You are a copywriter for Part Human. Write in their voice: direct, warm, human, no jargon. Never use em dashes (—). Return only valid JSON.\n\nENGAGEMENT CONTEXT: ${eng.name} (${eng.price}, ${eng.duration}). ${eng.hook}.`,
+      system: `You are a copywriter for Part Human. Write in their voice: direct, warm, human, no jargon. Never use em dashes (—). Return only valid JSON.\n\nENGAGEMENT CONTEXT: ${eng.name} (${eng.price}, ${eng.duration}). ${eng.hook}.${icp.outreachVoice ? '\n\nVOICE GUIDANCE: ' + icp.outreachVoice : ''}`,
       messages: [{ role: 'user', content: TOUCH_PROMPTS[3](company, contact, null, t1Subject, engagementType, contactPosts) }],
     }),
     TIMEOUT_MS
@@ -1019,8 +1024,8 @@ export async function generateLinkedInDrafts(company, contact, t1Subject = null,
   const e = cleaned.lastIndexOf('}');
   if (s === -1 || e === -1) throw new Error('No JSON found in LinkedIn draft response');
   const result = JSON.parse(cleaned.slice(s, e + 1));
-  if (result.connection_note) result.connection_note = result.connection_note.replace(/—/g, ',');
-  if (result.acceptance_dm) result.acceptance_dm = result.acceptance_dm.replace(/—/g, ',');
+  if (result.connection_note) result.connection_note = result.connection_note.replace(/[—–]/g, ',');
+  if (result.acceptance_dm) result.acceptance_dm = result.acceptance_dm.replace(/[—–]/g, ',');
   return result;
 }
 
@@ -1066,7 +1071,7 @@ Keep it tight and direct. Never use em dashes.`;
   );
 
   const text = data.content?.find(b => b.type === 'text')?.text || '';
-  return text.replace(/—/g, ',');
+  return text.replace(/[—–]/g, ',');
 }
 
 // ── AI Chat ───────────────────────────────────────────────────────────────────
@@ -1095,7 +1100,7 @@ Be direct, specific, and actionable. Never use em dashes (—). Reference actual
   );
 
   const text = data.content?.find(b => b.type === 'text')?.text || '';
-  return text.replace(/—/g, ',');
+  return text.replace(/[—–]/g, ',');
 }
 
 // ── Company Discovery ─────────────────────────────────────────────────────────
@@ -1161,6 +1166,124 @@ Suggest up to 25 real companies that match both the ICP above and the search cri
   }
 }
 
+// ── Contextual outreach advisor ───────────────────────────────────────────────
+// Reads ALL deal context (stage, activities, thesis, tasks) and decides what
+// kind of email is appropriate right now, then writes it.
+
+export async function generateContextualOutreach(deal, companyIntel, activities = [], tasks = [], contact, icp = DEFAULT_ICP) {
+  const brandCtx = await getBrandContext();
+
+  const activityHistory = activities.slice(0, 20).map(a =>
+    `[${a.activity_date}] ${a.type}${a.assigned_to ? ` (${a.assigned_to})` : ''}: ${a.summary}`
+  ).join('\n');
+
+  const openTasks = tasks.filter(t => !t.completed).map(t =>
+    `- ${t.title}${t.due_date ? ` (due ${t.due_date})` : ''}`
+  ).join('\n');
+
+  const lastActivity = activities.length > 0 ? activities[0] : null;
+  const daysSinceLastActivity = lastActivity
+    ? Math.floor((Date.now() - new Date(lastActivity.activity_date).getTime()) / 86400000)
+    : null;
+  const daysSinceCreated = Math.floor((Date.now() - new Date(deal.created_at).getTime()) / 86400000);
+  const eng = ENGAGEMENT_META[deal.engagement_type] || ENGAGEMENT_META.Sprint;
+
+  const system = `You are a senior sales strategist at Part Human, a brand strategy agency. Your job is to read a complete deal situation and advise exactly what to do next, then write the right email for this specific moment in the relationship.
+
+${brandCtx}
+
+${buildIcpProfile(icp)}
+
+${EMAIL_RULES}
+
+EMAIL LENGTH AND STRUCTURE (non-negotiable):
+- Cold intros: 4 short paragraphs — trigger (1-2 sentences), pain (1-2 sentences), human truth (1-2 sentences), CTA (1 sentence). Under 120 words.
+- Follow-ups and re-engagements: approximately 6 sentences across 2-3 short paragraphs. Lead with a sharp, specific observation about the prospect's situation — something they can react to. Do NOT just re-extend the calendar link or ask if they saw your last email. Make it feel like you have been paying attention, not just following a cadence.
+- Post-meeting and check-ins: 4-5 sentences. Reference something specific from the meeting or conversation.
+- Every paragraph is 1-2 sentences. If you find yourself writing a third sentence in a paragraph, cut it.
+- White space is the point. Brevity signals confidence. Long emails signal insecurity.
+
+ADDITIONAL RULES:
+- The email must be calibrated to WHERE THIS DEAL IS RIGHT NOW, not a generic template.
+- If there was a discovery call or meeting, reference what was discussed specifically. Do not re-pitch from scratch.
+- If they haven't responded to prior outreach, acknowledge the silence briefly and gracefully. One sentence. Move on.
+- Timing advice should be specific (e.g. "Send today, it's been 3 days since the call" or "Hold until Monday morning").
+- Do NOT add any signature, title, phone number, or contact details at the end of the email. End the body with just the sender's first name on its own line. The sender will add their own signature.
+- Return only valid JSON, no markdown.`;
+
+  const user = `Read this complete deal situation and advise on next steps, then write the right email.
+
+DEAL:
+- Company: ${deal.company_name}
+- Stage: ${deal.stage}
+- Engagement type: ${eng.name} (${eng.price}, ${eng.duration}) — ${eng.hook}
+- Created: ${daysSinceCreated} days ago
+- Days since last activity: ${daysSinceLastActivity !== null ? `${daysSinceLastActivity} days` : 'no activity logged yet'}
+
+CONTACT TO REACH:
+- Name: ${contact.name}
+- Title: ${contact.title || 'unknown role'}
+- Email: ${contact.email || 'not on file'}
+
+COMPANY INTEL (from thesis):
+${companyIntel?.summary ? `Summary: ${companyIntel.summary}` : 'No summary.'}
+${companyIntel?.recommended_angle ? `Best angle: ${companyIntel.recommended_angle}` : ''}
+${companyIntel?.entry_contact?.hook ? `Entry hook for ${companyIntel.entry_contact.name || 'primary contact'}: ${companyIntel.entry_contact.hook}` : ''}
+${companyIntel?.thesis ? `Thesis (excerpt): ${companyIntel.thesis.slice(0, 600)}` : 'No thesis built yet.'}
+
+ACTIVITY HISTORY (most recent first):
+${activityHistory || 'No activities logged — this is a cold deal.'}
+
+OPEN TASKS:
+${openTasks || 'No open tasks.'}
+
+Based on the full picture above:
+1. What is the real situation with this deal right now? (1-2 sentences, honest)
+2. What is the right next action and why? (1-2 sentences, specific)
+3. Timing — when should we send and why? (1 sentence, specific)
+4. Write the email that fits this exact moment. Subject line and body.
+
+Return JSON only:
+{
+  "situation": "honest 1-2 sentence read of where this deal stands",
+  "recommendation": "specific next action and why it's right for this moment",
+  "timing": "when to send and any timing caveats",
+  "emailType": "cold_intro|follow_up|post_meeting|post_proposal|re_engagement|nurture|check_in",
+  "subject": "email subject line",
+  "body": "email body — use \\n for paragraph breaks, no markdown"
+}`;
+
+  const data = await withTimeout(
+    callClaude({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 900,
+      system,
+      messages: [{ role: 'user', content: user }],
+    }),
+    TIMEOUT_MS
+  );
+
+  const text = data.content?.find(b => b.type === 'text')?.text || '';
+  const cleaned = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
+  const s = cleaned.indexOf('{');
+  const e = cleaned.lastIndexOf('}');
+  if (s === -1 || e === -1) throw new Error('No JSON found in contextual outreach response');
+  const result = JSON.parse(cleaned.slice(s, e + 1));
+
+  // Strip em-dash (U+2014) and en-dash (U+2013) — Claude sometimes outputs either
+  const stripDashes = str => str.replace(/[—–]/g, ',');
+  ['body', 'subject', 'situation', 'recommendation', 'timing'].forEach(k => {
+    if (result[k]) result[k] = stripDashes(result[k]);
+  });
+
+  // Append ICP email signature if one is set in settings
+  if (icp.emailSignature?.trim() && result.body) {
+    result.body = result.body.trimEnd() + '\n\n' + icp.emailSignature.trim();
+  }
+
+  return result;
+}
+
 // ── Response analysis ─────────────────────────────────────────────────────────
 
 export async function analyzeResponse(company, contact, touchNumber, responseText) {
@@ -1181,7 +1304,7 @@ export async function analyzeResponse(company, contact, touchNumber, responseTex
   const cleaned = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
   try {
     const result = JSON.parse(cleaned);
-    if (result.suggestedReply) result.suggestedReply = result.suggestedReply.replace(/—/g, ',');
+    if (result.suggestedReply) result.suggestedReply = result.suggestedReply.replace(/[—–]/g, ',');
     return result;
   } catch {
     return { error: 'Could not parse AI response', raw: cleaned };
