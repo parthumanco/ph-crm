@@ -5,23 +5,53 @@ import { supabase } from './supabase';
 // Edit via Settings → Brand Voice & Positioning.
 
 export const DEFAULT_BRAND_BRAIN = {
-  studioOverview: `Part Human is a human-centered brand design studio based in Andover, MA. Founded by Peter Andrews and Michael Lennon. A small, senior team — no account pyramids, no handoffs. The people you meet are the people doing the work.
+  studioOverview: `Part Human is a brand and creative agency for businesses bold enough to be honest in a world that's forgotten how. Founded by Peter Andrews (Head of Company) and Michael Lennon (Head of Operations). Small senior team — no account pyramids, no handoffs. The people you meet are the people doing the work.
 
-We work with businesses bold enough to be honest in a world that's forgotten how. Our work spans brand strategy, identity, naming, packaging, digital experience, and market entry. Entry point is typically a Brand Sprint — a focused, low-risk engagement designed to build trust and get clarity fast before a larger retainer commitment.`,
+We built Part Human for this moment. In the last ten years, business learned to optimize. The brands all started to sound the same, look the same, land the same. Marketers built magnificent systems to measure everything except the moments that actually matter. We track the click. We miss the catch in someone's breath. In the language of marketing, the brands won. In the language of being a person on the other end of all this, they lost.
 
-  brandVoice: `Direct, conversational, occasionally irreverent. Short punchy sentences that land emotionally before they explain logically. Skeptical of algorithmic thinking and industry defaults. Concrete over abstract — observable behavior over theoretical personas. Honest to the point of uncomfortable.
+We're not here to replace your analytics, your performance marketing, or your growth team. We're here to do the work that happens upstream of all of it — the part that helps a business choose what matters and stay there. The part that decides whether anything they do downstream actually lands. Then we build the creative moments around that core so that the Human Response never gets lost.
 
-Write like a smart peer who sees something the prospect might have missed — not a salesperson pitching. No jargon. No generic superlatives ("best-in-class," "full-service," "award-winning"). Lead with a specific, named observation. Challenge assumptions gently. Never use em dashes (—). Feel something.`,
+Entry point: Brand Sprint — a focused, scoped engagement to get clarity fast. Not a commitment to a full retainer. A low-risk, high-value way to start.`,
 
-  corePhilosophy: `"The algorithm made you efficient. It also made you invisible."
-"Humans feel first, decide second, and rationalize third."
-"The real decision happens before the decision."
-"Conviction is the Strategy."
-"Connection Converts."
+  brandVoice: `Voice: Direct, warm, occasionally irreverent. Short punchy sentences. Conversational, not corporate. Honest to the point of uncomfortable.
 
-Our Human Response™ system is the intellectual backbone behind everything we do — built around the actual human, not the clean version. Emotion runs upstream of logic. Most brands work backward, starting with logic and hoping feeling follows. We don't.
+Pete Andrews' writing style — our public voice — is the benchmark: rhetorical questions that land, concrete specifics over abstractions, no hedging, no jargon. Uses "we" and "you" heavily. Never "solutions," "deliverables," or "leverage." Never generic superlatives. Calls things what they are.
 
-Three things that determine whether a brand works: Mechanism (how people actually decide), Texture (distinctive voice, taste, and point of view), and Cultural Field (reading the room — the same move can be brilliant in one moment and tone-deaf in another).`,
+Key phrases and constructions we use:
+- "The work that happens upstream"
+- "The decision before the decision is emotional"
+- "Feel first. Decide second. Rationalize after."
+- "Do less, on purpose"
+- "Pick a position and pay the cost"
+- "Build something worth remembering"
+- "There's never been a worse time to look like everyone else. There's never been a better time to look like yourself."
+
+Rules for all AI-generated content:
+- Never use em dashes (—). Use commas or short sentences instead.
+- Lead with a specific, named observation about the prospect — not a pitch about us
+- Sound like a smart peer who's been paying attention, not a vendor who just found them
+- No generic agency language: no "full-service," "award-winning," "best-in-class," "synergy," "leverage"
+- Challenge assumptions — don't just validate
+- Write to one person, not a market segment`,
+
+  corePhilosophy: `The Algorithmic Industrial Complex: The collection of platforms, playbooks, and best practices that taught a generation of marketers to optimize the funnel and ignore the feeling. It made the work faster but 100x more forgettable. Brands look identical because they're being built off the same templates, the same prompts, the same frameworks. AI didn't create this problem. It poured fuel on it. When everyone has access to the same tools, the same data, and the same playbook, sameness isn't a risk — it's the default.
+
+Human Response™ — our formula: Emotion + Logic = Action.
+We feel first. We decide second. We rationalize after. Always in that order. This isn't a brand theory — it's anatomy. The decision before the decision is emotional: joy, fear, longing, trust, anger, hope, shame, awe. The reasoning that follows justifies what the body already chose.
+
+The four real decision drivers (none of them live in a funnel):
+- Identity: You didn't take the cheap option because buying cheap told people something about you that you weren't ready to be.
+- Memory: You drove across town because the barista remembers your name.
+- Social proof: You watched the show because both your friend and your coworker said it was great.
+- Relationship: You said yes to the meeting because you hadn't talked to another adult in three days.
+
+Key beliefs:
+- "The algorithm made you efficient. It also made you invisible."
+- "Conviction is the Strategy."
+- "Connection Converts."
+- "The brands that win the next decade won't be the ones that optimize hardest — they'll be the ones who figure out how to stop sounding like everyone else."
+- Most brands miss the same way: too many value propositions. They try to be five things to five people and end up being nothing to anyone. The brands that work pick a position and pay the cost.
+- We optimize for the feeling. We build for the response.`,
 
   services: `Brand Strategy — positioning, messaging architecture, competitive differentiation, brand platform
 Brand Identity & Design — visual systems, logos, typography, color, art direction
@@ -30,33 +60,40 @@ Packaging Design — CPG, craft beverage, spirits, product packaging
 Digital Experiences — websites, landing pages, digital brand presence
 Market Entry Strategy — go-to-market planning for new categories and markets
 Research & Insights — human behavior research, audience understanding, cultural analysis
-Brand Guidelines — comprehensive standards documentation and brand management
+Brand Guidelines — comprehensive standards documentation
 
-Entry point: Brand Sprint — focused 2-4 week engagement to get clarity fast. Scoped as a standalone project, not a commitment to a full retainer.`,
+Entry point: Brand Sprint — a focused 2-4 week engagement. Scoped standalone project. Not a commitment to a full retainer. Designed to get clarity fast and demonstrate value before anything larger.`,
 
-  clientSegments: `Challengers: Companies creating markets nobody sees yet. Early-stage, conviction-led, need a brand that can carry the weight of their vision before revenue validates it.
+  clientSegments: `We work with brands that know the cost of being invisible:
 
-Scale-ups: Companies outgrowing their origin story. Revenue is there, identity isn't. The founders' intuition that built the business can't scale alone — they need language, system, and soul.
+Challengers: Building markets nobody sees yet. They have conviction before they have validation. Need a brand that can carry the weight of the vision — one that can make people feel the future before they can see it.
 
-Market Leaders: Established players refusing to fade into wallpaper. Fighting irrelevance, defending a premium position, or entering an adjacent category where their old brand doesn't follow.`,
+Scale-ups: Outgrowing their origin story. Revenue is there, identity isn't. The founder's intuition that built the business can't scale alone. They need language, system, and soul. The brand that got them here won't get them there.
+
+Market Leaders: Defending position they used to set. Fighting irrelevance, protecting a premium, or entering an adjacent category where their old brand doesn't follow. Refusing to fade into wallpaper.
+
+The founders who feel the urgency and know the brand is the lever. "A brand that connects is a business that converts."`,
 
   messagingRules: `DO:
-- Lead with a specific, named trigger (funding round, new leadership, product launch, expansion, rebrand signal, award)
-- Reference their specific situation — not generic category pain
-- Position Part Human as the antidote to algorithm-driven, generic brand work
-- Anchor to the Sprint as the low-risk entry point — never lead with the full retainer
-- Sound like someone who's been paying attention, not someone who just found them
-- Acknowledge the tension between growth pressure and authentic identity
+- Open with a specific, named trigger — funding round, new leadership, product launch, rapid hiring, rebrand signal, competitive move, award, expansion
+- Reference something real and specific about them — their language, their market position, something they published or announced
+- Frame the problem in their terms first, our solution second
+- Anchor every outreach to the Sprint as the entry point — never lead with full retainer scope
+- Sound like someone who has been paying attention for a while, not someone who just found them
+- Name the tension: growth pressure vs. authentic identity; optimization vs. connection; speed vs. meaning
+- Write to one human, not a segment
 
 DON'T:
-- Use generic agency language or superlatives of any kind
-- Lead with our credentials before their problem
-- Talk about "deliverables" without talking about outcomes
-- Send anything without a specific, named trigger — no trigger, no send
-- Pitch the full scope on first contact
-- Sound like a marketing email`,
+- Send without a specific named trigger — no trigger, no send, ever
+- Use generic agency language: no "full-service," "award-winning," "best-in-class," "results-driven," "partner," "synergy"
+- Lead with our credentials or case studies before their problem
+- Talk about deliverables without talking about what changes for them
+- Use em dashes (—) anywhere
+- Sound like a marketing email — if it reads like a template, start over
+- Pitch the full retainer on first or second contact
+- Mention "AI" or "data-driven" as positives — we position against the Algorithmic Industrial Complex`,
 
-  proofPoints: `Wither + Rise — Category challenger brand (wine/spirits category entry)
+  proofPoints: `Wither + Rise — Category challenger brand (wine/spirits category entry, positioning + identity)
 Boston Boatworks — Established player rebrand + apparel line
 meQuilibrium — Digital health scale-up, brand anthems and messaging platform
 Praxis — Scale-up brand guidelines and identity system
@@ -64,7 +101,8 @@ Chattermark Distillers — Craft spirits identity and packaging
 High Minded Brewing — Craft beverage identity and packaging
 Seven Saws Brewing Co. — Full brand system: strategy, identity, packaging, digital, point-of-purchase
 Denison Yachting — Editorial design and brand expression
-Soul Objective — Strategy, naming, identity, digital`,
+Soul Objective — Strategy, naming, identity, digital
+Line in the Sand — Product design and manufacturing`,
 };
 
 export function buildBrandContext(brain = DEFAULT_BRAND_BRAIN) {
