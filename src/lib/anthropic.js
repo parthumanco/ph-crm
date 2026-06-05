@@ -465,23 +465,33 @@ export async function buildCompanyThesis(company, icp, clientDetail = {}, onProg
   const site = company.website || '';
   const internalCtx = buildClientContext(clientDetail);
 
+  // Research materials attached by the sales team
+  const researchItems = company.research_items || [];
+  const researchLinks = researchItems.filter(i => i.url);
+  const researchDocs  = researchItems.filter(i => i.body);
+
   // ── Phase 1: Company foundation + full leadership discovery ───────────────
   onProgress(1, 'running', null, `Starting research on ${name}…`);
   onProgress(1, 'log', null, `Searching "${name} team" and "${name} leadership"…`);
   if (site) onProgress(1, 'log', null, `Checking website: ${site}/about and /team pages…`);
   onProgress(1, 'log', null, `Looking up LinkedIn company page for ${name}…`);
+  if (researchLinks.length > 0) onProgress(1, 'log', null, `Reading ${researchLinks.length} attached link${researchLinks.length > 1 ? 's' : ''}: ${researchLinks.map(i => i.title || i.url).join(', ')}`);
+
+  const p1LinkTask = researchLinks.length > 0
+    ? `\n\nTASK C — The sales team has flagged these URLs as important context. Visit and extract key information from each:\n${researchLinks.map(i => `- ${i.title ? `"${i.title}": ` : ''}${i.url}`).join('\n')}`
+    : '';
 
   const p1raw = await withTimeout(callClaude({
     model: 'claude-sonnet-4-6',
     max_tokens: 3000,
     system: 'You are a B2B research analyst. Search thoroughly. Return only valid JSON, no markdown.',
-    tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 5 }],
+    tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: researchLinks.length > 0 ? 7 : 5 }],
     messages: [{ role: 'user', content:
 `Research ${name}${site ? ` (${site})` : ''} thoroughly. Do at least 2 searches.
 
 TASK A — Company overview: Confirm website URL, HQ city/country, employee count, funding stage, industry, founding year, what they do in 2-3 sentences.
 
-TASK B — Leadership team: Search "${name} team", "${name} leadership", and their website /about or /team page AND their LinkedIn company page. Find every C-suite and VP-level person especially: CEO, CMO, VP/Director of Marketing, VP/Head of Brand, Head of Communications, Creative Director, Chief Brand Officer. For each person record their full name, exact title, and LinkedIn profile URL (only if you actually found it in search results — never construct one).
+TASK B — Leadership team: Search "${name} team", "${name} leadership", and their website /about or /team page AND their LinkedIn company page. Find every C-suite and VP-level person especially: CEO, CMO, VP/Director of Marketing, VP/Head of Brand, Head of Communications, Creative Director, Chief Brand Officer. For each person record their full name, exact title, and LinkedIn profile URL (only if you actually found it in search results — never construct one).${p1LinkTask}
 
 Return JSON only:
 {"website":"str","hq":"City, State/Country","employee_count_num":number_or_null,"funding_stage":"str","industry":"str","description":"str","leaders":[{"name":"str","title":"str","linkedin":"url_or_null","email":"str_or_null"}]}`
@@ -611,8 +621,9 @@ ${JSON.stringify(p2contacts, null, 2)}
 TRIGGER EVENTS & COMPETITIVE:
 ${JSON.stringify(p3, null, 2)}
 
-${internalCtx ? `OUR EXISTING RELATIONSHIP:\n${internalCtx}` : ''}
-
+${internalCtx ? `OUR EXISTING RELATIONSHIP:\n${internalCtx}\n` : ''}
+${researchDocs.length > 0 ? `RESEARCH MATERIALS (provided by the sales team — treat as high-confidence primary source intel):\n${researchDocs.map(i => `[${(i.type || 'doc').toUpperCase()}${i.title ? ` — ${i.title}` : ''}]\n${i.body}`).join('\n\n')}\n` : ''}
+${researchLinks.length > 0 ? `REFERENCE LINKS (flagged by sales team):\n${researchLinks.map(i => `- ${i.title ? `${i.title}: ` : ''}${i.url}`).join('\n')}\n` : ''}
 Write a full thesis covering:
 1. Why they need brand strategy help RIGHT NOW — tie to specific signals, not generic reasons
 2. ICP fit and scoring

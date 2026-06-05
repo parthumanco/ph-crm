@@ -85,6 +85,26 @@ export async function findOrCreateCompany(name) {
   return created;
 }
 
+// ── Company research items (links, documents, notes) ───────────────────────────
+
+export async function addCompanyResearchItem(companyId, item) {
+  const { data: row } = await supabase.from('companies').select('research_items').eq('id', companyId).single();
+  const items = row?.research_items || [];
+  const newItem = { id: crypto.randomUUID(), ...item, added_at: new Date().toISOString() };
+  const updated = [...items, newItem];
+  const { error } = await supabase.from('companies').update({ research_items: updated }).eq('id', companyId);
+  if (error) throw new Error(error.message);
+  return updated;
+}
+
+export async function removeCompanyResearchItem(companyId, itemId) {
+  const { data: row } = await supabase.from('companies').select('research_items').eq('id', companyId).single();
+  const updated = (row?.research_items || []).filter(i => i.id !== itemId);
+  const { error } = await supabase.from('companies').update({ research_items: updated }).eq('id', companyId);
+  if (error) throw new Error(error.message);
+  return updated;
+}
+
 export async function runClientDeepScan(companyId, company, icp, detail = {}, clientId = null) {
   const { scanDeepDive } = await import('./anthropic.js');
   const result = await scanDeepDive(company, icp, company.engagement_type || null, detail);
