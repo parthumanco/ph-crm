@@ -98,7 +98,17 @@ IMPORTANT: Write recommendedAngle and all contactAngles specifically for the rec
 
 // ── ICP / Signal Watch scanning ──────────────────────────────────────────────
 
-import { buildIcpProfile, DEFAULT_ICP } from './settings';
+import { buildIcpProfile, DEFAULT_ICP, buildBrandContext, DEFAULT_BRAND_BRAIN, loadBrandBrain } from './settings';
+
+// ── Brand Brain cache ─────────────────────────────────────────────────────────
+// Loaded once per app session and reused across all AI calls.
+let _brainCache = null;
+async function getBrandContext() {
+  if (!_brainCache) _brainCache = await loadBrandBrain().catch(() => DEFAULT_BRAND_BRAIN);
+  return buildBrandContext(_brainCache);
+}
+// Call this from Settings after a save so the next scan picks up changes.
+export function invalidateBrandCache() { _brainCache = null; }
 
 const INDUSTRY_GUIDE = `industry: Classify using exactly one of these values:
 "Agriculture" (farming, forestry, fishing, hunting)
@@ -121,10 +131,10 @@ const INDUSTRY_GUIDE = `industry: Classify using exactly one of these values:
 "Other Services" (repair, personal care, religious, civic organizations)
 "Government" (public administration, military, public safety)`;
 
-function buildBatchSystem(icp) {
+function buildBatchSystem(icp, brandCtx = '') {
   const profile = buildIcpProfile(icp);
   return `Sales intelligence analyst scoring companies for Part Human outreach.
-${profile}
+${brandCtx ? `${brandCtx}\n\n` : ''}${profile}
 NEVER use em dashes (—) anywhere in your response. Use commas or periods instead.
 Return ONLY a JSON array, same order as input. Short strings only.
 Each object schema:
@@ -139,9 +149,10 @@ If unknown company: noNewsFound:true, triggers:[], overallScore:3, icpScore:3, l
 CRITICAL: JSON array only. No markdown.`;
 }
 
-function buildDeepSystem(icp) {
+function buildDeepSystem(icp, brandCtx = '') {
   const profile = buildIcpProfile(icp);
   return `B2B sales intelligence analyst. Search the web AND social media for very recent signals about this company.
+${brandCtx ? `\n${brandCtx}\n` : ''}
 
 Sources to check:
 - LinkedIn: company page posts, executive posts, job postings, follower growth
@@ -203,6 +214,7 @@ CRITICAL: JSON array only. No markdown.`,
 }
 
 export async function scanBatch(companies, icp = DEFAULT_ICP) {
+  const brandCtx = await getBrandContext();
   const list = companies.map((c, i) => {
     const contactList = (c.contacts || [])
       .map(ct => [ct.name, ct.title].filter(Boolean).join(' / '))
@@ -214,7 +226,7 @@ export async function scanBatch(companies, icp = DEFAULT_ICP) {
     callClaude({
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 10000,
-      system: buildBatchSystem(icp),
+      system: buildBatchSystem(icp, brandCtx),
       messages: [{ role: 'user', content: `Analyze for B2B trigger events:\n${list}` }],
     }),
     TIMEOUT_MS
@@ -248,10 +260,10 @@ export async function scanBatch(companies, icp = DEFAULT_ICP) {
   }
 }
 
-function buildWeeklySystem(icp) {
+function buildWeeklySystem(icp, brandCtx = '') {
   const profile = buildIcpProfile(icp);
   return `Sales intelligence analyst doing a weekly refresh scan for Part Human.
-${profile}
+${brandCtx ? `${brandCtx}\n\n` : ''}${profile}
 Focus: what has CHANGED or is NEW in the last 30 days — leadership moves, funding rounds, product launches, layoffs, expansions, key hires. Adjust scores up if new positive triggers exist.
 Return ONLY a JSON array, same order as input. Short strings only.
 Each object schema:
@@ -264,6 +276,7 @@ CRITICAL: JSON array only. No markdown.`;
 }
 
 export async function weeklyRescanBatch(companies, icp = DEFAULT_ICP) {
+  const brandCtx = await getBrandContext();
   const list = companies.map((c, i) =>
     `${i + 1}. ${c.name}${c.website ? ` (${c.website})` : ''}${c.hq ? ` — HQ: ${c.hq}` : ''} [current SIG: ${c.overall_score || '?'}, ICP: ${c.icp_score || '?'}]`
   ).join('\n');
@@ -272,7 +285,7 @@ export async function weeklyRescanBatch(companies, icp = DEFAULT_ICP) {
     callClaude({
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 8000,
-      system: buildWeeklySystem(icp),
+      system: buildWeeklySystem(icp, brandCtx),
       messages: [{ role: 'user', content: `Weekly refresh — check for new developments:\n${list}` }],
     }),
     TIMEOUT_MS
@@ -306,6 +319,7 @@ export async function weeklyRescanBatch(companies, icp = DEFAULT_ICP) {
 }
 
 export async function scanDeepDive(company, icp = DEFAULT_ICP, existingEngagementType = null, clientDetail = {}) {
+  const brandCtx = await getBrandContext();
   const contacts = company.contacts || [];
   const contactStr = contacts
     .map(ct => {
@@ -375,7 +389,7 @@ export async function scanDeepDive(company, icp = DEFAULT_ICP, existingEngagemen
     callClaude({
       model: 'claude-sonnet-4-6',
       max_tokens: 4000,
-      system: buildDeepSystem(icp),
+      system: buildDeepSystem(icp, brandCtx),
       tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 6 }],
       messages: [{
         role: 'user',
@@ -605,10 +619,11 @@ Return JSON only:
   onProgress(4, 'log', null, `Composing full thesis narrative…`);
 
   const icpProfile = buildIcpProfile(icp);
+  const brandCtx = await getBrandContext();
   const p4raw = await withTimeout(callClaude({
     model: 'claude-sonnet-4-6',
     max_tokens: 6000,
-    system: `You are a senior brand strategist at Part Human, a brand strategy agency. Your job is to synthesise research into a precise sales thesis. Return only valid JSON, no markdown.\n\n${icpProfile}`,
+    system: `You are a senior brand strategist at Part Human, a brand strategy agency. Your job is to synthesise research into a precise sales thesis. Return only valid JSON, no markdown.\n\n${brandCtx}\n\n${icpProfile}`,
     messages: [{ role: 'user', content:
 `Synthesise all research into a complete sales thesis for ${name}.
 
@@ -953,7 +968,8 @@ export async function generateEmailDraft(touchNumber, company, contact, angle, i
 
   const eng = ENGAGEMENT_META[engagementType] || ENGAGEMENT_META.Sprint;
   const { outreachVoice, aboutCompany } = icp;
-  const systemContext = `You are a copywriter for Part Human. ${aboutCompany ? aboutCompany.split('.')[0] + '.' : 'Brand strategy agency.'} Write in their voice: direct, warm, human, no jargon. Never use em dashes (—). Return only valid JSON as specified.${outreachVoice ? '\n\nVOICE GUIDANCE: ' + outreachVoice : ''}\n\nENGAGEMENT CONTEXT: You are writing for a ${eng.name} engagement (${eng.price}, ${eng.duration}). ${eng.hook}.`;
+  const brandCtx = await getBrandContext();
+  const systemContext = `You are a copywriter for Part Human. Write in their voice: direct, warm, human, no jargon. Never use em dashes (—). Return only valid JSON as specified.\n\n${brandCtx}${outreachVoice ? '\n\nVOICE GUIDANCE (additional): ' + outreachVoice : ''}\n\nENGAGEMENT CONTEXT: You are writing for a ${eng.name} engagement (${eng.price}, ${eng.duration}). ${eng.hook}.`;
 
   // Filter posts to just this contact
   const contactPosts = linkedinPosts.filter(p =>

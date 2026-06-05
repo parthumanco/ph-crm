@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
-import { saveIcp, loadTeamEmails, saveTeamEmails, saveTeamMembers } from '../lib/settings';
+import { saveIcp, loadTeamEmails, saveTeamEmails, saveTeamMembers, DEFAULT_BRAND_BRAIN, loadBrandBrain, saveBrandBrain } from '../lib/settings';
+import { invalidateBrandCache } from '../lib/anthropic';
 import { supabase } from '../lib/supabase';
 
 // ── Reference document helpers ────────────────────────────────────────────────
@@ -27,6 +28,52 @@ function fmtFileSize(bytes) {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
+
+// ── Brand Brain field definitions ─────────────────────────────────────────────
+const BRAND_FIELDS = [
+  {
+    key: 'studioOverview',
+    label: 'Studio Overview',
+    hint: 'Who Part Human is — used as context in every AI call. Keep it current.',
+    rows: 5,
+  },
+  {
+    key: 'brandVoice',
+    label: 'Brand Voice & Tone',
+    hint: 'How we write and sound. Rules applied to all outreach emails, thesis copy, and AI drafts.',
+    rows: 5,
+  },
+  {
+    key: 'corePhilosophy',
+    label: 'Core Philosophy & Positioning',
+    hint: 'Key beliefs, taglines, and foundational statements. Shapes how the AI frames our value.',
+    rows: 7,
+  },
+  {
+    key: 'services',
+    label: 'Services We Offer',
+    hint: 'Full service list with brief descriptions. Referenced when recommending angles and next steps.',
+    rows: 6,
+  },
+  {
+    key: 'clientSegments',
+    label: 'Client Segments',
+    hint: 'How we describe the types of clients we work with. Used to match prospects to our language.',
+    rows: 5,
+  },
+  {
+    key: 'messagingRules',
+    label: 'Messaging Rules',
+    hint: "Do's and don'ts applied to all outreach and AI-generated content.",
+    rows: 7,
+  },
+  {
+    key: 'proofPoints',
+    label: 'Key Work & Proof Points',
+    hint: 'Client names and brief project descriptions. Used when the AI needs credibility anchors.',
+    rows: 5,
+  },
+];
 
 // ── ICP field definitions ─────────────────────────────────────────────────────
 const FIELD_META = [
@@ -103,6 +150,11 @@ function SectionDivider() {
 // ── Main component ────────────────────────────────────────────────────────────
 export default function SettingsPage({ icp, onIcpSaved, teamMembers = [], onTeamMembersSaved }) {
 
+  // Brand Brain state
+  const [brainDraft, setBrainDraft]   = useState({ ...DEFAULT_BRAND_BRAIN });
+  const [brainSaving, setBrainSaving] = useState(false);
+  const [brainSaved, setBrainSaved]   = useState(false);
+
   // ICP state
   const [draft, setDraft]   = useState({ ...icp });
   const [saving, setSaving] = useState(false);
@@ -136,6 +188,9 @@ export default function SettingsPage({ icp, onIcpSaved, teamMembers = [], onTeam
   const [linkDraftName, setLinkDraftName] = useState('');
   const refDocInputRef                = useRef(null);
 
+  // Load brand brain on mount
+  useEffect(() => { loadBrandBrain().then(b => setBrainDraft({ ...DEFAULT_BRAND_BRAIN, ...b })); }, []);
+
   // Keep member draft in sync if parent reloads
   useEffect(() => { setMemberDraft(teamMembers); }, [teamMembers]);
   useEffect(() => {
@@ -144,6 +199,25 @@ export default function SettingsPage({ icp, onIcpSaved, teamMembers = [], onTeam
 
   useEffect(() => { loadTeamEmails().then(setTeamEmails); }, []);
   useEffect(() => { loadRefDocs().then(setRefDocs); }, []);
+
+  // ── Brand Brain handlers ─────────────────────────────────────────────────────
+  const handleSaveBrain = async () => {
+    setBrainSaving(true);
+    try {
+      await saveBrandBrain(brainDraft);
+      invalidateBrandCache(); // next AI call will pick up the new values
+      setBrainSaved(true);
+      setTimeout(() => setBrainSaved(false), 2500);
+    } catch (e) {
+      alert('Save failed: ' + e.message);
+    } finally {
+      setBrainSaving(false);
+    }
+  };
+
+  const handleResetBrain = () => {
+    if (window.confirm('Reset Brand Voice to defaults?')) setBrainDraft({ ...DEFAULT_BRAND_BRAIN });
+  };
 
   // ── ICP handlers ────────────────────────────────────────────────────────────
   const handleSave = async () => {
@@ -238,6 +312,50 @@ export default function SettingsPage({ icp, onIcpSaved, teamMembers = [], onTeam
   // ── Render ───────────────────────────────────────────────────────────────────
   return (
     <div className="page-body">
+
+      {/* ════════════════════════════════════════════════════════════════
+          SECTION 0 — Brand Voice & Positioning
+      ════════════════════════════════════════════════════════════════ */}
+      <SectionHeader
+        title="🧠 Brand Voice & Positioning"
+        description="The Part Human brand brain — injected into every AI call across the app. Shapes how the AI writes outreach, scores companies, builds theses, and recommends next steps. Keep it current and honest."
+      >
+        <button className="btn btn-ghost btn-sm" onClick={handleResetBrain}>↺ Reset defaults</button>
+        <button className="btn btn-primary" onClick={handleSaveBrain} disabled={brainSaving}>
+          {brainSaving ? <><span className="spinner" /> Saving…</> : brainSaved ? '✅ Saved!' : '💾 Save'}
+        </button>
+      </SectionHeader>
+
+      <div className="alert alert-info" style={{ marginBottom: 20 }}>
+        <span>🧠</span>
+        <span>This context is passed to every AI scan, thesis build, email draft, and outreach suggestion. The more accurate and specific it is, the better the AI performs on your behalf.</span>
+      </div>
+
+      <div className="card" style={{ padding: '20px 24px' }}>
+        {BRAND_FIELDS.map((f, idx) => (
+          <div key={f.key} style={{ marginBottom: idx < BRAND_FIELDS.length - 1 ? 28 : 0 }}>
+            <label style={{ fontWeight: 700, marginBottom: 4, display: 'block', fontSize: 14 }}>{f.label}</label>
+            <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 6, marginTop: 0, lineHeight: 1.5 }}>{f.hint}</p>
+            <textarea
+              rows={f.rows}
+              value={brainDraft[f.key] || ''}
+              onChange={e => setBrainDraft(d => ({ ...d, [f.key]: e.target.value }))}
+              style={{ fontFamily: 'inherit', fontSize: 13, lineHeight: 1.6, width: '100%' }}
+            />
+            {idx < BRAND_FIELDS.length - 1 && (
+              <div style={{ height: 1, background: 'var(--border-light)', marginTop: 22 }} />
+            )}
+          </div>
+        ))}
+      </div>
+
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 14 }}>
+        <button className="btn btn-primary" onClick={handleSaveBrain} disabled={brainSaving}>
+          {brainSaving ? <><span className="spinner" /> Saving…</> : brainSaved ? '✅ Saved!' : '💾 Save Brand Voice'}
+        </button>
+      </div>
+
+      <SectionDivider />
 
       {/* ════════════════════════════════════════════════════════════════
           SECTION 1 — AI & Outreach Intelligence
