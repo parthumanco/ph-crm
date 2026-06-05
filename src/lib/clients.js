@@ -154,7 +154,8 @@ export async function runBuildThesis(companyId, company, icp, detail = {}, onPro
   };
 
   const { error } = await supabase.from('companies').update(update).eq('id', companyId);
-  if (error) throw new Error(error.message);
+  // Warn but don't throw — thesis columns may not be migrated yet; caller still gets the result
+  if (error) console.error('Thesis DB save failed (run migration if columns are missing):', error.message);
 
   // Auto-populate client contacts from thesis results
   if (clientId) {

@@ -46,6 +46,10 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
   const [thesisLog, setThesisLog]         = useState([]);
   const [thesisError, setThesisError]     = useState(null);
   const thesisLogEndRef                   = useRef(null);
+  const intelFetchedRef                   = useRef(false); // prevents double-fetch on tab switch
+
+  // Notes state (for quick save from Meetings tab)
+  const [savingNotes, setSavingNotes]     = useState(false);
 
   const isNew = !initialDeal.id;
 
@@ -57,15 +61,16 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
     }
   }, [initialDeal.id, isNew]);
 
-  // Load company intel when research tab opens
+  // Load company intel once when research tab first opens
   useEffect(() => {
-    if (tab === 'research' && deal.company_name && !companyIntel && !intelLoading) {
+    if (tab === 'research' && deal.company_name && !intelFetchedRef.current && !intelLoading) {
+      intelFetchedRef.current = true;
       setIntelLoading(true);
       fetchCompanyIntel(deal.company_name)
         .then(intel => { setCompanyIntel(intel); setIntelLoading(false); })
         .catch(() => setIntelLoading(false));
     }
-  }, [tab, deal.company_name]);
+  }, [tab]);
 
   // Auto-scroll thesis log
   useEffect(() => {
@@ -149,6 +154,19 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
     setTasks(ts => ts.filter(t => t.id !== id));
   };
 
+  const saveNotes = async () => {
+    if (!deal.id) return;
+    setSavingNotes(true);
+    try {
+      const saved = await upsertDeal(deal);
+      onSaved(saved); // update parent state without closing modal
+    } catch (e) {
+      alert('Error saving notes: ' + e.message);
+    } finally {
+      setSavingNotes(false);
+    }
+  };
+
   const handleBuildThesis = async () => {
     if (buildingThesis) return;
     setBuildingThesis(true);
@@ -196,8 +214,14 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
         null, // no clientId — deal companies don't have a client record yet
       );
 
+      // Always set state from result so thesis is visible even if DB save failed
       setCompanyIntel(result);
-      addLog('✓ Thesis complete — research saved');
+      // Re-fetch to confirm DB save; if it comes back empty the migration hasn't been run
+      fetchCompanyIntel(deal.company_name).then(saved => {
+        if (saved?.thesis) setCompanyIntel(saved);
+        else addLog('⚠ Thesis built but not persisted — run the companies table migration in Supabase');
+      }).catch(() => {});
+      addLog('✓ Thesis complete');
     } catch (e) {
       setThesisError(e.message);
       addLog('✗ Error: ' + e.message);
@@ -485,6 +509,22 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
                       </div>
                     ))}
                   </div>
+
+                {/* ── Meeting Notes ── */}
+                <hr style={{ border: 'none', borderTop: '2px solid var(--border)', margin: '28px 0 20px' }} />
+                <div>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 8 }}>Deal Notes</div>
+                  <textarea
+                    rows={5}
+                    value={deal.notes || ''}
+                    onChange={e => field('notes', e.target.value)}
+                    placeholder="Internal context, key decisions, next steps…"
+                    style={{ width: '100%', fontSize: 13, lineHeight: 1.6, marginBottom: 8 }}
+                  />
+                  <button className="btn btn-secondary btn-sm" onClick={saveNotes} disabled={savingNotes}>
+                    {savingNotes ? 'Saving…' : 'Save Notes'}
+                  </button>
+                </div>
                 </div>
               )}
 
