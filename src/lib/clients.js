@@ -99,7 +99,8 @@ export async function runClientDeepScan(companyId, company, icp, detail = {}) {
 
 export async function runBuildThesis(companyId, company, icp, detail = {}, onProgress = () => {}) {
   const { buildCompanyThesis } = await import('./anthropic.js');
-  const result = await buildCompanyThesis(company, icp, detail, onProgress);
+  // Forward all 4 args (phase, status, data, message) to the UI callback
+  const result = await buildCompanyThesis(company, icp, detail, (phase, status, data, message) => onProgress(phase, status, data, message));
 
   const stripEmDash = s => (s || '').replace(/\s*—\s*/g, ' - ');
   const update = {

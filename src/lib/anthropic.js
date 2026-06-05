@@ -466,7 +466,11 @@ export async function buildCompanyThesis(company, icp, clientDetail = {}, onProg
   const internalCtx = buildClientContext(clientDetail);
 
   // ── Phase 1: Company foundation + full leadership discovery ───────────────
-  onProgress(1, 'running', null);
+  onProgress(1, 'running', null, `Starting research on ${name}…`);
+  onProgress(1, 'log', null, `Searching "${name} team" and "${name} leadership"…`);
+  if (site) onProgress(1, 'log', null, `Checking website: ${site}/about and /team pages…`);
+  onProgress(1, 'log', null, `Looking up LinkedIn company page for ${name}…`);
+
   const p1raw = await withTimeout(callClaude({
     model: 'claude-sonnet-4-6',
     max_tokens: 3000,
@@ -483,18 +487,32 @@ Return JSON only:
 {"website":"str","hq":"City, State/Country","employee_count_num":number_or_null,"funding_stage":"str","industry":"str","description":"str","leaders":[{"name":"str","title":"str","linkedin":"url_or_null","email":"str_or_null"}]}`
     }],
   }), PHASE_TIMEOUT);
+
   const p1 = extractJsonBlock(p1raw) || {};
-  onProgress(1, 'done', { leaders: (p1.leaders || []).length });
+  const leaders = p1.leaders || [];
+  if (p1.hq || p1.industry)
+    onProgress(1, 'log', null, `Company confirmed: ${[p1.hq, p1.industry, p1.employee_count_num ? p1.employee_count_num + ' employees' : null, p1.funding_stage].filter(Boolean).join(' · ')}`);
+  if (leaders.length > 0) {
+    onProgress(1, 'log', null, `Found ${leaders.length} leaders: ${leaders.map(l => `${l.name} (${l.title})`).join(', ')}`);
+    leaders.forEach(l => {
+      onProgress(1, 'log', null, `  ${l.linkedin ? '✓ LinkedIn found' : '  No LinkedIn'} · ${l.name}, ${l.title}`);
+    });
+  } else {
+    onProgress(1, 'log', null, `No leaders found on first pass — will search further in Phase 2`);
+  }
+  onProgress(1, 'done', { leaders: leaders.length }, `Phase 1 complete — ${leaders.length} leaders identified`);
 
   // ── Phase 2: Per-contact signal mining ───────────────────────────────────
-  onProgress(2, 'running', null);
+  onProgress(2, 'running', null, `Mining signals for ${leaders.length} contacts…`);
+
   const knownContacts = company.contacts || [];
-  // Merge phase1 leaders with existing contacts, deduping by name
   const seenNames = new Set(knownContacts.map(c => c.name?.toLowerCase()));
   const allContacts = [
     ...knownContacts,
-    ...(p1.leaders || []).filter(l => l.name && !seenNames.has(l.name.toLowerCase())),
+    ...leaders.filter(l => l.name && !seenNames.has(l.name.toLowerCase())),
   ];
+
+  allContacts.forEach(c => onProgress(2, 'log', null, `Searching LinkedIn + web for ${c.name}, ${c.title || 'unknown title'}…`));
 
   let p2contacts = allContacts;
   if (allContacts.length > 0) {
@@ -519,11 +537,30 @@ Return JSON only:
       }],
     }), PHASE_TIMEOUT);
     p2contacts = extractJsonBlock(p2raw)?.contacts || allContacts;
+
+    // Log what was found per contact
+    p2contacts.forEach(c => {
+      const sigCount = (c.signals || []).length;
+      if (sigCount > 0) {
+        onProgress(2, 'log', null, `${c.name}: ${sigCount} signal${sigCount !== 1 ? 's' : ''} found`);
+        (c.signals || []).forEach(s => onProgress(2, 'log', null, `    "${s.headline}" (${s.category || 'signal'}${s.date ? ', ' + s.date : ''})`));
+      } else {
+        onProgress(2, 'log', null, `${c.name}: no recent public activity found`);
+      }
+    });
+  } else {
+    onProgress(2, 'log', null, `No contacts to research — skipping signal mining`);
   }
-  onProgress(2, 'done', { contacts: p2contacts.length });
+
+  const totalSignals = p2contacts.reduce((n, c) => n + (c.signals || []).length, 0);
+  onProgress(2, 'done', { contacts: p2contacts.length }, `Phase 2 complete — ${totalSignals} signals across ${p2contacts.length} contacts`);
 
   // ── Phase 3: Trigger events, job postings, competitive context ────────────
-  onProgress(3, 'running', null);
+  onProgress(3, 'running', null, `Scanning news, job postings, and competitive landscape…`);
+  onProgress(3, 'log', null, `Searching "${name} news" and "${name} funding" last 90 days…`);
+  onProgress(3, 'log', null, `Checking "${name} careers" and LinkedIn Jobs for brand/marketing roles…`);
+  onProgress(3, 'log', null, `Looking up competitors and market positioning…`);
+
   const p3raw = await withTimeout(callClaude({
     model: 'claude-sonnet-4-6',
     max_tokens: 3000,
@@ -540,11 +577,23 @@ Return JSON only:
 {"triggers":[{"headline":"str","detail":"str","category":"leadership|funding|expansion|product|pain|hiring|social","urgency":"high|medium|low","date":"str_or_null","url":"str_or_null"}],"job_postings":[{"title":"str","signal":"why this matters for a brand agency conversation"}],"competitors":["str"],"market_position":"1-2 sentences on how they compete"}`
     }],
   }), PHASE_TIMEOUT);
+
   const p3 = extractJsonBlock(p3raw) || {};
-  onProgress(3, 'done', { triggers: (p3.triggers || []).length });
+  (p3.triggers || []).forEach(t => onProgress(3, 'log', null, `Trigger [${t.urgency || 'medium'}]: ${t.headline}`));
+  (p3.job_postings || []).forEach(j => onProgress(3, 'log', null, `Open role: ${j.title}`));
+  if ((p3.competitors || []).length > 0) onProgress(3, 'log', null, `Competitors: ${p3.competitors.join(', ')}`);
+  onProgress(3, 'done', { triggers: (p3.triggers || []).length }, `Phase 3 complete — ${(p3.triggers || []).length} triggers, ${(p3.job_postings || []).length} open roles`);
 
   // ── Phase 4: Full thesis synthesis ───────────────────────────────────────
-  onProgress(4, 'running', null);
+  const dataPoints = leaders.length + totalSignals + (p3.triggers || []).length;
+  onProgress(4, 'running', null, `Synthesising thesis from ${dataPoints} data points…`);
+  onProgress(4, 'log', null, `Building ICP fit assessment…`);
+  onProgress(4, 'log', null, `Identifying primary entry contact and outreach hook…`);
+  onProgress(4, 'log', null, `Writing supporting contact angles…`);
+  onProgress(4, 'log', null, `Assessing risks and sensitivities…`);
+  if (internalCtx) onProgress(4, 'log', null, `Incorporating internal relationship context…`);
+  onProgress(4, 'log', null, `Composing full thesis narrative…`);
+
   const icpProfile = buildIcpProfile(icp);
   const p4raw = await withTimeout(callClaude({
     model: 'claude-sonnet-4-6',
@@ -597,9 +646,10 @@ Return JSON only:
 }`
     }],
   }), PHASE_TIMEOUT);
+
   const synthesis = extractJsonBlock(p4raw);
   if (!synthesis) throw new Error('Thesis synthesis returned no JSON');
-  onProgress(4, 'done', synthesis);
+  onProgress(4, 'done', synthesis, `Thesis written — ICP ${synthesis.icp_score ?? '?'}/10, ${synthesis.icp_tier ?? ''}`);
   return synthesis;
 }
 

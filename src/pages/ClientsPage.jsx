@@ -54,7 +54,10 @@ export default function ClientsPage({ onNavigate, refreshKey, icp }) {
   // Build Thesis
   const [buildingThesis, setBuildingThesis] = useState(false);
   const [thesisPhases, setThesisPhases]     = useState([]); // [{phase,status,detail}]
+  const [thesisLog, setThesisLog]           = useState([]); // [{icon,text,phase,ts}]
   const [thesisError, setThesisError]       = useState('');
+  const [showThesisModal, setShowThesisModal] = useState(false);
+  const thesisLogEndRef                     = useRef(null);
 
   // AI chat
   const [aiQ, setAiQ]           = useState('');
@@ -148,19 +151,34 @@ export default function ClientsPage({ onNavigate, refreshKey, icp }) {
     { phase: 4, label: 'Synthesising Full Thesis',        icon: '🧠' },
   ];
 
+  const addThesisLog = (icon, text, phase) => {
+    const entry = { icon, text, phase, ts: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }) };
+    setThesisLog(prev => [...prev, entry]);
+    setTimeout(() => thesisLogEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 60);
+  };
+
   const handleBuildThesis = async () => {
     if (!intel?.id || buildingThesis) return;
     setBuildingThesis(true);
     setThesisError('');
+    setThesisLog([]);
+    setShowThesisModal(true);
     setThesisPhases(THESIS_PHASES.map(p => ({ ...p, status: 'waiting', detail: null })));
     setTab('overview');
     try {
-      const updated = await runBuildThesis(intel.id, intel, icp, detail || {}, (phase, status, data) => {
+      const updated = await runBuildThesis(intel.id, intel, icp, detail || {}, (phase, status, data, message) => {
         setThesisPhases(prev => prev.map(p => p.phase === phase ? { ...p, status, detail: data } : p));
+        if (message) addThesisLog(
+          status === 'running' ? '🔍' : status === 'done' ? '✅' : status === 'log' ? '  →' : '⚙️',
+          message,
+          phase
+        );
       });
       setIntel(updated);
+      addThesisLog('✅', `Thesis complete — ICP ${updated.icp_score ?? '?'}/10 · ${updated.icp_tier ?? ''}`, 4);
     } catch (e) {
       setThesisError(e.message || 'Thesis build failed');
+      addThesisLog('❌', `Error: ${e.message}`, 0);
     } finally {
       setBuildingThesis(false);
     }
@@ -644,43 +662,72 @@ export default function ClientsPage({ onNavigate, refreshKey, icp }) {
           </>
         ) : null}
 
-        {/* ── Thesis progress overlay ── */}
-        {(buildingThesis || (thesisPhases.length > 0 && thesisPhases.every(p => p.status === 'done'))) && (
-          <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50 }}>
-            <div style={{ background: 'var(--bg)', borderRadius: 14, padding: '28px 32px', width: 420, boxShadow: '0 20px 60px rgba(0,0,0,0.3)', display: 'flex', flexDirection: 'column', gap: 16 }}>
-              <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--text)' }}>
-                {buildingThesis ? `Building Thesis for ${detail?.client?.name}…` : `Thesis Complete ✓`}
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                {thesisPhases.map(p => (
-                  <div key={p.phase} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                    <div style={{ width: 28, height: 28, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-                      background: p.status === 'done' ? '#dcfce7' : p.status === 'running' ? '#eff6ff' : 'var(--surface)',
-                      border: `2px solid ${p.status === 'done' ? '#10b981' : p.status === 'running' ? '#3b82f6' : 'var(--border)'}`,
-                    }}>
-                      {p.status === 'done'    && <span style={{ fontSize: 13, color: '#10b981' }}>✓</span>}
-                      {p.status === 'running' && <span style={{ display: 'inline-block', width: 10, height: 10, border: '2px solid #3b82f6', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} />}
-                      {p.status === 'waiting' && <span style={{ fontSize: 12 }}>{p.icon}</span>}
-                    </div>
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: 13, fontWeight: 600, color: p.status === 'waiting' ? 'var(--text-faint)' : 'var(--text)' }}>
-                        Phase {p.phase} — {p.label}
-                      </div>
-                      {p.status === 'done' && p.detail && (
-                        <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 1 }}>
-                          {p.phase === 1 && `Found ${p.detail.leaders || 0} leaders`}
-                          {p.phase === 2 && `Profiled ${p.detail.contacts || 0} contacts`}
-                          {p.phase === 3 && `${p.detail.triggers || 0} trigger events`}
-                          {p.phase === 4 && 'Thesis ready'}
-                        </div>
-                      )}
+        {/* ── Thesis live progress modal ── */}
+        {showThesisModal && (
+          <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50 }}>
+            <div style={{ background: 'var(--bg)', borderRadius: 14, width: 560, maxHeight: '80vh', boxShadow: '0 24px 64px rgba(0,0,0,0.35)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+
+              {/* Header */}
+              <div style={{ padding: '20px 24px 16px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+                  <div>
+                    <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--text)' }}>
+                      {buildingThesis ? `Building Thesis` : `Thesis Complete ✓`}
+                      <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-muted)', marginLeft: 8 }}>{detail?.client?.name}</span>
                     </div>
                   </div>
-                ))}
+                  {!buildingThesis && (
+                    <button onClick={() => setShowThesisModal(false)} style={{ fontSize: 11, fontWeight: 700, padding: '6px 16px', borderRadius: 7, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer' }}>View Results →</button>
+                  )}
+                </div>
+
+                {/* Phase strip */}
+                <div style={{ display: 'flex', gap: 4, marginTop: 14 }}>
+                  {thesisPhases.map((p, i) => {
+                    const isActive  = p.status === 'running';
+                    const isDone    = p.status === 'done';
+                    const isWaiting = p.status === 'waiting';
+                    return (
+                      <div key={p.phase} style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                        <div style={{ height: 4, borderRadius: 3, background: isDone ? 'var(--accent)' : isActive ? '#93c5fd' : 'var(--border)', transition: 'background .3s' }} />
+                        <div style={{ fontSize: 10, fontWeight: 600, color: isDone ? 'var(--accent)' : isActive ? '#3b82f6' : 'var(--text-faint)', display: 'flex', alignItems: 'center', gap: 4 }}>
+                          {isActive && <span style={{ display: 'inline-block', width: 7, height: 7, border: '1.5px solid #3b82f6', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.7s linear infinite', flexShrink: 0 }} />}
+                          {isDone && <span style={{ color: 'var(--accent)' }}>✓</span>}
+                          {p.label}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
-              {thesisError && <div style={{ fontSize: 12, color: '#ef4444', padding: '8px 12px', background: '#fef2f2', borderRadius: 7 }}>{thesisError}</div>}
-              {!buildingThesis && (
-                <button onClick={() => setThesisPhases([])} style={{ alignSelf: 'flex-end', fontSize: 12, fontWeight: 700, padding: '7px 18px', borderRadius: 7, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer' }}>View Thesis →</button>
+
+              {/* Live log */}
+              <div style={{ flex: 1, overflowY: 'auto', padding: '14px 24px 20px', fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace' }}>
+                {thesisLog.length === 0 && (
+                  <div style={{ fontSize: 12, color: 'var(--text-faint)', fontFamily: 'inherit' }}>Starting…</div>
+                )}
+                {thesisLog.map((entry, i) => (
+                  <div key={i} style={{ display: 'flex', gap: 10, marginBottom: 6, alignItems: 'flex-start' }}>
+                    <span style={{ fontSize: 11, color: 'var(--text-faint)', flexShrink: 0, paddingTop: 1, minWidth: 60 }}>{entry.ts}</span>
+                    <span style={{ fontSize: 13, flexShrink: 0 }}>{entry.icon}</span>
+                    <span style={{ fontSize: 12, color: entry.icon === '❌' ? '#ef4444' : entry.icon === '✅' ? '#10b981' : entry.icon === '  →' ? 'var(--text-muted)' : 'var(--text)', lineHeight: 1.5 }}>{entry.text}</span>
+                  </div>
+                ))}
+                {buildingThesis && (
+                  <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginTop: 4 }}>
+                    <span style={{ fontSize: 11, color: 'transparent', minWidth: 60 }}>--:--:--</span>
+                    <span style={{ display: 'inline-block', width: 10, height: 10, border: '2px solid var(--accent)', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.7s linear infinite', flexShrink: 0 }} />
+                    <span style={{ fontSize: 12, color: 'var(--text-faint)', fontStyle: 'italic' }}>Working…</span>
+                  </div>
+                )}
+                <div ref={thesisLogEndRef} />
+              </div>
+
+              {/* Error */}
+              {thesisError && (
+                <div style={{ padding: '10px 24px', borderTop: '1px solid var(--border)', background: '#fef2f2', flexShrink: 0 }}>
+                  <span style={{ fontSize: 12, color: '#ef4444' }}>❌ {thesisError}</span>
+                </div>
               )}
             </div>
           </div>
