@@ -57,6 +57,7 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
   const [savingItem, setSavingItem]       = useState(false);
 
   const isNew = !initialDeal.id;
+  const [showEditForm, setShowEditForm]   = useState(isNew); // open for new deals, collapsed for existing
 
   useEffect(() => {
     if (!isNew) {
@@ -290,84 +291,121 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
       <div style={{ position: 'relative', zIndex: 1, width: 520, maxWidth: '96vw', background: 'var(--bg)', boxShadow: '-8px 0 32px rgba(0,0,0,0.15)', display: 'flex', flexDirection: 'column', height: '100%', overflowY: 'auto' }}>
 
         {/* Header */}
-        <div style={{ padding: '20px 24px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'flex-start', gap: 12 }}>
-          <div style={{ flex: 1 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-              <span style={{ display: 'inline-block', width: 10, height: 10, borderRadius: '50%', background: stageColor(deal.stage), flexShrink: 0 }} />
-              <span style={{ fontSize: 11, fontWeight: 700, color: stageColor(deal.stage), textTransform: 'uppercase', letterSpacing: '.04em' }}>{stageLabel(deal.stage)}</span>
-              {!isNew && <span style={{ fontSize: 11, color: 'var(--text-faint)', marginLeft: 4 }}>{daysSince(deal.stage_entered_at)}d in stage</span>}
+        <div style={{ padding: '20px 24px 16px', borderBottom: showEditForm ? 'none' : '1px solid var(--border)' }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                <span style={{ display: 'inline-block', width: 10, height: 10, borderRadius: '50%', background: stageColor(deal.stage), flexShrink: 0 }} />
+                <span style={{ fontSize: 11, fontWeight: 700, color: stageColor(deal.stage), textTransform: 'uppercase', letterSpacing: '.04em' }}>{stageLabel(deal.stage)}</span>
+                {!isNew && <span style={{ fontSize: 11, color: 'var(--text-faint)', marginLeft: 4 }}>{daysSince(deal.stage_entered_at)}d in stage</span>}
+              </div>
+              <h3 style={{ fontSize: 18, fontWeight: 800, margin: '0 0 3px' }}>{deal.company_name || 'New Deal'}</h3>
+              {deal.contact_name && (
+                <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0 }}>
+                  {deal.contact_name}{deal.contact_email ? ` · ${deal.contact_email}` : ''}
+                </p>
+              )}
             </div>
-            <h3 style={{ fontSize: 18, fontWeight: 800, margin: 0 }}>{deal.company_name || 'New Deal'}</h3>
-            {deal.contact_name && <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: '2px 0 0' }}>{deal.contact_name}{deal.contact_email ? ` · ${deal.contact_email}` : ''}</p>}
+            <button style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: 'var(--text-muted)', padding: '0 4px', lineHeight: 1, flexShrink: 0 }} onClick={onClose}>✕</button>
           </div>
-          <button style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: 'var(--text-muted)', padding: '0 4px', lineHeight: 1 }} onClick={onClose}>✕</button>
+
+          {/* Deal meta badges + edit toggle */}
+          {!isNew && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 10, flexWrap: 'wrap' }}>
+              {deal.assigned_to && (
+                <span style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 10, background: deal.assigned_to === 'Mike' ? '#f3e8ff' : '#eff6ff', color: deal.assigned_to === 'Mike' ? '#7c3aed' : '#1d4ed8' }}>
+                  {deal.assigned_to}
+                </span>
+              )}
+              {(parseFloat(deal.retainer_value) > 0) && (
+                <span style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 10, background: '#ccfbf1', color: '#0f766e' }}>
+                  {fmt$(parseFloat(deal.retainer_value))}/mo
+                </span>
+              )}
+              {(parseFloat(deal.project_value) > 0) && (
+                <span style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 10, background: '#fff7ed', color: '#c2410c' }}>
+                  {fmt$(parseFloat(deal.project_value))}
+                </span>
+              )}
+              {deal.close_date_estimate && (
+                <span style={{ fontSize: 11, color: 'var(--text-faint)', padding: '2px 6px' }}>
+                  Close {deal.close_date_estimate}
+                </span>
+              )}
+              <button
+                onClick={() => setShowEditForm(v => !v)}
+                style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 6, border: '1px solid var(--border)', background: showEditForm ? 'var(--accent)' : 'var(--surface)', color: showEditForm ? '#fff' : 'var(--text-muted)', cursor: 'pointer' }}
+              >
+                {showEditForm ? '▲ Close' : '✏ Edit'}
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Body */}
         <div style={{ flex: 1, overflowY: 'auto', padding: '20px 24px' }}>
 
-          {/* Core fields */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 }}>
-            <div style={{ gridColumn: '1/-1' }}>
-              <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 4 }}>Company Name *</label>
-              <input type="text" value={deal.company_name || ''} onChange={e => field('company_name', e.target.value)} style={{ width: '100%', fontSize: 13 }} />
-            </div>
-            <div>
-              <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 4 }}>Contact Name</label>
-              <input type="text" value={deal.contact_name || ''} onChange={e => field('contact_name', e.target.value)} style={{ width: '100%', fontSize: 13 }} />
-            </div>
-            <div>
-              <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 4 }}>Contact Email</label>
-              <input type="email" value={deal.contact_email || ''} onChange={e => field('contact_email', e.target.value)} style={{ width: '100%', fontSize: 13 }} />
-            </div>
-            <div>
-              <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 4 }}>Stage</label>
-              <select value={deal.stage || 'outreach'} onChange={e => field('stage', e.target.value)} style={{ width: '100%', fontSize: 13 }}>
-                {STAGES.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
-              </select>
-            </div>
-            <div>
-              <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 4 }}>Assigned To</label>
-              <select value={deal.assigned_to || ''} onChange={e => field('assigned_to', e.target.value)} style={{ width: '100%', fontSize: 13 }}>
-                <option value="">Unassigned</option>
-                {OWNERS.map(o => <option key={o} value={o}>{o}</option>)}
-              </select>
-            </div>
-            <div>
-              <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 4 }}>Retainer Value <span style={{ fontWeight: 400, textTransform: 'none' }}>($/mo)</span></label>
-              <input type="number" min="0" value={deal.retainer_value || ''} onChange={e => field('retainer_value', e.target.value)} placeholder="0" style={{ width: '100%', fontSize: 13 }} />
-            </div>
-            <div>
-              <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 4 }}>Project Value <span style={{ fontWeight: 400, textTransform: 'none' }}>(one-time)</span></label>
-              <input type="number" min="0" value={deal.project_value || ''} onChange={e => field('project_value', e.target.value)} placeholder="0" style={{ width: '100%', fontSize: 13 }} />
-            </div>
-            <div>
-              <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 4 }}>Est. Close Date</label>
-              <input type="date" value={deal.close_date_estimate || ''} onChange={e => field('close_date_estimate', e.target.value)} style={{ width: '100%', fontSize: 13 }} />
-            </div>
-            {deal.stage === 'lost' && (
-              <div style={{ gridColumn: '1/-1' }}>
-                <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 4 }}>Lost Reason</label>
-                <input type="text" value={deal.lost_reason || ''} onChange={e => field('lost_reason', e.target.value)} placeholder="e.g. Budget, timing, competitor" style={{ width: '100%', fontSize: 13 }} />
+          {/* Collapsible edit form */}
+          {showEditForm && (
+            <>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 }}>
+                <div style={{ gridColumn: '1/-1' }}>
+                  <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 4 }}>Company Name *</label>
+                  <input type="text" value={deal.company_name || ''} onChange={e => field('company_name', e.target.value)} style={{ width: '100%', fontSize: 13 }} />
+                </div>
+                <div>
+                  <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 4 }}>Contact Name</label>
+                  <input type="text" value={deal.contact_name || ''} onChange={e => field('contact_name', e.target.value)} style={{ width: '100%', fontSize: 13 }} />
+                </div>
+                <div>
+                  <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 4 }}>Contact Email</label>
+                  <input type="email" value={deal.contact_email || ''} onChange={e => field('contact_email', e.target.value)} style={{ width: '100%', fontSize: 13 }} />
+                </div>
+                <div>
+                  <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 4 }}>Stage</label>
+                  <select value={deal.stage || 'outreach'} onChange={e => field('stage', e.target.value)} style={{ width: '100%', fontSize: 13 }}>
+                    {STAGES.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 4 }}>Assigned To</label>
+                  <select value={deal.assigned_to || ''} onChange={e => field('assigned_to', e.target.value)} style={{ width: '100%', fontSize: 13 }}>
+                    <option value="">Unassigned</option>
+                    {OWNERS.map(o => <option key={o} value={o}>{o}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 4 }}>Retainer Value <span style={{ fontWeight: 400, textTransform: 'none' }}>($/mo)</span></label>
+                  <input type="number" min="0" value={deal.retainer_value || ''} onChange={e => field('retainer_value', e.target.value)} placeholder="0" style={{ width: '100%', fontSize: 13 }} />
+                </div>
+                <div>
+                  <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 4 }}>Project Value <span style={{ fontWeight: 400, textTransform: 'none' }}>(one-time)</span></label>
+                  <input type="number" min="0" value={deal.project_value || ''} onChange={e => field('project_value', e.target.value)} placeholder="0" style={{ width: '100%', fontSize: 13 }} />
+                </div>
+                <div>
+                  <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 4 }}>Est. Close Date</label>
+                  <input type="date" value={deal.close_date_estimate || ''} onChange={e => field('close_date_estimate', e.target.value)} style={{ width: '100%', fontSize: 13 }} />
+                </div>
+                {deal.stage === 'lost' && (
+                  <div style={{ gridColumn: '1/-1' }}>
+                    <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 4 }}>Lost Reason</label>
+                    <input type="text" value={deal.lost_reason || ''} onChange={e => field('lost_reason', e.target.value)} placeholder="e.g. Budget, timing, competitor" style={{ width: '100%', fontSize: 13 }} />
+                  </div>
+                )}
               </div>
-            )}
-            <div style={{ gridColumn: '1/-1' }}>
-              <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 4 }}>Notes</label>
-              <textarea rows={3} value={deal.notes || ''} onChange={e => field('notes', e.target.value)} placeholder="Internal context, key decisions, next steps…" style={{ width: '100%', fontSize: 13, lineHeight: 1.6 }} />
-            </div>
-          </div>
 
-          {/* Save / Delete */}
-          <div style={{ display: 'flex', gap: 8, marginBottom: 24 }}>
-            <button className="btn btn-primary" onClick={save} disabled={saving} style={{ flex: 1 }}>
-              {saving ? 'Saving…' : isNew ? 'Create Deal' : 'Save Changes'}
-            </button>
-            {!isNew && (
-              <button className="btn btn-danger" onClick={handleDelete} disabled={deleting} style={{ flexShrink: 0 }}>
-                {deleting ? '…' : '🗑'}
-              </button>
-            )}
-          </div>
+              <div style={{ display: 'flex', gap: 8, marginBottom: 24, paddingBottom: 24, borderBottom: '1px solid var(--border)' }}>
+                <button className="btn btn-primary" onClick={save} disabled={saving} style={{ flex: 1 }}>
+                  {saving ? 'Saving…' : isNew ? 'Create Deal' : 'Save Changes'}
+                </button>
+                {!isNew && (
+                  <button className="btn btn-danger" onClick={handleDelete} disabled={deleting} style={{ flexShrink: 0 }}>
+                    {deleting ? '…' : '🗑'}
+                  </button>
+                )}
+              </div>
+            </>
+          )}
 
           {/* Tabs */}
           {!isNew && (
