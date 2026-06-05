@@ -39,6 +39,8 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
   const [showTranscript, setShowTranscript] = useState(null);
   const [showTranscriptImporter, setShowTranscriptImporter] = useState(false);
   const [showProposalDraft, setShowProposalDraft] = useState(false);
+  const [dragOverMtgId, setDragOverMtgId] = useState(null); // id of card being hovered during drag
+  const dragMtgIdRef = useRef(null); // id of card being dragged
 
   // Research tab state
   const [companyIntel, setCompanyIntel]   = useState(null);
@@ -326,6 +328,22 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
       }
     }
     setComposeEmail(null);
+  };
+
+  const handleMtgDrop = (targetId) => {
+    const fromId = dragMtgIdRef.current;
+    if (!fromId || fromId === targetId) return;
+    setMeetings(prev => {
+      const fromIdx  = prev.findIndex(m => m.id === fromId);
+      const toIdx    = prev.findIndex(m => m.id === targetId);
+      if (fromIdx === -1 || toIdx === -1) return prev;
+      const next = [...prev];
+      const [moved] = next.splice(fromIdx, 1);
+      next.splice(toIdx, 0, moved);
+      return next;
+    });
+    dragMtgIdRef.current = null;
+    setDragOverMtgId(null);
   };
 
   const handleAddContact = async () => {
@@ -1002,8 +1020,27 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
 
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                     {meetings.map(mtg => (
-                      <div key={mtg.id} style={{ padding: '12px 14px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8 }}>
+                      <div
+                        key={mtg.id}
+                        draggable
+                        onDragStart={() => { dragMtgIdRef.current = mtg.id; }}
+                        onDragEnter={() => setDragOverMtgId(mtg.id)}
+                        onDragOver={e => e.preventDefault()}
+                        onDrop={() => handleMtgDrop(mtg.id)}
+                        onDragEnd={() => { dragMtgIdRef.current = null; setDragOverMtgId(null); }}
+                        style={{
+                          padding: '12px 14px',
+                          background: 'var(--surface)',
+                          border: dragOverMtgId === mtg.id ? '1px solid var(--accent)' : '1px solid var(--border)',
+                          borderRadius: 8,
+                          opacity: dragMtgIdRef.current === mtg.id ? 0.45 : 1,
+                          transition: 'border-color 0.12s, opacity 0.12s',
+                          cursor: 'grab',
+                        }}
+                      >
                         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: mtg.summary ? 6 : 0 }}>
+                          {/* drag handle */}
+                          <span title="Drag to reorder" style={{ color: 'var(--text-faint)', fontSize: 14, lineHeight: 1, paddingTop: 2, cursor: 'grab', userSelect: 'none', flexShrink: 0 }}>⠿</span>
                           <div style={{ flex: 1 }}>
                             <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>{mtg.title}</div>
                             {mtg.meeting_date && <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 1 }}>{new Date(mtg.meeting_date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'long', day: 'numeric', year: 'numeric' })}</div>}
