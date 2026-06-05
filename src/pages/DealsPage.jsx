@@ -386,7 +386,7 @@ export default function DealsPage({ refreshKey = 0 }) {
     setSelectedDeal(saved);
   };
 
-  const newDealTemplate = { company_name: '', stage: 'prospect', assigned_to: 'Mike' };
+  const newDealTemplate = { company_name: '', stage: 'outreach', assigned_to: 'Mike' };
 
   return (
     <>

@@ -63,8 +63,26 @@ export async function fetchCompanyIntel(clientName) {
     .select('*')
     .ilike('name', clientName)
     .limit(1)
-    .single();
+    .maybeSingle();
   return data || null;
+}
+
+export async function findOrCreateCompany(name) {
+  if (!name?.trim()) throw new Error('Company name required');
+  const { data: existing } = await supabase
+    .from('companies')
+    .select('*')
+    .ilike('name', name.trim())
+    .limit(1)
+    .maybeSingle();
+  if (existing) return existing;
+  const { data: created, error } = await supabase
+    .from('companies')
+    .insert({ name: name.trim(), added_at: new Date().toISOString() })
+    .select()
+    .single();
+  if (error) throw new Error(error.message);
+  return created;
 }
 
 export async function runClientDeepScan(companyId, company, icp, detail = {}, clientId = null) {

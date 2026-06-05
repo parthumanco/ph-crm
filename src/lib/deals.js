@@ -12,7 +12,7 @@ export const STAGES = [
   { id: 'nurture',        label: 'Nurture',          color: '#6b7280' },
 ];
 
-export const ACTIVE_STAGES  = STAGES.filter(s => !['won','lost','nurture'].includes(s.id));
+export const ACTIVE_STAGES  = STAGES.filter(s => !['prospect','won','lost','nurture'].includes(s.id));
 export const CLOSED_STAGES  = STAGES.filter(s =>  ['won','lost','nurture'].includes(s.id));
 
 export const ACTIVITY_TYPES = ['email','call','meeting','note','proposal','contract'];

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   upsertDeal, deleteDeal,
   fetchActivities, addActivity, deleteActivity,
@@ -6,10 +6,19 @@ import {
   STAGES, ACTIVITY_TYPES, OWNERS, stageColor, stageLabel, fmt$, daysSince,
 } from '../lib/deals';
 import { fetchDealMeetings, deleteProjectMeeting } from '../lib/projects';
+import { fetchCompanyIntel, runBuildThesis, findOrCreateCompany } from '../lib/clients';
+import { loadIcp } from '../lib/settings';
 import TranscriptImporter from './TranscriptImporter';
 import DealProposalDraft from './DealProposalDraft';
 
 const ACTIVITY_ICONS = { email:'✉️', call:'📞', meeting:'🤝', note:'📝', proposal:'📄', contract:'✍️' };
+
+const THESIS_PHASES = [
+  { id: 'discovery',  label: 'Discovery'  },
+  { id: 'contacts',   label: 'Contacts'   },
+  { id: 'triggers',   label: 'Triggers'   },
+  { id: 'synthesis',  label: 'Synthesis'  },
+];
 
 export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, onDraftProposal }) {
   const [deal, setDeal]           = useState({ ...initialDeal });
@@ -25,9 +34,18 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
   const [savingTask, setSavingTask] = useState(false);
   const [tab, setTab]             = useState('activities');
   const [meetings, setMeetings]   = useState([]);
-  const [showTranscript, setShowTranscript] = useState(null); // meeting id
+  const [showTranscript, setShowTranscript] = useState(null);
   const [showTranscriptImporter, setShowTranscriptImporter] = useState(false);
   const [showProposalDraft, setShowProposalDraft] = useState(false);
+
+  // Research tab state
+  const [companyIntel, setCompanyIntel]   = useState(null);
+  const [intelLoading, setIntelLoading]   = useState(false);
+  const [buildingThesis, setBuildingThesis] = useState(false);
+  const [thesisPhases, setThesisPhases]   = useState([]);
+  const [thesisLog, setThesisLog]         = useState([]);
+  const [thesisError, setThesisError]     = useState(null);
+  const thesisLogEndRef                   = useRef(null);
 
   const isNew = !initialDeal.id;
 
@@ -38,6 +56,21 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
       fetchDealMeetings(initialDeal.id).then(setMeetings).catch(console.error);
     }
   }, [initialDeal.id, isNew]);
+
+  // Load company intel when research tab opens
+  useEffect(() => {
+    if (tab === 'research' && deal.company_name && !companyIntel && !intelLoading) {
+      setIntelLoading(true);
+      fetchCompanyIntel(deal.company_name)
+        .then(intel => { setCompanyIntel(intel); setIntelLoading(false); })
+        .catch(() => setIntelLoading(false));
+    }
+  }, [tab, deal.company_name]);
+
+  // Auto-scroll thesis log
+  useEffect(() => {
+    if (buildingThesis) thesisLogEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [thesisLog, buildingThesis]);
 
   const field = (key, val) => setDeal(d => ({ ...d, [key]: val }));
 
@@ -116,6 +149,63 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
     setTasks(ts => ts.filter(t => t.id !== id));
   };
 
+  const handleBuildThesis = async () => {
+    if (buildingThesis) return;
+    setBuildingThesis(true);
+    setThesisLog([]);
+    setThesisPhases([]);
+    setThesisError(null);
+
+    const addLog = (msg) => setThesisLog(prev => [...prev, {
+      time: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+      msg,
+    }]);
+
+    try {
+      addLog(`Starting thesis build for ${deal.company_name}…`);
+      const [icp, company] = await Promise.all([
+        loadIcp(),
+        findOrCreateCompany(deal.company_name),
+      ]);
+      addLog(`Company record ready · running 4-phase deep research`);
+
+      // Build deal context to pass as clientDetail
+      const dealDetail = {
+        activities,
+        meetings,
+        notes: deal.notes ? [{ body: deal.notes, type: 'note' }] : [],
+      };
+
+      const result = await runBuildThesis(
+        company.id,
+        company,
+        icp,
+        dealDetail,
+        (phase, status, _data, message) => {
+          if (message) addLog(message);
+          if (phase && status === 'start') {
+            setThesisPhases(prev => {
+              const filtered = prev.filter(p => p.id !== phase);
+              return [...filtered, { id: phase, status: 'running' }];
+            });
+          }
+          if (phase && status === 'done') {
+            setThesisPhases(prev => prev.map(p => p.id === phase ? { ...p, status: 'done' } : p));
+          }
+        },
+        null, // no clientId — deal companies don't have a client record yet
+      );
+
+      setCompanyIntel(result);
+      addLog('✓ Thesis complete — research saved');
+    } catch (e) {
+      setThesisError(e.message);
+      addLog('✗ Error: ' + e.message);
+    } finally {
+      setBuildingThesis(false);
+    }
+  };
+
   const openTasks = tasks.filter(t => !t.completed);
   const overdueTasks = openTasks.filter(t => t.due_date && new Date(t.due_date) < new Date());
 
@@ -164,7 +254,7 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
             </div>
             <div>
               <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 4 }}>Stage</label>
-              <select value={deal.stage || 'prospect'} onChange={e => field('stage', e.target.value)} style={{ width: '100%', fontSize: 13 }}>
+              <select value={deal.stage || 'outreach'} onChange={e => field('stage', e.target.value)} style={{ width: '100%', fontSize: 13 }}>
                 {STAGES.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
               </select>
             </div>
@@ -211,7 +301,7 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
             )}
           </div>
 
-          {/* Activities + Tasks tabs */}
+          {/* Tabs */}
           {!isNew && (
             <>
               {overdueTasks.length > 0 && (
@@ -221,13 +311,29 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
               )}
 
               <div style={{ display: 'flex', gap: 0, borderBottom: '2px solid var(--border)', marginBottom: 16 }}>
-                {['activities','tasks','meetings'].map(t => (
-                  <button key={t} onClick={() => setTab(t)} style={{ padding: '8px 16px', fontSize: 12, fontWeight: 700, background: 'none', border: 'none', borderBottom: tab === t ? '2px solid var(--accent)' : '2px solid transparent', marginBottom: -2, cursor: 'pointer', color: tab === t ? 'var(--accent)' : 'var(--text-muted)', textTransform: 'capitalize' }}>
-                    {t}{t === 'tasks' && openTasks.length > 0 ? ` (${openTasks.length})` : ''}{t === 'meetings' && meetings.length > 0 ? ` (${meetings.length})` : ''}
+                {[
+                  { id: 'activities', label: 'Activities' },
+                  { id: 'tasks',      label: openTasks.length > 0 ? `Tasks (${openTasks.length})` : 'Tasks' },
+                  { id: 'meetings',   label: meetings.length > 0 ? `Meetings (${meetings.length})` : 'Meetings' },
+                  { id: 'research',   label: companyIntel?.thesis_built ? '🔬 Research ✓' : '🔬 Research' },
+                ].map(t => (
+                  <button
+                    key={t.id}
+                    onClick={() => setTab(t.id)}
+                    style={{
+                      padding: '8px 14px', fontSize: 12, fontWeight: 700,
+                      background: 'none', border: 'none',
+                      borderBottom: tab === t.id ? '2px solid var(--accent)' : '2px solid transparent',
+                      marginBottom: -2, cursor: 'pointer',
+                      color: tab === t.id ? 'var(--accent)' : 'var(--text-muted)',
+                    }}
+                  >
+                    {t.label}
                   </button>
                 ))}
               </div>
 
+              {/* ── Activities ── */}
               {tab === 'activities' && (
                 <div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
@@ -275,6 +381,7 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
                 </div>
               )}
 
+              {/* ── Tasks ── */}
               {tab === 'tasks' && (
                 <div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
@@ -322,16 +429,14 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
                 </div>
               )}
 
+              {/* ── Meetings ── */}
               {tab === 'meetings' && (
                 <div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
                     <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em' }}>Meeting Log</span>
                     <div style={{ display: 'flex', gap: 8 }}>
                       {meetings.length > 0 && (
-                        <button
-                          className="btn btn-primary btn-xs"
-                          onClick={() => setShowProposalDraft(true)}
-                        >✦ Draft Proposal</button>
+                        <button className="btn btn-primary btn-xs" onClick={() => setShowProposalDraft(true)}>✦ Draft Proposal</button>
                       )}
                       <button className="btn btn-secondary btn-xs" onClick={() => setShowTranscriptImporter(true)}>+ Add Meeting</button>
                     </div>
@@ -380,6 +485,202 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
                       </div>
                     ))}
                   </div>
+                </div>
+              )}
+
+              {/* ── Research ── */}
+              {tab === 'research' && (
+                <div>
+                  {/* Header row */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                    <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em' }}>
+                      Company Research
+                    </span>
+                    <button
+                      onClick={handleBuildThesis}
+                      disabled={buildingThesis}
+                      style={{
+                        background: buildingThesis ? 'var(--surface)' : 'linear-gradient(135deg, #7c3aed, #4f46e5)',
+                        color: buildingThesis ? 'var(--text-muted)' : '#fff',
+                        border: buildingThesis ? '1px solid var(--border)' : 'none',
+                        borderRadius: 7, padding: '6px 14px', fontSize: 12, fontWeight: 700,
+                        cursor: buildingThesis ? 'not-allowed' : 'pointer',
+                        display: 'flex', alignItems: 'center', gap: 6,
+                      }}
+                    >
+                      {buildingThesis
+                        ? <><span style={{ display: 'inline-block', width: 10, height: 10, border: '2px solid var(--text-muted)', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} /> Running…</>
+                        : companyIntel?.thesis_built
+                          ? '↺ Rebuild Thesis'
+                          : '🔬 Build Thesis'
+                      }
+                    </button>
+                  </div>
+
+                  {intelLoading && (
+                    <div style={{ textAlign: 'center', padding: '32px 0' }}>
+                      <div className="spinner" />
+                      <p style={{ fontSize: 12, color: 'var(--text-faint)', marginTop: 10 }}>Loading research…</p>
+                    </div>
+                  )}
+
+                  {/* Live progress log */}
+                  {buildingThesis && (
+                    <div style={{ marginBottom: 20 }}>
+                      {/* Phase strip */}
+                      <div style={{ display: 'flex', gap: 6, marginBottom: 12, flexWrap: 'wrap' }}>
+                        {THESIS_PHASES.map(ph => {
+                          const ps = thesisPhases.find(p => p.id === ph.id);
+                          const isDone    = ps?.status === 'done';
+                          const isRunning = ps?.status === 'running';
+                          return (
+                            <div key={ph.id} style={{
+                              display: 'flex', alignItems: 'center', gap: 5,
+                              padding: '4px 10px', borderRadius: 20, fontSize: 11, fontWeight: 700,
+                              background: isDone ? '#d1fae5' : isRunning ? '#ede9fe' : 'var(--surface)',
+                              color: isDone ? '#059669' : isRunning ? '#7c3aed' : 'var(--text-faint)',
+                              border: `1px solid ${isDone ? '#6ee7b7' : isRunning ? '#c4b5fd' : 'var(--border)'}`,
+                              transition: 'all .2s',
+                            }}>
+                              {isDone ? '✓' : isRunning ? <span style={{ display: 'inline-block', width: 8, height: 8, border: '1.5px solid #7c3aed', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} /> : '○'}
+                              {ph.label}
+                            </div>
+                          );
+                        })}
+                      </div>
+                      {/* Log */}
+                      <div style={{ background: '#0f172a', borderRadius: 8, padding: '10px 12px', maxHeight: 220, overflowY: 'auto', fontFamily: 'monospace', fontSize: 11, lineHeight: 1.7 }}>
+                        {thesisLog.map((entry, i) => (
+                          <div key={i} style={{ color: entry.msg.startsWith('✓') ? '#4ade80' : entry.msg.startsWith('✗') ? '#f87171' : '#94a3b8' }}>
+                            <span style={{ color: '#475569', marginRight: 8 }}>{entry.time}</span>
+                            {entry.msg}
+                          </div>
+                        ))}
+                        <div ref={thesisLogEndRef} />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Error */}
+                  {thesisError && !buildingThesis && (
+                    <div style={{ background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: 8, padding: '10px 14px', marginBottom: 16, fontSize: 12, color: '#b91c1c' }}>
+                      ⚠️ {thesisError}
+                    </div>
+                  )}
+
+                  {/* Intel summary — scores + triggers (if scan data exists) */}
+                  {!intelLoading && !buildingThesis && companyIntel && (companyIntel.icp_score || companyIntel.summary) && (
+                    <div style={{ marginBottom: 16 }}>
+                      {/* Score badges */}
+                      {(companyIntel.icp_score || companyIntel.overall_score) && (
+                        <div style={{ display: 'flex', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
+                          {companyIntel.icp_score && (
+                            <span style={{ fontSize: 12, fontWeight: 700, padding: '3px 10px', borderRadius: 20, background: '#ede9fe', color: '#6d28d9' }}>
+                              ICP {companyIntel.icp_score}/100
+                            </span>
+                          )}
+                          {companyIntel.overall_score && (
+                            <span style={{ fontSize: 12, fontWeight: 700, padding: '3px 10px', borderRadius: 20, background: '#fff7ed', color: '#c2410c' }}>
+                              Score {companyIntel.overall_score}/100
+                            </span>
+                          )}
+                          {companyIntel.funding_stage && (
+                            <span style={{ fontSize: 12, fontWeight: 700, padding: '3px 10px', borderRadius: 20, background: '#f0fdf4', color: '#15803d' }}>
+                              {companyIntel.funding_stage}
+                            </span>
+                          )}
+                          {companyIntel.employee_count && (
+                            <span style={{ fontSize: 12, fontWeight: 700, padding: '3px 10px', borderRadius: 20, background: 'var(--surface)', color: 'var(--text-muted)', border: '1px solid var(--border)' }}>
+                              {companyIntel.employee_count} employees
+                            </span>
+                          )}
+                        </div>
+                      )}
+                      {/* Summary */}
+                      {companyIntel.summary && (
+                        <p style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.65, margin: '0 0 12px' }}>{companyIntel.summary}</p>
+                      )}
+                      {/* Triggers */}
+                      {companyIntel.triggers?.length > 0 && (
+                        <div style={{ marginBottom: 12 }}>
+                          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 6 }}>Triggers</div>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                            {companyIntel.triggers.slice(0, 3).map((t, i) => (
+                              <div key={i} style={{ padding: '8px 10px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 6 }}>
+                                <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 2 }}>{t.headline}</div>
+                                {t.detail && <div style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.5 }}>{t.detail}</div>}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Thesis narrative */}
+                  {!intelLoading && !buildingThesis && companyIntel?.thesis && (
+                    <div style={{ marginBottom: 16 }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 8 }}>Thesis</div>
+                      <div style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.7, whiteSpace: 'pre-wrap', padding: '12px 14px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, marginBottom: 10 }}>
+                        {companyIntel.thesis}
+                      </div>
+
+                      {/* Entry point */}
+                      {companyIntel.contact_angles?.find(c => c.is_primary) && (() => {
+                        const ec = companyIntel.contact_angles.find(c => c.is_primary);
+                        return (
+                          <div style={{ padding: '10px 14px', background: '#ede9fe', border: '1px solid #c4b5fd', borderRadius: 8, marginBottom: 10 }}>
+                            <div style={{ fontSize: 11, fontWeight: 700, color: '#6d28d9', marginBottom: 4 }}>PRIMARY ENTRY POINT</div>
+                            <div style={{ fontSize: 13, fontWeight: 700, color: '#4c1d95' }}>{ec.name} <span style={{ fontWeight: 400, color: '#7c3aed' }}>· {ec.title}</span></div>
+                            {ec.hook && <div style={{ fontSize: 12, color: '#5b21b6', marginTop: 4, lineHeight: 1.5 }}>{ec.hook}</div>}
+                          </div>
+                        );
+                      })()}
+
+                      {/* Risks */}
+                      {companyIntel.thesis_risks?.length > 0 && (
+                        <div style={{ padding: '10px 14px', background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 8, marginBottom: 10 }}>
+                          <div style={{ fontSize: 11, fontWeight: 700, color: '#c2410c', marginBottom: 6 }}>RISKS & WATCH-OUTS</div>
+                          <ul style={{ margin: 0, paddingLeft: 16, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                            {companyIntel.thesis_risks.map((r, i) => (
+                              <li key={i} style={{ fontSize: 12, color: '#7c2d12', lineHeight: 1.5 }}>{typeof r === 'string' ? r : r.risk || r.label || JSON.stringify(r)}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+
+                      {/* Next step */}
+                      {companyIntel.thesis_next_step && (
+                        <div style={{ padding: '10px 14px', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8 }}>
+                          <div style={{ fontSize: 11, fontWeight: 700, color: '#15803d', marginBottom: 4 }}>RECOMMENDED NEXT STEP</div>
+                          <div style={{ fontSize: 13, color: '#14532d', lineHeight: 1.55 }}>{companyIntel.thesis_next_step}</div>
+                        </div>
+                      )}
+
+                      {companyIntel.thesis_date && (
+                        <div style={{ fontSize: 10, color: 'var(--text-faint)', marginTop: 8, textAlign: 'right' }}>
+                          Built {new Date(companyIntel.thesis_date).toLocaleDateString()}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Empty state */}
+                  {!intelLoading && !buildingThesis && !companyIntel?.thesis && !companyIntel?.summary && (
+                    <div style={{ textAlign: 'center', padding: '40px 0' }}>
+                      <div style={{ fontSize: 36, marginBottom: 10 }}>🔬</div>
+                      <h4 style={{ fontSize: 14, fontWeight: 700, margin: '0 0 6px' }}>No research yet</h4>
+                      <p style={{ fontSize: 12, color: 'var(--text-muted)', maxWidth: 280, margin: '0 auto 16px', lineHeight: 1.6 }}>
+                        Build a thesis to deep-research {deal.company_name} — leadership contacts, buying triggers, entry strategy and risks.
+                      </p>
+                      <button
+                        onClick={handleBuildThesis}
+                        style={{ background: 'linear-gradient(135deg, #7c3aed, #4f46e5)', color: '#fff', border: 'none', borderRadius: 8, padding: '9px 20px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
+                      >
+                        🔬 Build Thesis
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
             </>
