@@ -108,6 +108,31 @@ export async function addCompanyContact(companyId, contact) {
   return updated;
 }
 
+export async function deleteCompanyContact(companyId, contactName) {
+  const { data: row } = await supabase.from('companies').select('contact_angles').eq('id', companyId).single();
+  const updated = (row?.contact_angles || []).filter(c => c.name !== contactName);
+  const { error } = await supabase.from('companies').update({ contact_angles: updated }).eq('id', companyId);
+  if (error) throw new Error(error.message);
+  return updated;
+}
+
+export async function updateCompanyContact(companyId, contactName, patch) {
+  const { data: row } = await supabase.from('companies').select('contact_angles').eq('id', companyId).single();
+  const contacts = row?.contact_angles || [];
+  const updated = contacts.map(c => {
+    if (c.name !== contactName) return c;
+    const merged = { ...c };
+    for (const [k, v] of Object.entries(patch)) {
+      const trimmed = typeof v === 'string' ? v.trim() : v;
+      if (trimmed !== '' && trimmed !== null && trimmed !== undefined) merged[k] = trimmed;
+    }
+    return merged;
+  });
+  const { error } = await supabase.from('companies').update({ contact_angles: updated }).eq('id', companyId);
+  if (error) throw new Error(error.message);
+  return updated;
+}
+
 export async function removeCompanyResearchItem(companyId, itemId) {
   const { data: row } = await supabase.from('companies').select('research_items').eq('id', companyId).single();
   const updated = (row?.research_items || []).filter(i => i.id !== itemId);
@@ -184,9 +209,16 @@ export async function runBuildThesis(companyId, company, icp, detail = {}, onPro
     ...(result.companyLinkedinUrl ? { company_linkedin: result.companyLinkedinUrl } : {}),
   };
 
-  const { error } = await supabase.from('companies').update(update).eq('id', companyId);
-  // Warn but don't throw — thesis columns may not be migrated yet; caller still gets the result
-  if (error) console.error('Thesis DB save failed (run migration if columns are missing):', error.message);
+  // Split into safe columns (always exist) and thesis columns (require migration).
+  // If we send unknown columns in one payload, Supabase rejects the ENTIRE update.
+  const { thesis, thesis_risks, thesis_next_step, thesis_built, thesis_date, research_items, ...safeUpdate } = update;
+
+  const { error: safeError } = await supabase.from('companies').update(safeUpdate).eq('id', companyId);
+  if (safeError) throw new Error(safeError.message);
+
+  // Try to save thesis columns separately — these require DB migration
+  const thesisUpdate = { thesis, thesis_risks, thesis_next_step, thesis_built, thesis_date };
+  const { error: thesisError } = await supabase.from('companies').update(thesisUpdate).eq('id', companyId);
 
   // Auto-populate client contacts from thesis results
   if (clientId) {
@@ -194,6 +226,9 @@ export async function runBuildThesis(companyId, company, icp, detail = {}, onPro
     if (found.length) await upsertClientContacts(clientId, found).catch(() => {});
   }
 
+  if (thesisError) {
+    return { ...company, ...update, _thesisSaveError: thesisError.message };
+  }
   return { ...company, ...update };
 }
 

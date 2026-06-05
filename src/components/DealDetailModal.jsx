@@ -6,7 +6,7 @@ import {
   STAGES, ACTIVITY_TYPES, OWNERS, stageColor, stageLabel, fmt$, daysSince,
 } from '../lib/deals';
 import { fetchDealMeetings, deleteProjectMeeting } from '../lib/projects';
-import { fetchCompanyIntel, runBuildThesis, findOrCreateCompany, addCompanyResearchItem, removeCompanyResearchItem, addCompanyContact } from '../lib/clients';
+import { fetchCompanyIntel, runBuildThesis, findOrCreateCompany, addCompanyResearchItem, removeCompanyResearchItem, addCompanyContact, updateCompanyContact, deleteCompanyContact } from '../lib/clients';
 import { loadIcp } from '../lib/settings';
 import { requestAndSave, clearReminder, hasReminder } from '../lib/reminders';
 import TranscriptImporter from './TranscriptImporter';
@@ -46,6 +46,7 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
   const [thesisPhases, setThesisPhases]   = useState([]);
   const [thesisLog, setThesisLog]         = useState([]);
   const [thesisError, setThesisError]     = useState(null);
+  const [thesisMigrationError, setThesisMigrationError] = useState(null);
   const thesisLogEndRef                   = useRef(null);
   const intelFetchedRef                   = useRef(false); // prevents double-fetch on tab switch
 
@@ -62,6 +63,14 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
   const [addingContact, setAddingContact]     = useState(false);
   const [contactDraft, setContactDraft]       = useState({ name: '', title: '', email: '', linkedin: '', notes: '' });
   const [savingContact, setSavingContact]     = useState(false);
+  const [editingContact, setEditingContact]   = useState(null); // contact name being edited
+  const [editDraft, setEditDraft]             = useState({});
+  const [savingEdit, setSavingEdit]           = useState(false);
+
+  // Compose email state
+  const [composeEmail, setComposeEmail] = useState(null); // { to, toName } | null
+  const [composeDraft, setComposeDraft] = useState({ subject: '', body: '' });
+  const [loggingEmail, setLoggingEmail] = useState(false);
 
   const isNew = !initialDeal.id;
   const [showEditForm, setShowEditForm]   = useState(isNew); // open for new deals, collapsed for existing
@@ -179,6 +188,71 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
     }
   };
 
+  const handleDeleteContact = async (contactName) => {
+    if (!companyIntel?.id) return;
+    if (!window.confirm(`Delete ${contactName}? This cannot be undone.`)) return;
+    try {
+      const updated = await deleteCompanyContact(companyIntel.id, contactName);
+      setCompanyIntel(prev => ({ ...prev, contact_angles: updated }));
+      if (editingContact === contactName) { setEditingContact(null); setEditDraft({}); }
+      if (expandedContact === contactName) setExpandedContact(null);
+    } catch (e) {
+      alert('Error deleting contact: ' + e.message);
+    }
+  };
+
+  const saveContactEdit = async () => {
+    if (!companyIntel?.id) return;
+    setSavingEdit(true);
+    try {
+      const updated = await updateCompanyContact(companyIntel.id, editingContact, editDraft);
+      setCompanyIntel(prev => ({ ...prev, contact_angles: updated }));
+      setEditingContact(null);
+    } catch (e) {
+      alert('Error updating contact: ' + e.message);
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
+  const openCompose = (email, name) => {
+    setComposeEmail({ to: email, toName: name });
+    setComposeDraft({ subject: '', body: '' });
+  };
+
+  const sendEmail = async () => {
+    if (!composeEmail) return;
+    // Open native mail client with pre-filled fields
+    const params = new URLSearchParams();
+    if (composeDraft.subject) params.set('subject', composeDraft.subject);
+    if (composeDraft.body)    params.set('body',    composeDraft.body);
+    const qs = params.toString();
+    window.open(`mailto:${composeEmail.to}${qs ? '?' + qs : ''}`, '_blank');
+
+    // Log as email activity
+    if (deal.id && composeDraft.subject) {
+      setLoggingEmail(true);
+      try {
+        const summary = `📧 ${composeDraft.subject}${composeDraft.body ? '\n\n' + composeDraft.body.slice(0, 300) : ''}`;
+        await addActivity({
+          deal_id:       deal.id,
+          company_id:    deal.company_id,
+          type:          'email',
+          summary,
+          activity_date: new Date().toISOString().slice(0, 10),
+          assigned_to:   deal.assigned_to || 'Mike',
+        });
+        const updated = await fetchActivities(deal.id);
+        setActivities(updated);
+      } catch (e) {
+        console.error('Failed to log email activity:', e.message);
+      } finally {
+        setLoggingEmail(false);
+      }
+    }
+    setComposeEmail(null);
+  };
+
   const handleAddContact = async () => {
     if (!contactDraft.name.trim()) return;
     setSavingContact(true);
@@ -253,6 +327,7 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
     setThesisLog([]);
     setThesisPhases([]);
     setThesisError(null);
+    setThesisMigrationError(null);
 
     const addLog = (msg) => setThesisLog(prev => [...prev, {
       time: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
@@ -294,14 +369,17 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
         null, // no clientId — deal companies don't have a client record yet
       );
 
-      // Always set state from result so thesis is visible even if DB save failed
-      setCompanyIntel(result);
-      // Re-fetch to confirm DB save; if it comes back empty the migration hasn't been run
-      fetchCompanyIntel(deal.company_name).then(saved => {
-        if (saved?.thesis) setCompanyIntel(saved);
-        else addLog('⚠ Thesis built but not persisted — run the companies table migration in Supabase');
-      }).catch(() => {});
-      addLog('✓ Thesis complete');
+      // Always set state from result so thesis is visible in UI even if DB save failed
+      const { _thesisSaveError, ...cleanResult } = result;
+      setCompanyIntel(cleanResult);
+
+      if (_thesisSaveError) {
+        setThesisMigrationError(_thesisSaveError);
+        addLog('⚠ Thesis built but NOT saved — DB migration required (see banner above)');
+      } else {
+        setThesisMigrationError(null);
+        addLog('✓ Thesis complete and saved');
+      }
     } catch (e) {
       setThesisError(e.message);
       addLog('✗ Error: ' + e.message);
@@ -927,6 +1005,39 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
                     </div>
                   )}
 
+                  {/* Migration banner — shown when thesis columns are missing from DB */}
+                  {thesisMigrationError && !buildingThesis && (
+                    <div style={{ background: '#fffbeb', border: '2px solid #f59e0b', borderRadius: 10, padding: '14px 16px', marginBottom: 16 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                        <span style={{ fontSize: 16 }}>⚠️</span>
+                        <span style={{ fontSize: 13, fontWeight: 800, color: '#92400e' }}>Thesis built but NOT saved — DB migration required</span>
+                      </div>
+                      <p style={{ fontSize: 12, color: '#78350f', margin: '0 0 10px' }}>
+                        Your thesis is visible here but will be lost on reload until you run this SQL in your Supabase SQL editor:
+                      </p>
+                      <pre style={{
+                        background: '#1e293b', color: '#e2e8f0', borderRadius: 7, padding: '10px 12px',
+                        fontSize: 11, fontFamily: 'monospace', overflowX: 'auto', margin: '0 0 10px', lineHeight: 1.6,
+                      }}>{`ALTER TABLE companies
+  ADD COLUMN IF NOT EXISTS thesis           text,
+  ADD COLUMN IF NOT EXISTS thesis_built     boolean DEFAULT false,
+  ADD COLUMN IF NOT EXISTS thesis_date      timestamptz,
+  ADD COLUMN IF NOT EXISTS thesis_risks     jsonb,
+  ADD COLUMN IF NOT EXISTS thesis_next_step text,
+  ADD COLUMN IF NOT EXISTS research_items   jsonb DEFAULT '[]'::jsonb;`}</pre>
+                      <button
+                        onClick={() => {
+                          navigator.clipboard.writeText(
+                            `ALTER TABLE companies\n  ADD COLUMN IF NOT EXISTS thesis           text,\n  ADD COLUMN IF NOT EXISTS thesis_built     boolean DEFAULT false,\n  ADD COLUMN IF NOT EXISTS thesis_date      timestamptz,\n  ADD COLUMN IF NOT EXISTS thesis_risks     jsonb,\n  ADD COLUMN IF NOT EXISTS thesis_next_step text,\n  ADD COLUMN IF NOT EXISTS research_items   jsonb DEFAULT '[]'::jsonb;`
+                          ).then(() => alert('SQL copied to clipboard — paste into Supabase SQL editor'));
+                        }}
+                        style={{ fontSize: 11, fontWeight: 700, padding: '5px 12px', borderRadius: 6, border: '1px solid #f59e0b', background: '#fef3c7', color: '#92400e', cursor: 'pointer' }}
+                      >
+                        📋 Copy SQL
+                      </button>
+                    </div>
+                  )}
+
                   {/* Intel summary — scores + triggers (if scan data exists) */}
                   {!intelLoading && !buildingThesis && companyIntel && (companyIntel.icp_score || companyIntel.summary) && (
                     <div style={{ marginBottom: 16 }}>
@@ -1157,57 +1268,123 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
                             {/* Expanded dossier */}
                             {isExpanded && (
                               <div style={{ padding: '12px 14px', background: 'var(--bg)', borderTop: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 10 }}>
-                                {/* Contact details */}
-                                <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-                                  {c.email && (
-                                    <a href={`mailto:${c.email}`} style={{ fontSize: 12, color: 'var(--accent)', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 4 }}>
-                                      ✉️ {c.email}
-                                    </a>
-                                  )}
-                                  {c.linkedin && (
-                                    <a href={c.linkedin} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: '#1d4ed8', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 4 }}>
-                                      🔗 LinkedIn profile
-                                    </a>
-                                  )}
-                                </div>
 
-                                {/* Outreach angle */}
-                                {c.angle && (
-                                  <div>
-                                    <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 3 }}>Outreach Angle</div>
-                                    <p style={{ fontSize: 12, color: 'var(--text)', lineHeight: 1.6, margin: 0 }}>{c.angle}</p>
-                                  </div>
-                                )}
-
-                                {/* Hook */}
-                                {c.hook && (
-                                  <div style={{ padding: '8px 10px', background: '#ede9fe', border: '1px solid #c4b5fd', borderRadius: 6 }}>
-                                    <div style={{ fontSize: 10, fontWeight: 700, color: '#6d28d9', marginBottom: 3 }}>HOOK</div>
-                                    <p style={{ fontSize: 12, color: '#4c1d95', lineHeight: 1.6, margin: 0 }}>{c.hook}</p>
-                                  </div>
-                                )}
-
-                                {/* Notes */}
-                                {c.notes && (
-                                  <div>
-                                    <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 3 }}>Notes</div>
-                                    <p style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6, margin: 0 }}>{c.notes}</p>
-                                  </div>
-                                )}
-
-                                {/* Posts from thesis */}
-                                {c.posts?.length > 0 && (
-                                  <div>
-                                    <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 6 }}>Recent Posts</div>
-                                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                                      {c.posts.slice(0, 3).map((p, pi) => (
-                                        <div key={pi} style={{ padding: '7px 9px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 6, fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.5 }}>
-                                          {p.platform && <span style={{ fontWeight: 700, color: p.platform === 'linkedin' ? '#1d4ed8' : '#374151', marginRight: 6 }}>{p.platform}</span>}
-                                          {p.headline || p.text || p}
+                                {/* Inline edit form */}
+                                {editingContact === c.name ? (
+                                  <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: 12 }}>
+                                    <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 8 }}>Edit Contact</div>
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+                                      {[
+                                        { key: 'title',    label: 'Title',    placeholder: 'e.g. COO' },
+                                        { key: 'email',    label: 'Email',    placeholder: 'name@company.com', type: 'email' },
+                                        { key: 'linkedin', label: 'LinkedIn', placeholder: 'https://linkedin.com/in/…' },
+                                      ].map(({ key, label, placeholder, type }) => (
+                                        <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                          <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', width: 56, flexShrink: 0 }}>{label}</label>
+                                          <input
+                                            type={type || 'text'}
+                                            value={editDraft[key] ?? c[key] ?? ''}
+                                            onChange={e => setEditDraft(d => ({ ...d, [key]: e.target.value }))}
+                                            placeholder={placeholder}
+                                            style={{ flex: 1, fontSize: 12, padding: '4px 8px', borderRadius: 5, border: '1px solid var(--border)', background: 'var(--bg)' }}
+                                          />
                                         </div>
                                       ))}
+                                      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+                                        <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', width: 56, flexShrink: 0, paddingTop: 5 }}>Notes</label>
+                                        <textarea
+                                          value={editDraft.notes ?? c.notes ?? ''}
+                                          onChange={e => setEditDraft(d => ({ ...d, notes: e.target.value }))}
+                                          placeholder="Any notes…"
+                                          rows={2}
+                                          style={{ flex: 1, fontSize: 12, padding: '4px 8px', borderRadius: 5, border: '1px solid var(--border)', background: 'var(--bg)', resize: 'vertical', fontFamily: 'inherit' }}
+                                        />
+                                      </div>
+                                    </div>
+                                    <div style={{ display: 'flex', gap: 8, marginTop: 10, alignItems: 'center' }}>
+                                      <button onClick={() => { setEditingContact(null); setEditDraft({}); }} style={{ fontSize: 11, fontWeight: 600, padding: '4px 12px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text-muted)', cursor: 'pointer' }}>Cancel</button>
+                                      <button onClick={saveContactEdit} disabled={savingEdit} style={{ fontSize: 11, fontWeight: 700, padding: '4px 14px', borderRadius: 6, border: 'none', background: 'var(--accent)', color: '#fff', cursor: savingEdit ? 'not-allowed' : 'pointer', opacity: savingEdit ? 0.7 : 1 }}>
+                                        {savingEdit ? 'Saving…' : 'Save'}
+                                      </button>
+                                      <button
+                                        onClick={() => handleDeleteContact(c.name)}
+                                        style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 700, padding: '4px 12px', borderRadius: 6, border: '1px solid #fca5a5', background: '#fef2f2', color: '#b91c1c', cursor: 'pointer' }}
+                                      >
+                                        🗑 Delete
+                                      </button>
                                     </div>
                                   </div>
+                                ) : (
+                                  <>
+                                    {/* Contact details row */}
+                                    <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+                                      {c.email ? (
+                                        <button
+                                          onClick={e => { e.stopPropagation(); openCompose(c.email, c.name); }}
+                                          style={{ fontSize: 12, color: 'var(--accent)', background: 'none', border: 'none', padding: 0, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, fontFamily: 'inherit' }}
+                                        >
+                                          ✉️ {c.email}
+                                        </button>
+                                      ) : (
+                                        <button
+                                          onClick={e => { e.stopPropagation(); setEditingContact(c.name); setEditDraft({ email: '' }); }}
+                                          style={{ fontSize: 11, color: 'var(--text-faint)', background: 'none', border: '1px dashed var(--border)', padding: '2px 8px', borderRadius: 5, cursor: 'pointer', fontFamily: 'inherit' }}
+                                        >
+                                          + Add email
+                                        </button>
+                                      )}
+                                      {c.linkedin && (
+                                        <a href={c.linkedin} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: '#1d4ed8', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 4 }}>
+                                          🔗 LinkedIn profile
+                                        </a>
+                                      )}
+                                      <button
+                                        onClick={e => { e.stopPropagation(); setEditingContact(c.name); setEditDraft({}); }}
+                                        style={{ marginLeft: 'auto', fontSize: 10, fontWeight: 700, color: 'var(--text-faint)', background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontFamily: 'inherit' }}
+                                      >
+                                        ✏ Edit
+                                      </button>
+                                    </div>
+
+                                    {/* Outreach angle */}
+                                    {c.angle && (
+                                      <div>
+                                        <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 3 }}>Outreach Angle</div>
+                                        <p style={{ fontSize: 12, color: 'var(--text)', lineHeight: 1.6, margin: 0 }}>{c.angle}</p>
+                                      </div>
+                                    )}
+
+                                    {/* Hook */}
+                                    {c.hook && (
+                                      <div style={{ padding: '8px 10px', background: '#ede9fe', border: '1px solid #c4b5fd', borderRadius: 6 }}>
+                                        <div style={{ fontSize: 10, fontWeight: 700, color: '#6d28d9', marginBottom: 3 }}>HOOK</div>
+                                        <p style={{ fontSize: 12, color: '#4c1d95', lineHeight: 1.6, margin: 0 }}>{c.hook}</p>
+                                      </div>
+                                    )}
+
+                                    {/* Notes */}
+                                    {c.notes && (
+                                      <div>
+                                        <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 3 }}>Notes</div>
+                                        <p style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6, margin: 0 }}>{c.notes}</p>
+                                      </div>
+                                    )}
+
+                                    {/* Posts from thesis */}
+                                    {c.posts?.length > 0 && (
+                                      <div>
+                                        <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 6 }}>Recent Posts</div>
+                                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                          {c.posts.slice(0, 3).map((p, pi) => (
+                                            <div key={pi} style={{ padding: '7px 9px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 6, fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                                              {p.platform && <span style={{ fontWeight: 700, color: p.platform === 'linkedin' ? '#1d4ed8' : '#374151', marginRight: 6 }}>{p.platform}</span>}
+                                              {p.headline || p.text || p}
+                                            </div>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    )}
+                                  </>
                                 )}
                               </div>
                             )}
@@ -1249,6 +1426,86 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
         }}
         onClose={() => setShowProposalDraft(false)}
       />
+    )}
+
+    {/* ── Compose Email overlay ── */}
+    {composeEmail && (
+      <div
+        style={{ position: 'fixed', inset: 0, zIndex: 500, display: 'flex', alignItems: 'flex-end', justifyContent: 'flex-end', pointerEvents: 'none' }}
+      >
+        <div style={{
+          pointerEvents: 'all',
+          width: 460, maxWidth: '96vw',
+          background: 'var(--bg)',
+          border: '1px solid var(--border)',
+          borderRadius: '12px 12px 0 0',
+          boxShadow: '0 -8px 40px rgba(0,0,0,0.18)',
+          marginRight: 24,
+          display: 'flex', flexDirection: 'column',
+        }}>
+          {/* Compose header */}
+          <div style={{ padding: '12px 16px', background: '#1e293b', borderRadius: '12px 12px 0 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span style={{ fontSize: 13, fontWeight: 700, color: '#f1f5f9' }}>✉️ New Email</span>
+            <button onClick={() => setComposeEmail(null)} style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: 18, cursor: 'pointer', lineHeight: 1 }}>×</button>
+          </div>
+
+          <div style={{ padding: '0 0 4px', borderBottom: '1px solid var(--border)' }}>
+            {/* To */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px', borderBottom: '1px solid var(--border)' }}>
+              <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', width: 44, flexShrink: 0 }}>To</span>
+              <span style={{ fontSize: 13, color: 'var(--text)', fontWeight: 500 }}>
+                {composeEmail.toName ? `${composeEmail.toName} <${composeEmail.to}>` : composeEmail.to}
+              </span>
+            </div>
+            {/* Subject */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px' }}>
+              <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', width: 44, flexShrink: 0 }}>Subject</label>
+              <input
+                autoFocus
+                type="text"
+                value={composeDraft.subject}
+                onChange={e => setComposeDraft(d => ({ ...d, subject: e.target.value }))}
+                placeholder="Subject…"
+                style={{ flex: 1, border: 'none', outline: 'none', fontSize: 13, background: 'transparent', color: 'var(--text)' }}
+              />
+            </div>
+          </div>
+
+          {/* Body */}
+          <textarea
+            value={composeDraft.body}
+            onChange={e => setComposeDraft(d => ({ ...d, body: e.target.value }))}
+            placeholder={`Hi ${composeEmail.toName?.split(' ')[0] || 'there'},\n\n`}
+            style={{
+              flex: 1, border: 'none', outline: 'none', resize: 'none',
+              padding: '12px 14px', fontSize: 13, lineHeight: 1.6,
+              background: 'transparent', color: 'var(--text)', minHeight: 180, fontFamily: 'inherit',
+            }}
+          />
+
+          {/* Footer */}
+          <div style={{ padding: '10px 14px', borderTop: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>
+              {deal.id && composeDraft.subject ? '✓ Will log as email activity' : 'Add a subject to log as activity'}
+            </span>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button
+                onClick={() => setComposeEmail(null)}
+                style={{ fontSize: 12, fontWeight: 600, padding: '6px 14px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-muted)', cursor: 'pointer' }}
+              >
+                Discard
+              </button>
+              <button
+                onClick={sendEmail}
+                disabled={loggingEmail}
+                style={{ fontSize: 12, fontWeight: 700, padding: '6px 16px', borderRadius: 7, border: 'none', background: 'var(--accent)', color: '#fff', cursor: loggingEmail ? 'not-allowed' : 'pointer', opacity: loggingEmail ? 0.7 : 1 }}
+              >
+                {loggingEmail ? 'Sending…' : 'Send ↗'}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
     )}
     </>
   );
