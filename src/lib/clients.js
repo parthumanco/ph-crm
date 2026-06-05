@@ -61,9 +61,9 @@ export async function fetchCompanyIntel(clientName) {
   const { data, error } = await supabase
     .from('companies')
     .select('*')
-    .ilike('name', clientName)
+    .ilike('name', clientName.trim())
     .limit(1);
-  if (error) console.error('[fetchCompanyIntel] Supabase error:', error);
+  if (error) console.error('[fetchCompanyIntel] error:', error);
   return data?.[0] || null;
 }
 
