@@ -47,6 +47,10 @@ export async function upsertDeal(deal) {
   const now = new Date().toISOString();
   const payload = { ...deal, updated_at: now };
   if (!payload.id) payload.created_at = now;
+  // Trim text fields so trailing/leading spaces never cause lookup mismatches
+  for (const key of ['company_name', 'contact_name', 'contact_email']) {
+    if (typeof payload[key] === 'string') payload[key] = payload[key].trim();
+  }
   // Coerce empty strings to null for numeric columns
   for (const key of ['retainer_value', 'project_value']) {
     if (payload[key] === '' || payload[key] === undefined) payload[key] = null;
