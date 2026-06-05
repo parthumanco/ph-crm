@@ -67,7 +67,7 @@ export async function fetchCompanyIntel(clientName) {
   return data || null;
 }
 
-export async function runClientDeepScan(companyId, company, icp, detail = {}) {
+export async function runClientDeepScan(companyId, company, icp, detail = {}, clientId = null) {
   const { scanDeepDive } = await import('./anthropic.js');
   const result = await scanDeepDive(company, icp, company.engagement_type || null, detail);
 
@@ -94,12 +94,17 @@ export async function runClientDeepScan(companyId, company, icp, detail = {}) {
   const { error } = await supabase.from('companies').update(update).eq('id', companyId);
   if (error) throw new Error(error.message);
 
+  // Auto-populate client contacts from scan results
+  if (clientId) {
+    const found = extractContactsFromResult(result, 'scan');
+    if (found.length) await upsertClientContacts(clientId, found).catch(() => {});
+  }
+
   return { ...company, ...update };
 }
 
-export async function runBuildThesis(companyId, company, icp, detail = {}, onProgress = () => {}) {
+export async function runBuildThesis(companyId, company, icp, detail = {}, onProgress = () => {}, clientId = null) {
   const { buildCompanyThesis } = await import('./anthropic.js');
-  // Forward all 4 args (phase, status, data, message) to the UI callback
   const result = await buildCompanyThesis(company, icp, detail, (phase, status, data, message) => onProgress(phase, status, data, message));
 
   const stripEmDash = s => (s || '').replace(/\s*—\s*/g, ' - ');
@@ -132,7 +137,76 @@ export async function runBuildThesis(companyId, company, icp, detail = {}, onPro
 
   const { error } = await supabase.from('companies').update(update).eq('id', companyId);
   if (error) throw new Error(error.message);
+
+  // Auto-populate client contacts from thesis results
+  if (clientId) {
+    const found = extractContactsFromResult(result, 'thesis');
+    if (found.length) await upsertClientContacts(clientId, found).catch(() => {});
+  }
+
   return { ...company, ...update };
+}
+
+// ── Contact dossier helpers ───────────────────────────────────────────────────
+
+// Merge a list of new contacts into the clients.contacts column, deduping by name.
+// New values win over old; existing enrichment data is preserved if not overwritten.
+export async function upsertClientContacts(clientId, newContacts = []) {
+  if (!newContacts.length) return [];
+  const { data: row } = await supabase.from('clients').select('contacts').eq('id', clientId).single();
+  const existing = row?.contacts || [];
+
+  const map = new Map(existing.map(c => [c.name?.toLowerCase(), c]));
+  for (const c of newContacts) {
+    if (!c.name?.trim()) continue;
+    const key = c.name.toLowerCase();
+    const prev = map.get(key) || {};
+    // Merge: prefer non-empty new values; keep existing enrichment if new doesn't have it
+    const merged = { ...prev };
+    for (const [k, v] of Object.entries(c)) {
+      if (v === null || v === undefined || v === '') continue;
+      if (Array.isArray(v) && v.length === 0) continue;
+      merged[k] = v;
+    }
+    if (!merged.id) merged.id = crypto.randomUUID();
+    if (!merged.source) merged.source = 'scan';
+    map.set(key, merged);
+  }
+
+  const contacts = Array.from(map.values());
+  const { error } = await supabase.from('clients').update({ contacts, updated_at: new Date().toISOString() }).eq('id', clientId);
+  if (error) throw new Error(error.message);
+  return contacts;
+}
+
+// Run enrichContactDossier for one contact and merge results back into clients.contacts
+export async function enrichClientContact(clientId, contact, companyName) {
+  const { enrichContactDossier } = await import('./anthropic.js');
+  const enrichment = await enrichContactDossier(contact, companyName);
+  if (!enrichment) throw new Error('Enrichment returned no data');
+
+  const merged = { ...contact, ...Object.fromEntries(Object.entries(enrichment).filter(([, v]) => v !== null && v !== undefined && !(Array.isArray(v) && v.length === 0))), enriched_at: new Date().toISOString() };
+  return upsertClientContacts(clientId, [merged]);
+}
+
+// Extract contacts from a scan/thesis result and save to clients.contacts
+function extractContactsFromResult(result, source = 'scan') {
+  const out = [];
+  const seen = new Set();
+  const add = (c) => {
+    if (!c?.name?.trim()) return;
+    const key = c.name.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push({ ...c, source });
+  };
+  // contact_angles (deep scan uses camelCase, thesis uses snake_case)
+  (result.contactAngles || result.contact_angles || []).forEach(ca => add({ name: ca.name, title: ca.title, linkedin: ca.linkedinUrl || ca.linkedin || null, angle: ca.angle, hook: ca.hook }));
+  // thesis entry contact
+  if (result.entry_contact?.name) add({ ...result.entry_contact, is_primary: true });
+  // discoveredContacts (deep scan)
+  (result.discoveredContacts || []).forEach(c => add({ name: c.name, title: c.title, linkedin: c.linkedinUrl || c.linkedin || null }));
+  return out;
 }
 
 export async function upsertClient(client) {

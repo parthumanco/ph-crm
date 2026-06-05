@@ -889,6 +889,53 @@ Return JSON: {"subject":"str","body":"str"}. Body uses \\n for line breaks.`;
   },
 };
 
+// ── Contact dossier enrichment ────────────────────────────────────────────────
+// Builds a detailed personal profile for one contact via web search.
+export async function enrichContactDossier(contact, companyName) {
+  const name    = contact.name;
+  const title   = contact.title || '';
+  const linkedin = contact.linkedin || '';
+
+  const data = await withTimeout(callClaude({
+    model: 'claude-sonnet-4-6',
+    max_tokens: 3500,
+    system: `You are a professional researcher building a detailed contact dossier for B2B sales intelligence. Search thoroughly using all available public sources. Only include information you actually find — never fabricate. Return only valid JSON, no markdown.`,
+    tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 7 }],
+    messages: [{ role: 'user', content:
+`Build a comprehensive dossier on ${name}${title ? ', ' + title : ''} at ${companyName}.
+
+${linkedin ? `Start with their LinkedIn profile: ${linkedin}` : `Search for their LinkedIn profile first: "${name}" "${companyName}" LinkedIn`}
+
+Then search for:
+1. Career history: all previous employers, titles, dates — search "${name}" "${companyName}" LinkedIn career
+2. Education: schools attended, degrees, graduation years
+3. Twitter/X: find their handle and recent tweets — search "${name}" site:twitter.com OR site:x.com
+4. Location: city/state they live in (LinkedIn, company website bio, conference listings)
+5. Interests and personal details: sports teams they support, hobbies, causes they care about — check their Twitter bio, LinkedIn featured section, and personal posts
+6. Recent public activity: articles written, podcasts appeared on, conference talks, press mentions — search "${name}" "${companyName}" interview OR podcast OR "conference" OR article
+7. Recent LinkedIn posts (last 90 days): what topics they post about, key themes
+
+Only return things you actually found. Set fields to null or [] if not found.
+
+Return JSON:
+{
+  "email": "str or null",
+  "linkedin": "confirmed url or null",
+  "twitter": "https://x.com/handle or null",
+  "location": "City, State/Country or null",
+  "education": [{"school":"str","degree":"str","years":"str or null"}],
+  "job_history": [{"company":"str","title":"str","from":"str or null","to":"str or null","is_current":true/false}],
+  "posts": [{"platform":"linkedin|twitter","headline":"10-12 word summary","summary":"2-3 sentences — what they said and what it reveals","date":"str or null","url":"str or null","category":"leadership|product|culture|personal|opinion"}],
+  "articles_talks": [{"title":"str","outlet":"str or null","date":"str or null","url":"str or null"}],
+  "interests": ["specific interests, causes, sports teams, hobbies found publicly"],
+  "fun_facts": ["notable public facts — awards, alma mater mascot, volunteer work, etc."],
+  "bio_summary": "2-3 sentence professional summary based on what you found"
+}` }],
+  }), 150000);
+
+  return extractJsonBlock(data) || null;
+}
+
 export async function generateEmailDraft(touchNumber, company, contact, angle, icp = DEFAULT_ICP, t1Subject = null, engagementType = 'Sprint', linkedinPosts = []) {
   const promptFn = TOUCH_PROMPTS[touchNumber];
   if (!promptFn) throw new Error(`No prompt for touch ${touchNumber}`);

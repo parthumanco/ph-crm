@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import {
   fetchClients, fetchClientDetail, fetchCompanyIntel, runClientDeepScan, runBuildThesis,
-  upsertClient, addClientItem, deleteClientItem, askClientQuestion,
+  upsertClient, upsertClientContacts, enrichClientContact,
+  addClientItem, deleteClientItem, askClientQuestion,
 } from '../lib/clients';
 
 const STATUS_COLOR = { active: '#10b981', completed: '#6366f1', on_hold: '#f59e0b', cancelled: '#ef4444', archived: '#9ca3af' };
@@ -48,8 +49,14 @@ export default function ClientsPage({ onNavigate, refreshKey, icp }) {
   const [savingItem, setSavingItem] = useState(false);
 
   // Deep scan
-  const [scanning, setScanning]   = useState(false);
+  const [scanning, setScanning]     = useState(false);
   const [scanStatus, setScanStatus] = useState('');
+
+  // Contact dossiers
+  const [enrichingContact, setEnrichingContact] = useState(null); // contact name
+  const [expandedContact, setExpandedContact]   = useState(null); // contact name
+  const [addingContact, setAddingContact]       = useState(false);
+  const [contactDraft, setContactDraft]         = useState({ name: '', title: '', email: '', linkedin: '' });
 
   // Build Thesis
   const [buildingThesis, setBuildingThesis] = useState(false);
@@ -132,7 +139,7 @@ export default function ClientsPage({ onNavigate, refreshKey, icp }) {
     setScanning(true);
     setScanStatus('Researching…');
     try {
-      const updated = await runClientDeepScan(intel.id, intel, icp, detail || {});
+      const updated = await runClientDeepScan(intel.id, intel, icp, detail || {}, selected);
       setIntel(updated);
       setScanStatus('Done');
       setTimeout(() => setScanStatus(''), 2000);
@@ -170,10 +177,9 @@ export default function ClientsPage({ onNavigate, refreshKey, icp }) {
         setThesisPhases(prev => prev.map(p => p.phase === phase ? { ...p, status, detail: data } : p));
         if (message) addThesisLog(
           status === 'running' ? '🔍' : status === 'done' ? '✅' : status === 'log' ? '  →' : '⚙️',
-          message,
-          phase
+          message, phase
         );
-      });
+      }, selected);
       setIntel(updated);
       addThesisLog('✅', `Thesis complete — ICP ${updated.icp_score ?? '?'}/10 · ${updated.icp_tier ?? ''}`, 4);
     } catch (e) {
@@ -208,23 +214,57 @@ export default function ClientsPage({ onNavigate, refreshKey, icp }) {
     ...(detail.meetings   || []).map(m => ({ date: m.meeting_date,  type: 'meeting',  icon: '📝', title: m.title || 'Meeting', body: m.summary, id: m.id, actionItems: m.action_items || [] })),
   ].sort((a, b) => (!a.date ? 1 : !b.date ? -1 : new Date(b.date) - new Date(a.date))) : [];
 
+  // Rich contacts: clients.contacts is the primary store; supplement with project/deal contacts
   const allContacts = detail ? (() => {
-    const seen = new Set();
-    const out = [];
-    const add = (name, title = '', email = '', linkedin = '') => {
-      if (!name || seen.has(name.toLowerCase())) return;
-      seen.add(name.toLowerCase());
-      out.push({ name, title, email, linkedin });
-    };
-    (detail.projects || []).forEach(p => {
-      (p.contacts || []).forEach(c => add(c.name, c.title, c.email));
-      if (p.contact_name) add(p.contact_name);
+    const map = new Map();
+    // Priority 1: stored rich contacts on the clients table
+    (detail.client?.contacts || []).forEach(c => {
+      if (!c.name) return;
+      map.set(c.name.toLowerCase(), c);
     });
-    (detail.deals || []).forEach(d => add(d.contact_name, '', d.contact_email || ''));
-    // Also pull from companies row contacts
-    (intel?.contacts || []).forEach(c => add(c.name, c.title, c.email, c.linkedin));
-    return out;
+    // Priority 2: project contacts (lower priority — don't overwrite richer data)
+    (detail.projects || []).forEach(p => {
+      (p.contacts || []).forEach(c => {
+        if (!c.name) return;
+        const k = c.name.toLowerCase();
+        if (!map.has(k)) map.set(k, { name: c.name, title: c.title || '', email: c.email || '', source: 'project' });
+      });
+      if (p.contact_name && !map.has(p.contact_name.toLowerCase())) map.set(p.contact_name.toLowerCase(), { name: p.contact_name, source: 'project' });
+    });
+    (detail.deals || []).forEach(d => {
+      if (!d.contact_name) return;
+      const k = d.contact_name.toLowerCase();
+      if (!map.has(k)) map.set(k, { name: d.contact_name, email: d.contact_email || '', source: 'deal' });
+    });
+    // Priority 3: intel contact_angles (scan data)
+    (intel?.contact_angles || []).forEach(c => {
+      if (!c.name) return;
+      const k = c.name.toLowerCase();
+      if (!map.has(k)) map.set(k, { name: c.name, title: c.title || '', linkedin: c.linkedinUrl || c.linkedin || null, source: 'scan' });
+    });
+    return Array.from(map.values());
   })() : [];
+
+  const handleEnrichContact = async (contact) => {
+    if (!selected || enrichingContact) return;
+    setEnrichingContact(contact.name);
+    try {
+      const updated = await enrichClientContact(selected, contact, detail?.client?.name || '');
+      setDetail(d => ({ ...d, client: { ...d.client, contacts: updated } }));
+      setExpandedContact(contact.name);
+    } catch (e) { console.error('Enrich failed:', e); }
+    finally { setEnrichingContact(null); }
+  };
+
+  const handleAddManualContact = async () => {
+    if (!contactDraft.name.trim() || !selected) return;
+    const newContact = { ...contactDraft, id: crypto.randomUUID(), source: 'manual', created_at: new Date().toISOString() };
+    const updated = await upsertClientContacts(selected, [newContact]);
+    setDetail(d => ({ ...d, client: { ...d.client, contacts: updated } }));
+    setContactDraft({ name: '', title: '', email: '', linkedin: '' });
+    setAddingContact(false);
+    setExpandedContact(newContact.name);
+  };
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
@@ -481,7 +521,9 @@ export default function ClientsPage({ onNavigate, refreshKey, icp }) {
 
               {/* ── Contacts ── */}
               {tab === 'contacts' && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 20, maxWidth: 640 }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 16, maxWidth: 700 }}>
+
+                  {/* Client notes + edit form */}
                   {editing ? (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 12, padding: '20px', background: 'var(--surface)', borderRadius: 12, border: '1px solid var(--border)' }}>
                       <div style={{ fontSize: 13, fontWeight: 700 }}>Edit Client</div>
@@ -501,39 +543,198 @@ export default function ClientsPage({ onNavigate, refreshKey, icp }) {
                       </div>
                     </div>
                   ) : detail.client.notes ? (
-                    <div style={{ padding: '14px 16px', background: 'var(--surface)', borderRadius: 10, border: '1px solid var(--border)' }}>
-                      <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 6 }}>Notes</div>
+                    <div style={{ padding: '12px 16px', background: 'var(--surface)', borderRadius: 10, border: '1px solid var(--border)' }}>
+                      <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 5 }}>Notes</div>
                       <p style={{ fontSize: 13, color: 'var(--text)', margin: 0, lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>{detail.client.notes}</p>
                     </div>
                   ) : null}
 
-                  {allContacts.length > 0 && (
-                    <div>
-                      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 10 }}>Contacts</div>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                        {allContacts.map((c, i) => (
-                          <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', background: 'var(--surface)', borderRadius: 9, border: '1px solid var(--border)' }}>
-                            <div style={{ width: 34, height: 34, borderRadius: '50%', background: 'var(--accent)', color: '#fff', fontSize: 13, fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{c.name[0].toUpperCase()}</div>
-                            <div style={{ flex: 1, minWidth: 0 }}>
-                              <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>{c.name}</div>
-                              {c.title && <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{c.title}</div>}
-                            </div>
-                            <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
-                              {c.email    && <a href={`mailto:${c.email}`}    style={{ fontSize: 11, color: 'var(--accent)',  textDecoration: 'none' }}>{c.email}</a>}
-                              {c.linkedin && <a href={c.linkedin} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: '#0077b5', textDecoration: 'none' }}>in</a>}
-                            </div>
-                          </div>
+                  {/* Header row */}
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em' }}>
+                      {allContacts.length} Contact{allContacts.length !== 1 ? 's' : ''}
+                    </div>
+                    <button onClick={() => setAddingContact(true)} style={{ fontSize: 11, fontWeight: 700, padding: '5px 12px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-muted)', cursor: 'pointer' }}>+ Add Contact</button>
+                  </div>
+
+                  {/* Add contact form */}
+                  {addingContact && (
+                    <div style={{ padding: '14px 16px', background: 'var(--surface)', borderRadius: 10, border: '1px solid var(--accent)', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)' }}>New Contact</div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                        {[['name','Name *'],['title','Title'],['email','Email'],['linkedin','LinkedIn URL']].map(([k, lbl]) => (
+                          <input key={k} value={contactDraft[k]} onChange={e => setContactDraft(d => ({...d, [k]: e.target.value}))} placeholder={lbl} style={{ fontSize: 12, padding: '6px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)' }} />
                         ))}
+                      </div>
+                      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                        <button onClick={() => setAddingContact(false)} style={{ fontSize: 12, padding: '5px 12px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', cursor: 'pointer' }}>Cancel</button>
+                        <button onClick={handleAddManualContact} disabled={!contactDraft.name.trim()} style={{ fontSize: 12, fontWeight: 700, padding: '5px 16px', borderRadius: 7, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer', opacity: contactDraft.name.trim() ? 1 : 0.5 }}>Save</button>
                       </div>
                     </div>
                   )}
 
-                  {!detail.client.notes && allContacts.length === 0 && !editing && (
+                  {allContacts.length === 0 && !addingContact && (
                     <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--text-faint)' }}>
                       <div style={{ fontSize: 24, marginBottom: 8 }}>👤</div>
-                      <div style={{ fontSize: 13 }}>No contacts yet. Click Edit to add notes or a website, or log a meeting to capture contacts automatically.</div>
+                      <div style={{ fontSize: 13 }}>No contacts yet. Run a Quick Scan or Build Thesis to auto-discover the leadership team, or add contacts manually.</div>
                     </div>
                   )}
+
+                  {/* Contact cards */}
+                  {allContacts.map((c, i) => {
+                    const isExpanded = expandedContact === c.name;
+                    const isEnriching = enrichingContact === c.name;
+                    const isEnriched = !!(c.enriched_at || c.job_history?.length || c.education?.length || c.posts?.length);
+                    const initials = c.name.split(' ').map(w => w[0]).slice(0,2).join('').toUpperCase();
+                    const SOURCE_COLORS = { thesis: '#8b5cf6', scan: '#3b82f6', manual: '#10b981', project: '#f59e0b', deal: '#f59e0b' };
+                    const srcColor = SOURCE_COLORS[c.source] || '#94a3b8';
+
+                    return (
+                      <div key={c.id || c.name + i} style={{ background: 'var(--surface)', borderRadius: 11, border: `1px solid ${isExpanded ? 'var(--accent)' : 'var(--border)'}`, overflow: 'hidden', transition: 'border-color .2s' }}>
+
+                        {/* Card header */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px' }}>
+                          <div style={{ width: 40, height: 40, borderRadius: '50%', background: `linear-gradient(135deg, var(--accent), #6366f1)`, color: '#fff', fontSize: 14, fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{initials}</div>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                              <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>{c.name}</span>
+                              {c.is_primary && <span style={{ fontSize: 9, fontWeight: 800, padding: '2px 6px', borderRadius: 8, background: '#fef9c3', color: '#a16207', border: '1px solid #fde68a' }}>PRIMARY</span>}
+                              {c.source && <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 8, background: srcColor + '18', color: srcColor }}>{c.source}</span>}
+                              {isEnriched && <span style={{ fontSize: 9, fontWeight: 700, color: '#10b981' }}>✓ enriched</span>}
+                            </div>
+                            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 1 }}>
+                              {[c.title, c.location].filter(Boolean).join(' · ')}
+                            </div>
+                            <div style={{ display: 'flex', gap: 10, marginTop: 4, flexWrap: 'wrap' }}>
+                              {c.email    && <a href={`mailto:${c.email}`} style={{ fontSize: 11, color: 'var(--accent)', textDecoration: 'none' }}>{c.email}</a>}
+                              {c.linkedin && <a href={c.linkedin} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: '#0077b5', textDecoration: 'none', fontWeight: 600 }}>in LinkedIn</a>}
+                              {c.twitter  && <a href={c.twitter}  target="_blank" rel="noreferrer" style={{ fontSize: 11, color: '#1da1f2', textDecoration: 'none', fontWeight: 600 }}>𝕏 Twitter</a>}
+                            </div>
+                          </div>
+                          <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                            <button
+                              onClick={() => handleEnrichContact(c)}
+                              disabled={!!enrichingContact}
+                              title="Enrich with AI — builds full dossier from web search"
+                              style={{ fontSize: 10, fontWeight: 700, padding: '4px 10px', borderRadius: 6, border: '1px solid var(--border)', background: isEnriching ? 'var(--surface-2)' : 'var(--surface)', color: isEnriching ? 'var(--accent)' : 'var(--text-muted)', cursor: enrichingContact ? 'default' : 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}
+                            >
+                              {isEnriching ? <><span style={{ display: 'inline-block', width: 8, height: 8, border: '1.5px solid var(--accent)', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} /> enriching…</> : '🔬 Enrich'}
+                            </button>
+                            <button onClick={() => setExpandedContact(isExpanded ? null : c.name)} style={{ fontSize: 10, fontWeight: 700, padding: '4px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-muted)', cursor: 'pointer' }}>
+                              {isExpanded ? '▲ Less' : '▼ Dossier'}
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Expanded dossier */}
+                        {isExpanded && (
+                          <div style={{ borderTop: '1px solid var(--border)', padding: '16px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+
+                            {/* Angle/hook from scan/thesis */}
+                            {(c.angle || c.hook) && (
+                              <div style={{ padding: '10px 14px', background: '#fefce8', borderRadius: 8, border: '1px solid #fef08a' }}>
+                                {c.angle && <div style={{ fontSize: 12, color: '#78350f', fontWeight: 600, marginBottom: c.hook ? 4 : 0 }}>{c.angle}</div>}
+                                {c.hook  && <div style={{ fontSize: 12, color: '#92400e', fontStyle: 'italic' }}>"{c.hook}"</div>}
+                              </div>
+                            )}
+
+                            {/* Bio summary */}
+                            {c.bio_summary && (
+                              <div>
+                                <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 5 }}>Bio</div>
+                                <p style={{ fontSize: 12, color: 'var(--text)', margin: 0, lineHeight: 1.65 }}>{c.bio_summary}</p>
+                              </div>
+                            )}
+
+                            {/* Job history */}
+                            {(c.job_history || []).length > 0 && (
+                              <div>
+                                <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 8 }}>Career History</div>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                  {c.job_history.map((j, ji) => (
+                                    <div key={ji} style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+                                      <div style={{ width: 6, height: 6, borderRadius: '50%', background: j.is_current ? 'var(--accent)' : 'var(--border)', marginTop: 5, flexShrink: 0 }} />
+                                      <div>
+                                        <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)' }}>{j.title}</span>
+                                        <span style={{ fontSize: 12, color: 'var(--text-muted)' }}> · {j.company}</span>
+                                        {(j.from || j.to) && <span style={{ fontSize: 11, color: 'var(--text-faint)', marginLeft: 6 }}>{j.from}{j.to ? ` – ${j.to}` : j.is_current ? ' – present' : ''}</span>}
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Education */}
+                            {(c.education || []).length > 0 && (
+                              <div>
+                                <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 8 }}>Education</div>
+                                {c.education.map((e, ei) => (
+                                  <div key={ei} style={{ fontSize: 12, color: 'var(--text)', marginBottom: 3 }}>
+                                    {e.school}{e.degree ? ` — ${e.degree}` : ''}{e.years ? ` (${e.years})` : ''}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+
+                            {/* Recent posts */}
+                            {(c.posts || []).length > 0 && (
+                              <div>
+                                <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 8 }}>Recent Posts & Activity</div>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                                  {c.posts.map((p, pi) => (
+                                    <div key={pi} style={{ padding: '10px 12px', background: 'var(--bg)', borderRadius: 8, border: '1px solid var(--border)' }}>
+                                      <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 4 }}>
+                                        <span style={{ fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 8, background: p.platform === 'linkedin' ? '#e0f2fe' : '#f0f9ff', color: p.platform === 'linkedin' ? '#0369a1' : '#0284c7' }}>{p.platform}</span>
+                                        {p.date && <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>{p.date}</span>}
+                                        {p.url && <a href={p.url} target="_blank" rel="noreferrer" style={{ fontSize: 10, color: 'var(--accent)', marginLeft: 'auto' }}>↗</a>}
+                                      </div>
+                                      <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)', marginBottom: 3 }}>{p.headline}</div>
+                                      {p.summary && <div style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.5 }}>{p.summary}</div>}
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Articles & talks */}
+                            {(c.articles_talks || []).length > 0 && (
+                              <div>
+                                <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 8 }}>Articles & Talks</div>
+                                {c.articles_talks.map((a, ai) => (
+                                  <div key={ai} style={{ fontSize: 12, color: 'var(--text)', marginBottom: 5 }}>
+                                    {a.url ? <a href={a.url} target="_blank" rel="noreferrer" style={{ color: 'var(--accent)', fontWeight: 600, textDecoration: 'none' }}>{a.title}</a> : <span style={{ fontWeight: 600 }}>{a.title}</span>}
+                                    {a.outlet && <span style={{ color: 'var(--text-muted)' }}> · {a.outlet}</span>}
+                                    {a.date   && <span style={{ color: 'var(--text-faint)', fontSize: 11 }}> ({a.date})</span>}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+
+                            {/* Interests & fun facts */}
+                            {((c.interests || []).length > 0 || (c.fun_facts || []).length > 0) && (
+                              <div>
+                                <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 8 }}>Interests & Background</div>
+                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                                  {[...(c.interests || []), ...(c.fun_facts || [])].map((item, ii) => (
+                                    <span key={ii} style={{ fontSize: 11, padding: '3px 9px', borderRadius: 12, background: 'var(--surface-2, var(--bg))', border: '1px solid var(--border)', color: 'var(--text-muted)' }}>{item}</span>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+
+                            {!isEnriched && (
+                              <div style={{ fontSize: 12, color: 'var(--text-faint)', textAlign: 'center', padding: '8px 0' }}>
+                                No dossier data yet. Click <strong>🔬 Enrich</strong> to run a deep search on this person.
+                              </div>
+                            )}
+
+                            {c.enriched_at && <div style={{ fontSize: 10, color: 'var(--text-faint)', textAlign: 'right' }}>Enriched {fmtDate(c.enriched_at.slice(0,10))}</div>}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               )}
 
