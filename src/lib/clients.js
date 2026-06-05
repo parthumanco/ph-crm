@@ -213,12 +213,16 @@ export async function runBuildThesis(companyId, company, icp, detail = {}, onPro
   // If we send unknown columns in one payload, Supabase rejects the ENTIRE update.
   const { thesis, thesis_risks, thesis_next_step, thesis_built, thesis_date, research_items, ...safeUpdate } = update;
 
-  const { error: safeError } = await supabase.from('companies').update(safeUpdate).eq('id', companyId);
+  // Use .select('id') so we can detect a 0-row update (ID mismatch / RLS silent block)
+  const { data: safeRows, error: safeError } = await supabase
+    .from('companies').update(safeUpdate).eq('id', companyId).select('id');
   if (safeError) throw new Error(safeError.message);
+  if (!safeRows?.length) throw new Error(`Company record not found (id=${companyId}). The deal may point to a stale or missing company row.`);
 
   // Try to save thesis columns separately — these require DB migration
   const thesisUpdate = { thesis, thesis_risks, thesis_next_step, thesis_built, thesis_date };
-  const { error: thesisError } = await supabase.from('companies').update(thesisUpdate).eq('id', companyId);
+  const { error: thesisError } = await supabase
+    .from('companies').update(thesisUpdate).eq('id', companyId);
 
   // Auto-populate client contacts from thesis results
   if (clientId) {
@@ -229,6 +233,14 @@ export async function runBuildThesis(companyId, company, icp, detail = {}, onPro
   if (thesisError) {
     return { ...company, ...update, _thesisSaveError: thesisError.message };
   }
+
+  // Verify thesis_built actually persisted — catches silent failures (missing columns, schema cache, RLS)
+  const { data: verified } = await supabase
+    .from('companies').select('thesis_built').eq('id', companyId).maybeSingle();
+  if (!verified?.thesis_built) {
+    return { ...company, ...update, _thesisSaveError: 'Thesis update returned no error but thesis_built is still false in the DB. The migration SQL may not have been applied — run it in the Supabase SQL editor and rebuild.' };
+  }
+
   return { ...company, ...update };
 }
 
