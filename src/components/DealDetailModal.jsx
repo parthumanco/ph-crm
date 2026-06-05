@@ -6,7 +6,7 @@ import {
   STAGES, ACTIVITY_TYPES, OWNERS, stageColor, stageLabel, fmt$, daysSince,
 } from '../lib/deals';
 import { fetchDealMeetings, deleteProjectMeeting } from '../lib/projects';
-import { fetchCompanyIntel, runBuildThesis, findOrCreateCompany, addCompanyResearchItem, removeCompanyResearchItem } from '../lib/clients';
+import { fetchCompanyIntel, runBuildThesis, findOrCreateCompany, addCompanyResearchItem, removeCompanyResearchItem, addCompanyContact } from '../lib/clients';
 import { loadIcp } from '../lib/settings';
 import TranscriptImporter from './TranscriptImporter';
 import DealProposalDraft from './DealProposalDraft';
@@ -32,7 +32,7 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
   const [addingTask, setAddingTask] = useState(false);
   const [savingAct, setSavingAct] = useState(false);
   const [savingTask, setSavingTask] = useState(false);
-  const [tab, setTab]             = useState('activities');
+  const [tab, setTab]             = useState('tasks');
   const [meetings, setMeetings]   = useState([]);
   const [showTranscript, setShowTranscript] = useState(null);
   const [showTranscriptImporter, setShowTranscriptImporter] = useState(false);
@@ -56,6 +56,12 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
   const [itemDraft, setItemDraft]         = useState({ type: 'link', title: '', url: '', body: '' });
   const [savingItem, setSavingItem]       = useState(false);
 
+  // Contacts tab state
+  const [expandedContact, setExpandedContact] = useState(null);
+  const [addingContact, setAddingContact]     = useState(false);
+  const [contactDraft, setContactDraft]       = useState({ name: '', title: '', email: '', linkedin: '', notes: '' });
+  const [savingContact, setSavingContact]     = useState(false);
+
   const isNew = !initialDeal.id;
   const [showEditForm, setShowEditForm]   = useState(isNew); // open for new deals, collapsed for existing
 
@@ -67,9 +73,9 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
     }
   }, [initialDeal.id, isNew]);
 
-  // Load company intel once when research tab first opens
+  // Load company intel once when research or contacts tab first opens
   useEffect(() => {
-    if (tab === 'research' && deal.company_name && !intelFetchedRef.current && !intelLoading) {
+    if ((tab === 'research' || tab === 'contacts') && deal.company_name && !intelFetchedRef.current && !intelLoading) {
       intelFetchedRef.current = true;
       setIntelLoading(true);
       fetchCompanyIntel(deal.company_name)
@@ -170,6 +176,35 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
       alert('Error saving notes: ' + e.message);
     } finally {
       setSavingNotes(false);
+    }
+  };
+
+  const handleAddContact = async () => {
+    if (!contactDraft.name.trim()) return;
+    setSavingContact(true);
+    try {
+      let intel = companyIntel;
+      if (!intel?.id) {
+        const company = await findOrCreateCompany(deal.company_name);
+        intel = company;
+        setCompanyIntel(company);
+        intelFetchedRef.current = true;
+      }
+      const updated = await addCompanyContact(intel.id, {
+        name:    contactDraft.name.trim(),
+        title:   contactDraft.title.trim()    || null,
+        email:   contactDraft.email.trim()    || null,
+        linkedin: contactDraft.linkedin.trim() || null,
+        notes:   contactDraft.notes.trim()    || null,
+        source:  'manual',
+      });
+      setCompanyIntel(prev => ({ ...prev, contact_angles: updated }));
+      setContactDraft({ name: '', title: '', email: '', linkedin: '', notes: '' });
+      setAddingContact(false);
+    } catch (e) {
+      alert('Error saving contact: ' + e.message);
+    } finally {
+      setSavingContact(false);
     }
   };
 
@@ -375,10 +410,6 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
                   </select>
                 </div>
                 <div>
-                  <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 4 }}>Retainer Value <span style={{ fontWeight: 400, textTransform: 'none' }}>($/mo)</span></label>
-                  <input type="number" min="0" value={deal.retainer_value || ''} onChange={e => field('retainer_value', e.target.value)} placeholder="0" style={{ width: '100%', fontSize: 13 }} />
-                </div>
-                <div>
                   <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 4 }}>Project Value <span style={{ fontWeight: 400, textTransform: 'none' }}>(one-time)</span></label>
                   <input type="number" min="0" value={deal.project_value || ''} onChange={e => field('project_value', e.target.value)} placeholder="0" style={{ width: '100%', fontSize: 13 }} />
                 </div>
@@ -416,12 +447,13 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
                 </div>
               )}
 
-              <div style={{ display: 'flex', gap: 0, borderBottom: '2px solid var(--border)', marginBottom: 16 }}>
+              <div style={{ display: 'flex', gap: 0, borderBottom: '2px solid var(--border)', marginBottom: 16, overflowX: 'auto' }}>
                 {[
-                  { id: 'activities', label: 'Activities' },
                   { id: 'tasks',      label: openTasks.length > 0 ? `Tasks (${openTasks.length})` : 'Tasks' },
+                  { id: 'activities', label: 'Activity' },
                   { id: 'meetings',   label: meetings.length > 0 ? `Meetings (${meetings.length})` : 'Meetings' },
                   { id: 'research',   label: companyIntel?.thesis_built ? '🔬 Research ✓' : '🔬 Research' },
+                  { id: 'contacts',   label: 'Contacts' },
                 ].map(t => (
                   <button
                     key={t.id}
@@ -914,6 +946,183 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
                   )}
                 </div>
               )}
+
+              {/* ── Contacts ── */}
+              {tab === 'contacts' && (() => {
+                // Merge: primary deal contact + company intel contact_angles
+                const map = new Map();
+                if (deal.contact_name) {
+                  map.set(deal.contact_name.toLowerCase(), {
+                    name: deal.contact_name,
+                    email: deal.contact_email || null,
+                    source: 'deal',
+                  });
+                }
+                (companyIntel?.contact_angles || []).forEach(c => {
+                  if (!c.name) return;
+                  const key = c.name.toLowerCase();
+                  const existing = map.get(key) || {};
+                  map.set(key, { ...existing, ...c, email: c.email || existing.email || null });
+                });
+                const contacts = Array.from(map.values());
+
+                const sourceColor = s => s === 'thesis' ? { bg: '#ede9fe', color: '#6d28d9' } : s === 'scan' ? { bg: '#dbeafe', color: '#1d4ed8' } : s === 'manual' ? { bg: '#dcfce7', color: '#15803d' } : { bg: 'var(--surface)', color: 'var(--text-muted)' };
+
+                return (
+                  <div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em' }}>
+                        Contacts{contacts.length > 0 ? ` (${contacts.length})` : ''}
+                      </span>
+                      <button
+                        onClick={() => setAddingContact(v => !v)}
+                        style={{ fontSize: 11, fontWeight: 700, padding: '4px 12px', borderRadius: 6, border: '1px solid var(--border)', background: addingContact ? 'var(--accent)' : 'var(--surface)', color: addingContact ? '#fff' : 'var(--text-muted)', cursor: 'pointer' }}
+                      >
+                        {addingContact ? '✕ Cancel' : '+ Add Contact'}
+                      </button>
+                    </div>
+
+                    {/* Add contact form */}
+                    {addingContact && (
+                      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: 14, marginBottom: 14 }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
+                          <div>
+                            <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 3 }}>Name *</label>
+                            <input type="text" value={contactDraft.name} onChange={e => setContactDraft(d => ({ ...d, name: e.target.value }))} placeholder="Full name" style={{ width: '100%', fontSize: 12 }} />
+                          </div>
+                          <div>
+                            <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 3 }}>Title</label>
+                            <input type="text" value={contactDraft.title} onChange={e => setContactDraft(d => ({ ...d, title: e.target.value }))} placeholder="Job title" style={{ width: '100%', fontSize: 12 }} />
+                          </div>
+                          <div>
+                            <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 3 }}>Email</label>
+                            <input type="email" value={contactDraft.email} onChange={e => setContactDraft(d => ({ ...d, email: e.target.value }))} placeholder="email@company.com" style={{ width: '100%', fontSize: 12 }} />
+                          </div>
+                          <div>
+                            <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 3 }}>LinkedIn URL</label>
+                            <input type="url" value={contactDraft.linkedin} onChange={e => setContactDraft(d => ({ ...d, linkedin: e.target.value }))} placeholder="linkedin.com/in/…" style={{ width: '100%', fontSize: 12 }} />
+                          </div>
+                          <div style={{ gridColumn: '1/-1' }}>
+                            <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 3 }}>Notes</label>
+                            <textarea rows={2} value={contactDraft.notes} onChange={e => setContactDraft(d => ({ ...d, notes: e.target.value }))} placeholder="What do you know about this person?" style={{ width: '100%', fontSize: 12, lineHeight: 1.5 }} />
+                          </div>
+                        </div>
+                        <button className="btn btn-primary btn-sm" onClick={handleAddContact} disabled={savingContact || !contactDraft.name.trim()}>
+                          {savingContact ? 'Saving…' : 'Add Contact'}
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Loading state */}
+                    {intelLoading && (
+                      <div style={{ textAlign: 'center', padding: '24px 0' }}><div className="spinner" /></div>
+                    )}
+
+                    {/* Contacts list */}
+                    {!intelLoading && contacts.length === 0 && (
+                      <div style={{ textAlign: 'center', padding: '32px 0' }}>
+                        <div style={{ fontSize: 28, marginBottom: 8 }}>👤</div>
+                        <p style={{ fontSize: 12, color: 'var(--text-faint)', margin: '0 0 12px' }}>No contacts yet. Add one above or build a Thesis to discover contacts automatically.</p>
+                      </div>
+                    )}
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                      {contacts.map((c, i) => {
+                        const initials = c.name.split(' ').map(w => w[0]).join('').slice(0,2).toUpperCase();
+                        const isExpanded = expandedContact === (c.name);
+                        const sc = sourceColor(c.source);
+                        return (
+                          <div key={i} style={{ border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
+                            {/* Contact header row */}
+                            <div
+                              style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', cursor: 'pointer', background: 'var(--surface)' }}
+                              onClick={() => setExpandedContact(isExpanded ? null : c.name)}
+                            >
+                              {/* Avatar */}
+                              <div style={{ width: 36, height: 36, borderRadius: '50%', background: `linear-gradient(135deg, ${sc.bg}, ${sc.color}22)`, border: `1.5px solid ${sc.color}44`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 800, color: sc.color, flexShrink: 0 }}>
+                                {initials}
+                              </div>
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                  <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>{c.name}</span>
+                                  {c.is_primary && <span style={{ fontSize: 9, fontWeight: 800, padding: '1px 5px', borderRadius: 4, background: '#ede9fe', color: '#6d28d9', textTransform: 'uppercase', letterSpacing: '.04em' }}>Primary</span>}
+                                  {c.source && <span style={{ fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 4, background: sc.bg, color: sc.color, textTransform: 'capitalize' }}>{c.source}</span>}
+                                </div>
+                                {c.title && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 1 }}>{c.title}</div>}
+                              </div>
+                              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexShrink: 0 }}>
+                                {c.linkedin && (
+                                  <a href={c.linkedin} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} style={{ fontSize: 11, color: '#1d4ed8', fontWeight: 600, textDecoration: 'none' }}>in</a>
+                                )}
+                                <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>{isExpanded ? '▲' : '▼'}</span>
+                              </div>
+                            </div>
+
+                            {/* Expanded dossier */}
+                            {isExpanded && (
+                              <div style={{ padding: '12px 14px', background: 'var(--bg)', borderTop: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                                {/* Contact details */}
+                                <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                                  {c.email && (
+                                    <a href={`mailto:${c.email}`} style={{ fontSize: 12, color: 'var(--accent)', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 4 }}>
+                                      ✉️ {c.email}
+                                    </a>
+                                  )}
+                                  {c.linkedin && (
+                                    <a href={c.linkedin} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: '#1d4ed8', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 4 }}>
+                                      🔗 LinkedIn profile
+                                    </a>
+                                  )}
+                                </div>
+
+                                {/* Outreach angle */}
+                                {c.angle && (
+                                  <div>
+                                    <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 3 }}>Outreach Angle</div>
+                                    <p style={{ fontSize: 12, color: 'var(--text)', lineHeight: 1.6, margin: 0 }}>{c.angle}</p>
+                                  </div>
+                                )}
+
+                                {/* Hook */}
+                                {c.hook && (
+                                  <div style={{ padding: '8px 10px', background: '#ede9fe', border: '1px solid #c4b5fd', borderRadius: 6 }}>
+                                    <div style={{ fontSize: 10, fontWeight: 700, color: '#6d28d9', marginBottom: 3 }}>HOOK</div>
+                                    <p style={{ fontSize: 12, color: '#4c1d95', lineHeight: 1.6, margin: 0 }}>{c.hook}</p>
+                                  </div>
+                                )}
+
+                                {/* Notes */}
+                                {c.notes && (
+                                  <div>
+                                    <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 3 }}>Notes</div>
+                                    <p style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6, margin: 0 }}>{c.notes}</p>
+                                  </div>
+                                )}
+
+                                {/* Posts from thesis */}
+                                {c.posts?.length > 0 && (
+                                  <div>
+                                    <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 6 }}>Recent Posts</div>
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                      {c.posts.slice(0, 3).map((p, pi) => (
+                                        <div key={pi} style={{ padding: '7px 9px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 6, fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                                          {p.platform && <span style={{ fontWeight: 700, color: p.platform === 'linkedin' ? '#1d4ed8' : '#374151', marginRight: 6 }}>{p.platform}</span>}
+                                          {p.headline || p.text || p}
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })()}
+
             </>
           )}
         </div>

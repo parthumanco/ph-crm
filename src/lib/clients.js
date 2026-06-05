@@ -97,6 +97,17 @@ export async function addCompanyResearchItem(companyId, item) {
   return updated;
 }
 
+export async function addCompanyContact(companyId, contact) {
+  const { data: row } = await supabase.from('companies').select('contact_angles').eq('id', companyId).single();
+  const contacts = row?.contact_angles || [];
+  // Skip duplicate names
+  if (contacts.some(c => c.name?.toLowerCase() === contact.name?.toLowerCase())) return contacts;
+  const updated = [...contacts, { id: crypto.randomUUID(), ...contact }];
+  const { error } = await supabase.from('companies').update({ contact_angles: updated }).eq('id', companyId);
+  if (error) throw new Error(error.message);
+  return updated;
+}
+
 export async function removeCompanyResearchItem(companyId, itemId) {
   const { data: row } = await supabase.from('companies').select('research_items').eq('id', companyId).single();
   const updated = (row?.research_items || []).filter(i => i.id !== itemId);
