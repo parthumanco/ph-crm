@@ -70,7 +70,7 @@ export default function PipelinePage({ icp = {}, refreshKey = 0, onNavigate }) {
     try {
       // Load entries and touches first
       const [{ data: ents, error: e1 }, { data: tchs, error: e2 }] = await Promise.all([
-        supabase.from('pipeline_entries').select('*').order('created_at', { ascending: false }),
+        supabase.from('pipeline_entries').select('*').neq('status', 'won').order('created_at', { ascending: false }),
         supabase.from('touches').select('*'),
       ]);
       if (e1 || e2) console.error('Pipeline load error:', e1 || e2);
@@ -238,7 +238,7 @@ export default function PipelinePage({ icp = {}, refreshKey = 0, onNavigate }) {
         </div>
 
         <div className="filter-bar">
-          {['all','active','responded','paused','won','lost'].map(f => (
+          {['all','active','responded','paused','lost'].map(f => (
             <button key={f} className={`filter-btn${filter === f ? ' active' : ''}`} onClick={() => setFilter(f)}>
               {f === 'all' ? 'All' : STATUS_LABELS[f]?.label || f}
               {f === 'all' && ` (${entries.length})`}
