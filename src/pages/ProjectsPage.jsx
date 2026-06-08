@@ -2238,7 +2238,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
             { id: 'activity', label: dealActivities.length > 0 ? `Activity (${dealActivities.length})` : 'Activity' },
             { id: 'files', label: projectFiles.length > 0 ? `Files (${projectFiles.length})` : 'Files' },
             { id: 'contacts', label: 'Contacts' },
-            { id: 'research', label: dealCompanyIntel?.thesis_built ? '🔬 Research ✓' : '🔬 Research' },
+            { id: 'research', label: 'Research' },
           ].map(t => (
             <button
               key={t.id}
