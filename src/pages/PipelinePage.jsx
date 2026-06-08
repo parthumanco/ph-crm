@@ -218,29 +218,31 @@ export default function PipelinePage({ icp = {}, refreshKey = 0, onNavigate }) {
           assigned_to:   'Mike',
         });
       }
-      // Generate a quick AI next step and save to the company record
-      // Fire in background — don't block the rain animation
-      if (resolvedCompany.id) {
-        generateQuickNextStep(resolvedCompany.name, noteText, deal.notes)
-          .then(nextStep => {
-            if (nextStep) {
-              supabase.from('companies')
-                .update({ thesis_next_step: nextStep, updated_at: new Date().toISOString() })
-                .eq('id', resolvedCompany.id)
-                .then(({ error }) => { if (error) console.error('Failed to save next step:', error.message); });
-            }
-          })
-          .catch(e => console.error('generateQuickNextStep failed:', e.message));
-      }
+      // Kick off AI next step early (concurrent with animation) so it lands before the card opens
+      const nextStepPromise = resolvedCompany.id
+        ? generateQuickNextStep(resolvedCompany.name, noteText, deal.notes)
+            .then(nextStep => {
+              if (nextStep) {
+                return supabase.from('companies')
+                  .update({ thesis_next_step: nextStep, updated_at: new Date().toISOString() })
+                  .eq('id', resolvedCompany.id);
+              }
+            })
+            .catch(e => console.error('generateQuickNextStep failed:', e.message))
+        : Promise.resolve();
+
       // Mark entry as won in DB and remove from list immediately
       await supabase.from('pipeline_entries').update({ status: 'won', updated_at: new Date().toISOString() }).eq('id', entry.id);
       setEntries(es => es.filter(e => e.id !== entry.id));
       // Phase 1: character grabs bills
-      setRainAnim({ company: company.name, phase: 'grip' });
+      setRainAnim({ company: resolvedCompany.name, phase: 'grip' });
       // Phase 2: throw + rain
       setTimeout(() => setRainAnim(r => r ? { ...r, phase: 'rain' } : r), 700);
-      // Done: navigate to Deals
-      setTimeout(() => { setRainAnim(null); onNavigate?.('deals'); }, 2800);
+      // Wait for AI next step to land (or 3s max) before navigating so card sees it on load
+      Promise.race([nextStepPromise, new Promise(r => setTimeout(r, 3000))])
+        .finally(() => {
+          setTimeout(() => { setRainAnim(null); onNavigate?.('deals'); }, 100);
+        });
     } catch (e) {
       alert('Error creating deal: ' + e.message);
     } finally {

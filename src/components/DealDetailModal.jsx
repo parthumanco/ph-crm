@@ -103,7 +103,18 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
     if (!isNew && deal.company_name) {
       intelFetchedRef.current = true;
       fetchCompanyIntel(deal.company_name)
-        .then(intel => setCompanyIntel(intel))
+        .then(intel => {
+          setCompanyIntel(intel);
+          // If no next step yet, the background AI job from Active Outreach may still
+          // be in flight — poll once after 4s to pick it up
+          if (!intel?.thesis_next_step) {
+            setTimeout(() => {
+              fetchCompanyIntel(deal.company_name)
+                .then(refreshed => { if (refreshed?.thesis_next_step) setCompanyIntel(refreshed); })
+                .catch(() => {});
+            }, 4000);
+          }
+        })
         .catch(() => {});
     }
   }, []);
