@@ -401,7 +401,7 @@ export default function PipelinePage({ icp = {}, refreshKey = 0, onNavigate }) {
                         <td style={{ whiteSpace: 'nowrap' }}>
                           <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'nowrap' }}>
                             <button className="btn btn-secondary btn-xs" style={{ borderRadius: 20, whiteSpace: 'nowrap', padding: '4px 12px' }} onClick={() => setResponseModal({ entry, company })}>+ Reply</button>
-                            <button className="btn btn-ghost btn-xs" style={{ borderRadius: 20, whiteSpace: 'nowrap', padding: '4px 12px' }} onClick={() => setNotesEntry(entry)}>+ Note</button>
+                            <button className="btn btn-secondary btn-xs" style={{ borderRadius: 20, whiteSpace: 'nowrap', padding: '4px 12px' }} onClick={() => setNotesEntry(entry)}>+ Note</button>
                             <button
                               className="btn btn-primary btn-xs"
                               style={{ borderRadius: 20, whiteSpace: 'nowrap', padding: '4px 12px' }}
