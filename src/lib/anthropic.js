@@ -1231,6 +1231,9 @@ ${companyIntel?.recommended_angle ? `Best angle: ${companyIntel.recommended_angl
 ${companyIntel?.entry_contact?.hook ? `Entry hook for ${companyIntel.entry_contact.name || 'primary contact'}: ${companyIntel.entry_contact.hook}` : ''}
 ${companyIntel?.thesis ? `Thesis (excerpt): ${companyIntel.thesis.slice(0, 600)}` : 'No thesis built yet.'}
 
+DEAL NOTES (outreach history, prospect replies, internal context):
+${deal.notes?.trim() || 'None.'}
+
 ACTIVITY HISTORY (most recent first):
 ${activityHistory || 'No activities logged — this is a cold deal.'}
 

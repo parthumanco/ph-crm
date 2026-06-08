@@ -189,12 +189,18 @@ export default function PipelinePage({ icp = {}, refreshKey = 0, onNavigate }) {
     setCreatingDeal(p => ({ ...p, [key]: true }));
     try {
       const primaryContact = (company.contacts || [])[0] || {};
+      // Build deal notes from outreach history so context carries into Pipeline
+      const noteParts = [];
+      if (entry.notes?.trim())      noteParts.push(`Outreach notes:\n${entry.notes.trim()}`);
+      if (entry.last_reply?.trim()) noteParts.push(`Prospect reply:\n${entry.last_reply.trim()}`);
+
       await upsertDeal({
         company_id:    company.id,
         company_name:  company.name,
         contact_name:  primaryContact.name  || '',
         contact_email: primaryContact.email || '',
-        stage: 'outreach',
+        stage:         'outreach',
+        notes:         noteParts.length ? noteParts.join('\n\n') : null,
       });
       // Mark entry as won in DB and remove from list immediately
       await supabase.from('pipeline_entries').update({ status: 'won', updated_at: new Date().toISOString() }).eq('id', entry.id);
@@ -826,7 +832,11 @@ function ResponseModal({ entry, company, onClose, onSave }) {
 
   const save = async () => {
     try {
-      const { error } = await supabase.from('pipeline_entries').update({ status: 'responded', updated_at: new Date().toISOString() }).eq('id', entry.id);
+      const { error } = await supabase.from('pipeline_entries').update({
+        status: 'responded',
+        last_reply: responseText.trim() || null,
+        updated_at: new Date().toISOString(),
+      }).eq('id', entry.id);
       if (error) throw new Error(error.message);
       onSave();
     } catch (e) {
