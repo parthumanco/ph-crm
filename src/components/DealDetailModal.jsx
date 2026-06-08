@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { supabase } from '../lib/supabase';
 import {
   upsertDeal, deleteDeal,
   fetchActivities, addActivity, deleteActivity,
@@ -146,6 +147,46 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
       alert('Error deleting deal: ' + e.message);
     } finally {
       setDeleting(false);
+    }
+  };
+
+  const [movingBack, setMovingBack] = useState(false);
+  const moveBackToOutreach = async () => {
+    if (movingBack) return;
+    setMovingBack(true);
+    try {
+      // Restore (or create) a pipeline entry for this company at 'active' status
+      // First check if a 'won' entry exists — if so, restore it; otherwise insert a new one
+      const { data: existing } = await supabase
+        .from('pipeline_entries')
+        .select('id')
+        .eq('company_id', deal.company_id)
+        .eq('status', 'won')
+        .limit(1);
+
+      if (existing?.length) {
+        await supabase.from('pipeline_entries')
+          .update({ status: 'active', updated_at: new Date().toISOString() })
+          .eq('id', existing[0].id);
+      } else {
+        await supabase.from('pipeline_entries').insert({
+          company_id: deal.company_id,
+          status: 'active',
+          notes: deal.notes || null,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        });
+      }
+      // Move deal stage back to outreach so it doesn't linger at a forward stage
+      await upsertDeal({ ...deal, stage: 'outreach' });
+      onClose();
+      // Navigate to Active Outreach if handler provided
+      onSaved?.({ ...deal, stage: 'outreach' });
+      alert(`${deal.company_name} moved back to Active Outreach.`);
+    } catch (e) {
+      alert('Error moving back: ' + e.message);
+    } finally {
+      setMovingBack(false);
     }
   };
 
@@ -585,6 +626,13 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
                   Close {deal.close_date_estimate}
                 </span>
               )}
+              <button
+                onClick={moveBackToOutreach}
+                disabled={movingBack}
+                style={{ fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 20, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-muted)', cursor: 'pointer' }}
+              >
+                {movingBack ? 'Moving…' : '↩ Active Outreach'}
+              </button>
               <button
                 onClick={() => setShowEditForm(v => !v)}
                 style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 6, border: '1px solid var(--border)', background: showEditForm ? 'var(--accent)' : 'var(--surface)', color: showEditForm ? '#fff' : 'var(--text-muted)', cursor: 'pointer' }}
