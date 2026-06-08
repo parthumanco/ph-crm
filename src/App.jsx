@@ -92,7 +92,6 @@ export default function App() {
                 className={`nav-item${page === n.id ? ' active' : ''}`}
                 onClick={() => { handleSetPage(n.id); if (n.id === 'projects') projectsGoHome.current?.(); }}
               >
-                <span className="nav-icon">{n.icon}</span>
                 {n.label}
               </button>
             )
