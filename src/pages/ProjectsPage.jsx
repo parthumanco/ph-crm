@@ -602,12 +602,19 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
       ]);
       // Fix milestone statuses: if any task has an open rejection, milestone
       // should be in_progress regardless of what's stored in the DB.
-      const rejectedMsIds = new Set(ts.filter(t => t.rejected_at).map(t => t.milestone_id).filter(Boolean));
+      // Only keep tasks whose milestone is still active (not archived).
+      // Tasks for archived milestones are left in DB but hidden from the UI
+      // so the progress bar doesn't count them.
+      const activeMsIds = new Set(ms.map(m => m.id));
+      const visibleTs = ts.filter(t => !t.milestone_id || activeMsIds.has(t.milestone_id));
+
+      const rejectedMsIds = new Set(visibleTs.filter(t => t.rejected_at).map(t => t.milestone_id).filter(Boolean));
       const fixedMs = rejectedMsIds.size > 0
         ? ms.map(m => rejectedMsIds.has(m.id) && m.status === 'completed' ? { ...m, status: 'in_progress' } : m)
         : ms;
       setMilestones(fixedMs);
-      setTasks(ts);
+      setTasks(visibleTs);
+      setAllTasks(prev => ({ ...prev, [project.id]: visibleTs }));
       setProjectFiles(files);
       setArchivedFiles(archivedF);
       setMeetings(mtgs);
@@ -645,10 +652,12 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
         fetchProjectTasks(projId),
         fetchProjectFiles(projId).catch(() => []),
       ]);
+      const activeMsIds = new Set(ms.map(m => m.id));
+      const visibleTs = ts.filter(t => !t.milestone_id || activeMsIds.has(t.milestone_id));
       setMilestones(ms);
-      setTasks(ts);
+      setTasks(visibleTs);
       setProjectFiles(files);
-      setAllTasks(prev => ({ ...prev, [projId]: ts }));
+      setAllTasks(prev => ({ ...prev, [projId]: visibleTs }));
     } catch (e) {
       console.error('refreshDetail failed:', e);
     }
