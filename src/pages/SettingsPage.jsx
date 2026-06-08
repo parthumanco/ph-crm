@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { saveIcp, loadTeamEmails, saveTeamEmails, saveTeamMembers, DEFAULT_BRAND_BRAIN, loadBrandBrain, saveBrandBrain } from '../lib/settings';
 import { invalidateBrandCache } from '../lib/anthropic';
 import { supabase } from '../lib/supabase';
+import { loadGranolaApiKey, saveGranolaApiKey, testGranolaConnection } from '../lib/granola';
 
 // ── Reference document helpers ────────────────────────────────────────────────
 async function loadRefDocs() {
@@ -177,6 +178,15 @@ export default function SettingsPage({ icp, onIcpSaved, teamMembers = [], onTeam
   const [testStatus, setTestStatus]   = useState('');
   const [testMsg, setTestMsg]         = useState('');
 
+  // Granola integration state
+  const [granolaKey, setGranolaKey]       = useState('');
+  const [granolaKeyDraft, setGranolaKeyDraft] = useState('');
+  const [granolaSaving, setGranolaSaving] = useState(false);
+  const [granolaSaved, setGranolaSaved]   = useState(false);
+  const [granolaTesting, setGranolaTesting] = useState(false);
+  const [granolaTestResult, setGranolaTestResult] = useState(null); // { ok, message } | null
+  const [showGranolaKey, setShowGranolaKey] = useState(false);
+
   // Reference documents (uploaded files + external links)
   const [refDocs, setRefDocs]         = useState([]);
   const [uploading, setUploading]     = useState(false);
@@ -199,6 +209,9 @@ export default function SettingsPage({ icp, onIcpSaved, teamMembers = [], onTeam
 
   useEffect(() => { loadTeamEmails().then(setTeamEmails); }, []);
   useEffect(() => { loadRefDocs().then(setRefDocs); }, []);
+  useEffect(() => {
+    loadGranolaApiKey().then(k => { setGranolaKey(k); setGranolaKeyDraft(k); });
+  }, []);
 
   // ── Brand Brain handlers ─────────────────────────────────────────────────────
   const handleSaveBrain = async () => {
@@ -817,6 +830,121 @@ export default function SettingsPage({ icp, onIcpSaved, teamMembers = [], onTeam
           </div>
         );
       })()}
+
+      {/* ── Granola Integration ── */}
+      <SectionDivider />
+      <SectionHeader
+        title="Granola Integration"
+        description="Connect your Granola account so meeting notes automatically populate in deal meeting logs."
+      />
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+
+        {/* API Key input */}
+        <div>
+          <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 6 }}>
+            API Key
+          </label>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <input
+              type={showGranolaKey ? 'text' : 'password'}
+              value={granolaKeyDraft}
+              onChange={e => { setGranolaKeyDraft(e.target.value); setGranolaTestResult(null); }}
+              placeholder="grn_••••••••••••••••••••••••••••••••"
+              style={{ flex: 1, fontSize: 13, padding: '8px 12px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontFamily: granolaKeyDraft ? 'monospace' : 'inherit' }}
+            />
+            <button
+              onClick={() => setShowGranolaKey(v => !v)}
+              style={{ fontSize: 12, padding: '8px 12px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-muted)', cursor: 'pointer', flexShrink: 0 }}
+              title={showGranolaKey ? 'Hide key' : 'Show key'}
+            >
+              {showGranolaKey ? '🙈' : '👁'}
+            </button>
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 5 }}>
+            Generate your key in Granola → Settings → API. Requires a Business or Enterprise plan.
+          </div>
+        </div>
+
+        {/* Test result */}
+        {granolaTestResult && (
+          <div style={{
+            fontSize: 12, padding: '10px 14px', borderRadius: 8,
+            background: granolaTestResult.ok ? '#f0fdf4' : '#fef2f2',
+            border: `1px solid ${granolaTestResult.ok ? '#bbf7d0' : '#fecaca'}`,
+            color: granolaTestResult.ok ? '#166534' : '#dc2626',
+            fontWeight: 600,
+          }}>
+            {granolaTestResult.ok ? '✅' : '❌'} {granolaTestResult.message}
+          </div>
+        )}
+
+        {/* Action buttons */}
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <button
+            className="btn btn-secondary"
+            disabled={granolaTesting || !granolaKeyDraft.trim()}
+            onClick={async () => {
+              setGranolaTesting(true);
+              setGranolaTestResult(null);
+              try {
+                const result = await testGranolaConnection(granolaKeyDraft.trim());
+                setGranolaTestResult({ ok: true, message: `Connected — ${result.count} note${result.count !== 1 ? 's' : ''} accessible` });
+              } catch (e) {
+                setGranolaTestResult({ ok: false, message: e.message });
+              } finally {
+                setGranolaTesting(false);
+              }
+            }}
+          >
+            {granolaTesting ? <><span className="spinner" /> Testing…</> : '🔌 Test connection'}
+          </button>
+
+          <button
+            className="btn btn-primary"
+            disabled={granolaSaving || !granolaKeyDraft.trim()}
+            onClick={async () => {
+              setGranolaSaving(true);
+              try {
+                await saveGranolaApiKey(granolaKeyDraft.trim());
+                setGranolaKey(granolaKeyDraft.trim());
+                setGranolaSaved(true);
+                setTimeout(() => setGranolaSaved(false), 2500);
+              } catch (e) {
+                alert('Save failed: ' + e.message);
+              } finally {
+                setGranolaSaving(false);
+              }
+            }}
+          >
+            {granolaSaving ? <><span className="spinner" /> Saving…</> : granolaSaved ? '✅ Saved!' : '💾 Save key'}
+          </button>
+
+          {granolaKey && (
+            <button
+              className="btn btn-secondary"
+              style={{ color: '#dc2626', borderColor: '#fca5a5' }}
+              onClick={async () => {
+                if (!window.confirm('Remove Granola API key?')) return;
+                await saveGranolaApiKey('');
+                setGranolaKey('');
+                setGranolaKeyDraft('');
+                setGranolaTestResult(null);
+              }}
+            >
+              Remove key
+            </button>
+          )}
+        </div>
+
+        {/* Status */}
+        {granolaKey && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--text-faint)' }}>
+            <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: '#10b981', flexShrink: 0 }} />
+            API key saved. Open any deal → Meetings tab to sync Granola notes for that company.
+          </div>
+        )}
+      </div>
 
       {/* bottom breathing room */}
       <div style={{ height: 48 }} />

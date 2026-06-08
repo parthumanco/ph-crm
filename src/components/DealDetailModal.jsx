@@ -43,6 +43,9 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
   const dragMtgIdRef = useRef(null); // id of card being dragged
   const [fileDropActive, setFileDropActive] = useState(false); // file being dragged over meeting log
   const [initialTranscript, setInitialTranscript] = useState(''); // pre-filled transcript from dropped file
+  const [granolaSyncing, setGranolaSyncing] = useState(false);
+  const [granolaResult, setGranolaResult]   = useState(null); // { count, error } | null
+  const [granolaKeyAvailable, setGranolaKeyAvailable] = useState(false);
 
   // Research tab state
   const [companyIntel, setCompanyIntel]   = useState(null);
@@ -108,6 +111,13 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
   useEffect(() => {
     if (buildingThesis) thesisLogEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [thesisLog, buildingThesis]);
+
+  // Check if Granola key is configured (show sync button if so)
+  useEffect(() => {
+    import('../lib/granola.js').then(({ loadGranolaApiKey }) =>
+      loadGranolaApiKey().then(k => setGranolaKeyAvailable(!!k))
+    ).catch(() => {});
+  }, []);
 
   const field = (key, val) => setDeal(d => ({ ...d, [key]: val }));
 
@@ -330,6 +340,32 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
       }
     }
     setComposeEmail(null);
+  };
+
+  const handleGranolaSync = async () => {
+    if (granolaSyncing) return;
+    setGranolaSyncing(true);
+    setGranolaResult(null);
+    try {
+      const { loadGranolaApiKey, syncDealMeetings } = await import('../lib/granola.js');
+      const apiKey = await loadGranolaApiKey();
+      if (!apiKey) throw new Error('No API key — add one in Settings → Integrations');
+      const { imported, errors } = await syncDealMeetings(deal, apiKey);
+      if (imported.length > 0) {
+        const updated = await fetchDealMeetings(deal.id);
+        setMeetings(updated);
+      }
+      setGranolaResult({
+        count: imported.length,
+        error: errors.length ? errors[0] : null,
+      });
+      setTimeout(() => setGranolaResult(null), 5000);
+    } catch (e) {
+      setGranolaResult({ count: 0, error: e.message });
+      setTimeout(() => setGranolaResult(null), 6000);
+    } finally {
+      setGranolaSyncing(false);
+    }
   };
 
   const handleMtgDrop = (targetId) => {
@@ -1028,15 +1064,45 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
                     </div>
                   )}
 
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: granolaResult ? 8 : 12 }}>
                     <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em' }}>Meeting Log</span>
                     <div style={{ display: 'flex', gap: 8 }}>
+                      {granolaKeyAvailable && (
+                        <button
+                          className="btn btn-secondary btn-xs"
+                          onClick={handleGranolaSync}
+                          disabled={granolaSyncing}
+                          title="Sync meetings from Granola"
+                          style={{ display: 'flex', alignItems: 'center', gap: 4 }}
+                        >
+                          {granolaSyncing
+                            ? <><span className="spinner" style={{ width: 10, height: 10, borderWidth: 1.5 }} /> Syncing…</>
+                            : '↻ Granola'}
+                        </button>
+                      )}
                       {meetings.length > 0 && (
                         <button className="btn btn-primary btn-xs" onClick={() => setShowProposalDraft(true)}>✦ Draft Proposal</button>
                       )}
                       <button className="btn btn-secondary btn-xs" onClick={() => { setInitialTranscript(''); setShowTranscriptImporter(true); }}>+ Add Meeting</button>
                     </div>
                   </div>
+
+                  {/* Granola sync result toast */}
+                  {granolaResult && (
+                    <div style={{
+                      fontSize: 12, padding: '8px 12px', borderRadius: 7, marginBottom: 10,
+                      background: granolaResult.error ? '#fef2f2' : '#f0fdf4',
+                      border: `1px solid ${granolaResult.error ? '#fecaca' : '#bbf7d0'}`,
+                      color: granolaResult.error ? '#dc2626' : '#166534',
+                      fontWeight: 600,
+                    }}>
+                      {granolaResult.error
+                        ? `❌ ${granolaResult.error}`
+                        : granolaResult.count > 0
+                          ? `✅ ${granolaResult.count} meeting${granolaResult.count !== 1 ? 's' : ''} imported from Granola`
+                          : '✅ Already up to date — no new meetings found'}
+                    </div>
+                  )}
 
                   {meetings.length === 0 && (
                     <div style={{ textAlign: 'center', padding: '24px 0' }}>
