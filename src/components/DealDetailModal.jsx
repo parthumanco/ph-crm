@@ -322,7 +322,9 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
     if (deal.id && composeDraft.subject) {
       setLoggingEmail(true);
       try {
-        const summary = `📧 ${composeDraft.subject}${composeDraft.body ? '\n\n' + composeDraft.body.slice(0, 300) : ''}`;
+        // Prefix [RecipientName] so the activity card can show "Pete → John"
+        const toPrefix = composeEmail.toName ? `[${composeEmail.toName}]` : '';
+        const summary = `${toPrefix}📧 ${composeDraft.subject}${composeDraft.body ? '\n\n' + composeDraft.body.slice(0, 300) : ''}`;
         await addActivity({
           deal_id:       deal.id,
           company_id:    deal.company_id,
@@ -721,16 +723,27 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
                     <p style={{ fontSize: 12, color: 'var(--text-faint)', textAlign: 'center', padding: '16px 0' }}>No activity logged yet.</p>
                   )}
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                    {activities.map(a => (
+                    {activities.map(a => {
+                      // Parse optional [ToName] prefix embedded at save time
+                      const toMatch = a.type === 'email' ? a.summary?.match(/^\[([^\]]+)\]/) : null;
+                      const toName  = toMatch?.[1] || null;
+                      const displaySummary = toName ? a.summary.replace(/^\[[^\]]+\]/, '') : a.summary;
+                      return (
                       <div key={a.id} style={{ display: 'flex', gap: 10, padding: '10px 12px', background: 'var(--surface)', borderRadius: 6, border: `1px solid ${confirmDeleteActId === a.id ? '#fca5a5' : 'var(--border)'}`, transition: 'border-color .15s' }}>
                         <span style={{ fontSize: 16, flexShrink: 0, marginTop: 1 }}>{ACTIVITY_ICONS[a.type] || '📝'}</span>
                         <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 2 }}>
+                          <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', marginBottom: 2 }}>
                             <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'capitalize' }}>{a.type}</span>
                             <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>{a.activity_date}</span>
                             {a.assigned_to && <span style={{ fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 3, background: a.assigned_to === 'Mike' ? '#f3e8ff' : '#eff6ff', color: a.assigned_to === 'Mike' ? '#7c3aed' : '#1d4ed8' }}>{a.assigned_to}</span>}
+                            {toName && (
+                              <span style={{ fontSize: 11, color: 'var(--text-faint)', display: 'flex', alignItems: 'center', gap: 3 }}>
+                                <span style={{ fontSize: 9, opacity: 0.5 }}>→</span>
+                                <span style={{ fontWeight: 600, color: 'var(--text-muted)' }}>{toName}</span>
+                              </span>
+                            )}
                           </div>
-                          <p style={{ fontSize: 12, color: 'var(--text)', margin: 0, lineHeight: 1.5 }}>{a.summary}</p>
+                          <p style={{ fontSize: 12, color: 'var(--text)', margin: 0, lineHeight: 1.5 }}>{displaySummary}</p>
                         </div>
                         {/* Delete control */}
                         <div style={{ flexShrink: 0, display: 'flex', alignItems: 'flex-start', gap: 4, paddingTop: 1 }}>
@@ -756,7 +769,8 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
                           )}
                         </div>
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               )}
