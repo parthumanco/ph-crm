@@ -393,7 +393,7 @@ export default function PipelinePage({ icp = {}, refreshKey = 0, onNavigate }) {
                             ))}
                           </select>
                         </td>
-                        <td>
+                        <td style={{ whiteSpace: 'nowrap' }}>
                           <span style={{ fontSize: 12, color: isDue ? 'var(--red)' : 'var(--text-muted)', fontWeight: isDue ? 700 : 400 }}>
                             {entry.status !== 'active' ? '—' : due}
                           </span>
