@@ -2030,9 +2030,9 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
               <button
                 key={label}
                 onClick={action}
-                style={{ fontSize: 11, fontWeight: 700, padding: '5px 12px', borderRadius: 20, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-muted)', cursor: 'pointer', whiteSpace: 'nowrap', transition: 'background .12s' }}
-                onMouseEnter={e => e.currentTarget.style.background = 'var(--bg)'}
-                onMouseLeave={e => e.currentTarget.style.background = 'var(--surface)'}
+                style={{ fontSize: 11, fontWeight: 700, padding: '5px 12px', borderRadius: 20, border: '1px solid var(--accent)', background: 'transparent', color: 'var(--accent)', cursor: 'pointer', whiteSpace: 'nowrap', transition: 'background .12s, color .12s' }}
+                onMouseEnter={e => { e.currentTarget.style.background = 'var(--accent)'; e.currentTarget.style.color = '#fff'; }}
+                onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--accent)'; }}
               >{label}</button>
             ))}
           </div>
