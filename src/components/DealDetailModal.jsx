@@ -788,8 +788,7 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
 
                       {/* Recommended next action */}
                       {companyIntel.thesis_next_step && (
-                        <div style={{ padding: '10px 12px', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8, marginBottom: 8, display: 'flex', alignItems: 'flex-start', gap: 10 }}>
-                          <span style={{ fontSize: 15, flexShrink: 0 }}>🎯</span>
+                        <div style={{ padding: '10px 12px', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8, marginBottom: 8 }}>
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <div style={{ fontSize: 11, fontWeight: 700, color: '#15803d', marginBottom: 3 }}>NEXT ACTION</div>
                             <p style={{ fontSize: 12, color: '#14532d', lineHeight: 1.6, margin: '0 0 6px' }}>{companyIntel.thesis_next_step}</p>
@@ -805,8 +804,7 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
 
                       {/* Entry contact outreach hook */}
                       {companyIntel.entry_contact?.name && (
-                        <div style={{ padding: '10px 12px', background: '#ede9fe', border: '1px solid #c4b5fd', borderRadius: 8, marginBottom: 8, display: 'flex', alignItems: 'flex-start', gap: 10 }}>
-                          <span style={{ fontSize: 15, flexShrink: 0 }}>✉️</span>
+                        <div style={{ padding: '10px 12px', background: '#ede9fe', border: '1px solid #c4b5fd', borderRadius: 8, marginBottom: 8 }}>
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <div style={{ fontSize: 11, fontWeight: 700, color: '#6d28d9', marginBottom: 3 }}>
                               OUTREACH — {companyIntel.entry_contact.name}{companyIntel.entry_contact.title ? `, ${companyIntel.entry_contact.title}` : ''}
@@ -830,12 +828,9 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
 
                       {/* Positioning angle */}
                       {companyIntel.recommended_angle && (
-                        <div style={{ padding: '10px 12px', background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 8, marginBottom: 8, display: 'flex', alignItems: 'flex-start', gap: 10 }}>
-                          <span style={{ fontSize: 15, flexShrink: 0 }}>💡</span>
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{ fontSize: 11, fontWeight: 700, color: '#c2410c', marginBottom: 3 }}>POSITIONING ANGLE</div>
-                            <p style={{ fontSize: 12, color: '#7c2d12', lineHeight: 1.6, margin: 0 }}>{companyIntel.recommended_angle}</p>
-                          </div>
+                        <div style={{ padding: '10px 12px', background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 8, marginBottom: 8 }}>
+                          <div style={{ fontSize: 11, fontWeight: 700, color: '#c2410c', marginBottom: 3 }}>POSITIONING ANGLE</div>
+                          <p style={{ fontSize: 12, color: '#7c2d12', lineHeight: 1.6, margin: 0 }}>{companyIntel.recommended_angle}</p>
                         </div>
                       )}
                     </div>
