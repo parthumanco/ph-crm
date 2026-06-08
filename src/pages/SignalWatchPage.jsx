@@ -1489,7 +1489,7 @@ export default function SignalWatchPage({ onNavigate, icp, refreshKey = 0 }) {
                   <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', whiteSpace: 'nowrap' }}>Series</span>
                   <div style={{ display: 'flex', gap: 4 }}>
                     {[['all','All'],['seed','Seed'],['series_a','Series A'],['series_b','Series B'],['series_c','Series C+']].map(([v,l]) => (
-                      <button key={v} className={`filter-btn${filters.series === v ? ' active' : ''}`} style={{ padding: '4px 9px', fontSize: 11 }} onClick={() => setFilter('series', v)}>{l}</button>
+                      <button key={v} className={`filter-btn${filters.series === v ? ' active' : ''}`} onClick={() => setFilter('series', v)}>{l}</button>
                     ))}
                   </div>
                 </div>
@@ -1497,7 +1497,7 @@ export default function SignalWatchPage({ onNavigate, icp, refreshKey = 0 }) {
                   <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', whiteSpace: 'nowrap' }}>Employees</span>
                   <div style={{ display: 'flex', gap: 4 }}>
                     {[['all','All'],['1_30','1–30'],['30_100','30–100'],['100_500','100–500'],['500_plus','500+']].map(([v,l]) => (
-                      <button key={v} className={`filter-btn${filters.employees === v ? ' active' : ''}`} style={{ padding: '4px 9px', fontSize: 11 }} onClick={() => setFilter('employees', v)}>{l}</button>
+                      <button key={v} className={`filter-btn${filters.employees === v ? ' active' : ''}`} onClick={() => setFilter('employees', v)}>{l}</button>
                     ))}
                   </div>
                 </div>
@@ -1505,7 +1505,7 @@ export default function SignalWatchPage({ onNavigate, icp, refreshKey = 0 }) {
                   <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', whiteSpace: 'nowrap' }}>From Andover MA</span>
                   <div style={{ display: 'flex', gap: 4 }}>
                     {[['all','All'],['50','<50mi'],['100','<100mi'],['250','<250mi'],['500','<500mi']].map(([v,l]) => (
-                      <button key={v} className={`filter-btn${filters.distance === v ? ' active' : ''}`} style={{ padding: '4px 9px', fontSize: 11 }} onClick={() => setFilter('distance', v)}>{l}</button>
+                      <button key={v} className={`filter-btn${filters.distance === v ? ' active' : ''}`} onClick={() => setFilter('distance', v)}>{l}</button>
                     ))}
                   </div>
                 </div>
@@ -1513,7 +1513,7 @@ export default function SignalWatchPage({ onNavigate, icp, refreshKey = 0 }) {
                   <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', whiteSpace: 'nowrap' }}>ICP Score</span>
                   <div style={{ display: 'flex', gap: 4 }}>
                     {[['all','All'],['7','7+'],['5','5+'],['3','3+']].map(([v,l]) => (
-                      <button key={v} className={`filter-btn${filters.icp === v ? ' active' : ''}`} style={{ padding: '4px 9px', fontSize: 11 }} onClick={() => setFilter('icp', v)}>{l}</button>
+                      <button key={v} className={`filter-btn${filters.icp === v ? ' active' : ''}`} onClick={() => setFilter('icp', v)}>{l}</button>
                     ))}
                   </div>
                 </div>
@@ -1521,7 +1521,7 @@ export default function SignalWatchPage({ onNavigate, icp, refreshKey = 0 }) {
                   <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', whiteSpace: 'nowrap' }}>Entry Point</span>
                   <div style={{ display: 'flex', gap: 4 }}>
                     {[['all','All'],['Sprint','Sprint'],['Foundation','Foundation'],['Growth','Growth'],['Acceleration','Accel.'],['Enterprise','Enterprise']].map(([v,l]) => (
-                      <button key={v} className={`filter-btn${filters.engagement === v ? ' active' : ''}`} style={{ padding: '4px 9px', fontSize: 11 }} onClick={() => setFilter('engagement', v)}>{l}</button>
+                      <button key={v} className={`filter-btn${filters.engagement === v ? ' active' : ''}`} onClick={() => setFilter('engagement', v)}>{l}</button>
                     ))}
                   </div>
                 </div>
@@ -1529,7 +1529,7 @@ export default function SignalWatchPage({ onNavigate, icp, refreshKey = 0 }) {
                   <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', whiteSpace: 'nowrap' }}>SIG Score</span>
                   <div style={{ display: 'flex', gap: 4 }}>
                     {[['all','All'],['7','7+'],['5','5+'],['3','3+']].map(([v,l]) => (
-                      <button key={v} className={`filter-btn${filters.sig === v ? ' active' : ''}`} style={{ padding: '4px 9px', fontSize: 11 }} onClick={() => setFilter('sig', v)}>{l}</button>
+                      <button key={v} className={`filter-btn${filters.sig === v ? ' active' : ''}`} onClick={() => setFilter('sig', v)}>{l}</button>
                     ))}
                   </div>
                 </div>
@@ -1537,7 +1537,7 @@ export default function SignalWatchPage({ onNavigate, icp, refreshKey = 0 }) {
                   <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', whiteSpace: 'nowrap' }}>Deep Scan</span>
                   <div style={{ display: 'flex', gap: 4 }}>
                     {[['all','All'],['yes','Complete'],['no','Pending']].map(([v,l]) => (
-                      <button key={v} className={`filter-btn${filters.deepScan === v ? ' active' : ''}`} style={{ padding: '4px 9px', fontSize: 11 }} onClick={() => setFilter('deepScan', v)}>{l}</button>
+                      <button key={v} className={`filter-btn${filters.deepScan === v ? ' active' : ''}`} onClick={() => setFilter('deepScan', v)}>{l}</button>
                     ))}
                   </div>
                 </div>
