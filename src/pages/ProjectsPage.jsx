@@ -2182,15 +2182,29 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
           <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: '12px 14px', display: 'flex', flexDirection: 'column' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
               <div style={{ fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--text-faint)' }}>📝 Project Summary</div>
-              {activeProject.proposal_text ? (
-                <button
-                  onClick={handleGenerateSummary}
-                  disabled={summaryGenerating}
-                  style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 5, border: '1px solid var(--border)', background: 'none', color: summaryGenerating ? 'var(--text-faint)' : 'var(--text-muted)', cursor: summaryGenerating ? 'default' : 'pointer' }}
-                >{summaryGenerating ? '⏳ Generating…' : activeProject.description ? '↺ Regenerate' : '✦ Generate from proposal'}</button>
-              ) : (
-                <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>Import a proposal to auto-generate</span>
-              )}
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                {activeProject.proposal_text ? (
+                  <button
+                    onClick={handleGenerateSummary}
+                    disabled={summaryGenerating}
+                    style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 5, border: '1px solid var(--border)', background: 'none', color: summaryGenerating ? 'var(--text-faint)' : 'var(--text-muted)', cursor: summaryGenerating ? 'default' : 'pointer' }}
+                  >{summaryGenerating ? '⏳ Generating…' : activeProject.description ? '↺ Regenerate' : '✦ Generate from proposal'}</button>
+                ) : (
+                  <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>Import a proposal to auto-generate</span>
+                )}
+                {/* Clear button — shown when there's a saved summary but no proposal to regenerate from */}
+                {activeProject.description && !activeProject.proposal_text && (
+                  <button
+                    onClick={async () => {
+                      const updated = { ...activeProject, description: null };
+                      setActiveProject(updated);
+                      await upsertProject(updated);
+                    }}
+                    style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 5, border: '1px solid var(--border)', background: 'none', color: '#ef4444', cursor: 'pointer' }}
+                    title="Clear summary"
+                  >✕ Clear</button>
+                )}
+              </div>
             </div>
             {summaryError && <div style={{ fontSize: 12, color: '#ef4444', marginBottom: 6 }}>{summaryError}</div>}
             <textarea
@@ -3279,6 +3293,17 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                       {activeProject.proposal_pdf_url && (
                         <a href={activeProject.proposal_pdf_url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, fontWeight: 700, color: 'var(--accent)', textDecoration: 'none', flexShrink: 0 }}>View PDF</a>
                       )}
+                      {/* Delete legacy proposal — clears proposal_text, pdf_url, and description */}
+                      <button
+                        onClick={async () => {
+                          if (!window.confirm('Remove this proposal? The project summary will also be cleared.')) return;
+                          const updated = { ...activeProject, proposal_text: null, proposal_pdf_url: null, proposal_page_hints: null, description: null };
+                          setActiveProject(updated);
+                          await upsertProject(updated);
+                        }}
+                        style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 14, padding: '2px 4px', flexShrink: 0 }}
+                        title="Remove proposal"
+                      >✕</button>
                     </div>
                   )}
                   {/* New multi-proposal entries */}
@@ -3293,7 +3318,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                         {p.text_excerpt && <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.text_excerpt}</div>}
                         <div style={{ fontSize: 10, color: 'var(--text-faint)', marginTop: 2 }}>{new Date(p.created_at).toLocaleDateString()}</div>
                       </div>
-                      <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                      <div style={{ display: 'flex', gap: 6, flexShrink: 0, alignItems: 'center' }}>
                         {p.pdf_url && (
                           <a href={p.pdf_url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, fontWeight: 700, color: 'var(--accent)', textDecoration: 'none' }}>PDF</a>
                         )}
@@ -3307,6 +3332,22 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                             style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text-muted)', cursor: 'pointer' }}
                           >Set primary</button>
                         )}
+                        {/* Delete proposal entry */}
+                        <button
+                          onClick={async () => {
+                            if (!window.confirm('Remove this proposal?')) return;
+                            const remaining = (activeProject.proposals || []).filter((_, j) => j !== i);
+                            // If no proposals left, also clear the raw proposal_text/pdf fields
+                            const cleared = remaining.length === 0
+                              ? { proposal_text: null, proposal_pdf_url: null, proposal_page_hints: null }
+                              : {};
+                            const updated = { ...activeProject, proposals: remaining, ...cleared };
+                            setActiveProject(updated);
+                            await upsertProject(updated);
+                          }}
+                          style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 14, padding: '2px 4px', flexShrink: 0 }}
+                          title="Remove proposal"
+                        >✕</button>
                       </div>
                     </div>
                   ))}
