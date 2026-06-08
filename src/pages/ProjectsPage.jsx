@@ -3449,21 +3449,15 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                   </div>
                 )}
                 {dealCompanyIntel.recommended_angle && (
-                  <div style={{ padding: '12px 14px', background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 8, display: 'flex', gap: 10 }}>
-                    <span style={{ fontSize: 15, flexShrink: 0 }}>💡</span>
-                    <div>
-                      <div style={{ fontSize: 11, fontWeight: 700, color: '#c2410c', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 3 }}>Positioning Angle</div>
-                      <p style={{ fontSize: 12, color: '#7c2d12', lineHeight: 1.6, margin: 0 }}>{dealCompanyIntel.recommended_angle}</p>
-                    </div>
+                  <div style={{ padding: '12px 14px', background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 8 }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: '#c2410c', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 3 }}>Positioning Angle</div>
+                    <p style={{ fontSize: 12, color: '#7c2d12', lineHeight: 1.6, margin: 0 }}>{dealCompanyIntel.recommended_angle}</p>
                   </div>
                 )}
                 {dealCompanyIntel.thesis_next_step && (
-                  <div style={{ padding: '12px 14px', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8, display: 'flex', gap: 10 }}>
-                    <span style={{ fontSize: 15, flexShrink: 0 }}>🎯</span>
-                    <div>
-                      <div style={{ fontSize: 11, fontWeight: 700, color: '#15803d', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 3 }}>Next Action</div>
-                      <p style={{ fontSize: 12, color: '#14532d', lineHeight: 1.6, margin: 0 }}>{dealCompanyIntel.thesis_next_step}</p>
-                    </div>
+                  <div style={{ padding: '12px 14px', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8 }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: '#15803d', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 3 }}>Next Action</div>
+                    <p style={{ fontSize: 12, color: '#14532d', lineHeight: 1.6, margin: 0 }}>{dealCompanyIntel.thesis_next_step}</p>
                   </div>
                 )}
                 {dealCompanyIntel.research_items?.length > 0 && (
