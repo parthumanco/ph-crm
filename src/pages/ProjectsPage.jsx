@@ -2004,11 +2004,6 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
               >{label}</button>
             ))}
           </div>
-          {/* Row 2 – structural action */}
-          <button
-            onClick={handleAddMilestone}
-            style={{ fontSize: 11, fontWeight: 800, padding: '5px 14px', borderRadius: 20, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer', whiteSpace: 'nowrap' }}
-          >+ Milestone</button>
         </div>
       </div>
 
