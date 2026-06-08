@@ -842,9 +842,12 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
       fetchMilestones(activeProject.id),
       fetchProjectTasks(activeProject.id),
     ]);
+    // Filter tasks to only those whose milestone is active (same guard as loadProjectDetail)
+    const activeMsIds = new Set(fresh.map(m => m.id));
+    const visibleTasks = freshTasks.filter(t => !t.milestone_id || activeMsIds.has(t.milestone_id));
     setMilestones(fresh);
-    setTasks(freshTasks);
-    setAllTasks(prev => ({ ...prev, [activeProject.id]: freshTasks }));
+    setTasks(visibleTasks);
+    setAllTasks(prev => ({ ...prev, [activeProject.id]: visibleTasks }));
   };
 
   // ── Hard delete (permanent) ───────────────────────────────────────────────
@@ -1087,10 +1090,14 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
     try {
       await deleteProjectTask(id);
       // Re-fetch from DB to guarantee the timeline reflects the actual DB state
-      // (handles both soft-delete and hard-delete fallback paths)
+      // (handles both soft-delete and hard-delete fallback paths).
+      // Apply the same activeMsIds filter used at load time so archived-milestone
+      // tasks don't sneak back into state.
       const updated = await fetchProjectTasks(activeProject.id);
-      setTasks(updated);
-      setAllTasks(prev => ({ ...prev, [activeProject.id]: updated }));
+      const activeMsIds = new Set(milestones.map(m => m.id));
+      const visibleUpdated = updated.filter(t => !t.milestone_id || activeMsIds.has(t.milestone_id));
+      setTasks(visibleUpdated);
+      setAllTasks(prev => ({ ...prev, [activeProject.id]: visibleUpdated }));
       // Stash for in-session restore
       if (task) {
         setDeletedTasks(prev => ({

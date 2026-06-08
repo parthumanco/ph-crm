@@ -306,8 +306,9 @@ async function importNote(note, dealId, apiKey) {
 export async function syncDealMeetings(deal, apiKey, { updatedAfter } = {}) {
   if (!apiKey) throw new Error('No Granola API key configured — add one in Settings → Integrations');
 
-  const imported = [];
-  const errors   = [];
+  const imported        = [];
+  const importedNoteIds = []; // collected here so we don't rely on saveProjectMeeting returning granola_note_id
+  const errors          = [];
   const alreadyImported = await loadImportedNoteIds();
 
   let cursor = null;
@@ -330,7 +331,8 @@ export async function syncDealMeetings(deal, apiKey, { updatedAfter } = {}) {
       try {
         const meeting = await importNote(note, deal.id, apiKey);
         imported.push(meeting);
-        alreadyImported.add(note.id); // prevent double-import within the same run
+        importedNoteIds.push(note.id); // track by Granola note.id, not by saved meeting field
+        alreadyImported.add(note.id);  // prevent double-import within the same run
       } catch (e) {
         errors.push(`${note.title || note.id}: ${e.message}`);
       }
@@ -340,11 +342,9 @@ export async function syncDealMeetings(deal, apiKey, { updatedAfter } = {}) {
     pagesFetched++;
   } while (cursor && pagesFetched < 3);
 
-  // Persist the newly imported IDs
-  if (imported.length > 0) {
-    await markNotesImported(imported.map(m => m.granola_note_id).filter(Boolean));
-    // Also persist by matching the notes we processed
-    // (granola_note_id isn't on the saved meeting, so we re-fetch IDs from the run)
+  // Persist the newly imported note IDs so re-syncs don't create duplicates
+  if (importedNoteIds.length > 0) {
+    await markNotesImported(importedNoteIds);
   }
 
   return { imported, skipped: alreadyImported.size, errors };

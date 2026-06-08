@@ -40,7 +40,7 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
   const [showTranscriptImporter, setShowTranscriptImporter] = useState(false);
   const [showProposalDraft, setShowProposalDraft] = useState(false);
   const [dragOverMtgId, setDragOverMtgId] = useState(null); // id of card being hovered during drag
-  const dragMtgIdRef = useRef(null); // id of card being dragged
+  const [dragMtgId, setDragMtgId] = useState(null); // id of card being dragged (state so opacity re-renders)
   const [fileDropActive, setFileDropActive] = useState(false); // file being dragged over meeting log
   const [initialTranscript, setInitialTranscript] = useState(''); // pre-filled transcript from dropped file
   const [granolaSyncing, setGranolaSyncing] = useState(false);
@@ -371,7 +371,7 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
   };
 
   const handleMtgDrop = (targetId) => {
-    const fromId = dragMtgIdRef.current;
+    const fromId = dragMtgId;
     if (!fromId || fromId === targetId) return;
     setMeetings(prev => {
       const fromIdx  = prev.findIndex(m => m.id === fromId);
@@ -382,7 +382,7 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
       next.splice(toIdx, 0, moved);
       return next;
     });
-    dragMtgIdRef.current = null;
+    setDragMtgId(null);
     setDragOverMtgId(null);
   };
 
@@ -1057,6 +1057,7 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
                   onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget)) setFileDropActive(false); }}
                   onDrop={e => {
                     e.preventDefault();
+                    e.stopPropagation();
                     setFileDropActive(false);
                     const file = e.dataTransfer.files?.[0];
                     if (!file) return;
@@ -1131,17 +1132,17 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
                       <div
                         key={mtg.id}
                         draggable
-                        onDragStart={() => { dragMtgIdRef.current = mtg.id; }}
+                        onDragStart={() => { setDragMtgId(mtg.id); }}
                         onDragEnter={() => setDragOverMtgId(mtg.id)}
                         onDragOver={e => e.preventDefault()}
                         onDrop={() => handleMtgDrop(mtg.id)}
-                        onDragEnd={() => { dragMtgIdRef.current = null; setDragOverMtgId(null); }}
+                        onDragEnd={() => { setDragMtgId(null); setDragOverMtgId(null); }}
                         style={{
                           padding: '12px 14px',
                           background: 'var(--surface)',
                           border: dragOverMtgId === mtg.id ? '1px solid var(--accent)' : '1px solid var(--border)',
                           borderRadius: 8,
-                          opacity: dragMtgIdRef.current === mtg.id ? 0.45 : 1,
+                          opacity: dragMtgId === mtg.id ? 0.45 : 1,
                           transition: 'border-color 0.12s, opacity 0.12s',
                           cursor: 'grab',
                         }}
@@ -1798,8 +1799,47 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
         dealId={deal.id}
         owners={OWNERS}
         initialTranscript={initialTranscript}
-        onImported={({ meeting }) => {
-          setMeetings(prev => [meeting, ...prev]);
+        onImported={async ({ meeting, tasks }) => {
+          const importErrors = [];
+
+          // Re-fetch from DB so the meeting list is always in sync
+          try {
+            const updatedMeetings = await fetchDealMeetings(deal.id);
+            setMeetings(updatedMeetings);
+          } catch (e) {
+            importErrors.push('Meeting fetch failed: ' + e.message);
+            // Fallback: optimistic insert
+            if (meeting) setMeetings(prev => [meeting, ...prev]);
+          }
+
+          // Save extracted tasks to the deal's Next Steps
+          if (tasks?.length) {
+            let tasksSaved = 0;
+            for (const task of tasks) {
+              if (!task.title?.trim()) continue;
+              try {
+                await addTask({
+                  deal_id:     deal.id,
+                  company_id:  deal.company_id,
+                  title:       task.title,
+                  assigned_to: task.assigned_to || null,
+                  due_date:    task.due_date    || null,
+                });
+                tasksSaved++;
+              } catch (e) {
+                importErrors.push(`Task "${task.title.slice(0, 40)}": ${e.message}`);
+              }
+            }
+            if (tasksSaved > 0) {
+              const updatedTasks = await fetchTasks(deal.id);
+              setTasks(updatedTasks);
+            }
+          }
+
+          if (importErrors.length > 0) {
+            alert('Import issues:\n\n' + importErrors.join('\n\n'));
+          }
+
           setShowTranscriptImporter(false);
           setInitialTranscript('');
         }}
