@@ -1052,15 +1052,19 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
 
   const handleDeleteTask = async (id) => {
     const task = tasks.find(t => t.id === id);
+    // Optimistically remove from UI immediately so the row disappears on click
+    setTasks(prev => prev.filter(t => t.id !== id));
+    setAllTasks(prev => ({
+      ...prev,
+      [activeProject.id]: (prev[activeProject.id] || []).filter(t => t.id !== id),
+    }));
     try {
       await deleteProjectTask(id);
-      // Use functional updates to avoid stale-closure overwrites when
-      // multiple tasks are deleted in quick succession.
-      setTasks(prev => prev.filter(t => t.id !== id));
-      setAllTasks(prev => ({
-        ...prev,
-        [activeProject.id]: (prev[activeProject.id] || []).filter(t => t.id !== id),
-      }));
+      // Re-fetch from DB to guarantee the timeline reflects the actual DB state
+      // (handles both soft-delete and hard-delete fallback paths)
+      const updated = await fetchProjectTasks(activeProject.id);
+      setTasks(updated);
+      setAllTasks(prev => ({ ...prev, [activeProject.id]: updated }));
       // Stash for in-session restore
       if (task) {
         setDeletedTasks(prev => ({
@@ -1069,7 +1073,17 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
         }));
       }
     } catch (e) {
-      console.error('Delete task failed:', e);
+      // Restore the task in state if the DB delete failed
+      setTasks(prev => {
+        if (prev.some(t => t.id === id)) return prev; // already there
+        return task ? [...prev, task].sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0)) : prev;
+      });
+      setAllTasks(prev => {
+        const list = prev[activeProject.id] || [];
+        if (list.some(t => t.id === id)) return prev;
+        return { ...prev, [activeProject.id]: task ? [...list, task].sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0)) : list };
+      });
+      alert(`Could not delete task: ${e.message}`);
     }
   };
 
