@@ -1278,6 +1278,25 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
         }
         // Merge proposal fields into the project we'll put in state
         Object.assign(savedProj, proposalUpdate);
+
+        // Track proposal in proposals array
+        if (proposalText || proposalPdfFile) {
+          const newProposalEntry = {
+            id: crypto.randomUUID(),
+            name: `Proposal — ${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`,
+            created_at: new Date().toISOString(),
+            text_excerpt: proposalText ? proposalText.slice(0, 120) + (proposalText.length > 120 ? '…' : '') : '',
+            pdf_url: proposalUpdate.proposal_pdf_url || null,
+            primary: !(savedProj.proposals?.length),
+          };
+          const existingProposals = savedProj.proposals || [];
+          savedProj.proposals = [...existingProposals, newProposalEntry];
+          try {
+            await upsertProject({ id: savedProj.id, proposals: savedProj.proposals });
+          } catch (e) {
+            console.warn('Could not save proposals array (run migration 17):', e.message);
+          }
+        }
       } catch (proposalErr) {
         console.warn('Proposal reference not saved (run DB migrations):', proposalErr.message);
       }
@@ -1966,13 +1985,30 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
             {activeProject.end_date   && <span> → {fmtDate(activeProject.end_date)}</span>}
           </p>
         </div>
-        <div className="page-header-actions" style={{ gap: 8 }}>
-          <button className="btn" style={{ fontSize: 13 }} onClick={() => triggerFileUpload(activeProject.id)}>📎 Upload File</button>
-          <button className="btn" style={{ fontSize: 13 }} onClick={() => openLinkModal(activeProject.id)}>🔗 Add Link</button>
-          <button className="btn" style={{ fontSize: 13 }} onClick={() => setShowImporter(true)}>📋 Import Proposal</button>
-          <button className="btn" style={{ fontSize: 13 }} onClick={() => { setTranscriptDefaultMs(null); setShowTranscriptImporter(true); }}>📝 From Transcript</button>
-          <button className="btn" style={{ fontSize: 13 }} onClick={() => setShowShareModal(true)}>🌐 Client Portal</button>
-          <button className="btn btn-primary" onClick={handleAddMilestone}>+ Milestone</button>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 5, alignItems: 'flex-end' }}>
+          {/* Row 1 – content actions */}
+          <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+            {[
+              { label: '📎 Upload', action: () => triggerFileUpload(activeProject.id) },
+              { label: '🔗 Link', action: () => openLinkModal(activeProject.id) },
+              { label: '📋 Proposal', action: () => setShowImporter(true) },
+              { label: '📝 Transcript', action: () => { setTranscriptDefaultMs(null); setShowTranscriptImporter(true); } },
+              { label: '🌐 Portal', action: () => setShowShareModal(true) },
+            ].map(({ label, action }) => (
+              <button
+                key={label}
+                onClick={action}
+                style={{ fontSize: 11, fontWeight: 700, padding: '5px 12px', borderRadius: 20, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-muted)', cursor: 'pointer', whiteSpace: 'nowrap', transition: 'background .12s' }}
+                onMouseEnter={e => e.currentTarget.style.background = 'var(--bg)'}
+                onMouseLeave={e => e.currentTarget.style.background = 'var(--surface)'}
+              >{label}</button>
+            ))}
+          </div>
+          {/* Row 2 – structural action */}
+          <button
+            onClick={handleAddMilestone}
+            style={{ fontSize: 11, fontWeight: 800, padding: '5px 14px', borderRadius: 20, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer', whiteSpace: 'nowrap' }}
+          >+ Milestone</button>
         </div>
       </div>
 
@@ -2027,12 +2063,6 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
               </select>
             </div>
 
-            <button
-              onClick={handleArchiveProject}
-              style={{ marginLeft: 'auto', padding: '5px 12px', borderRadius: 6, border: `1px solid ${confirmDeleteProj ? '#ef4444' : 'var(--border)'}`, background: confirmDeleteProj ? '#fef2f2' : 'transparent', color: confirmDeleteProj ? '#ef4444' : 'var(--text-muted)', fontWeight: 700, fontSize: 11, cursor: 'pointer', transition: 'all .15s' }}
-            >
-              {confirmDeleteProj ? '⚠️ Confirm archive' : '📦 Archive project'}
-            </button>
           </div>
         </div>
 
@@ -2151,6 +2181,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
           {[
             { id: 'timeline', label: 'Timeline' },
             { id: 'activity', label: dealActivities.length > 0 ? `Activity (${dealActivities.length})` : 'Activity' },
+            { id: 'files', label: projectFiles.length > 0 ? `Files (${projectFiles.length})` : 'Files' },
             { id: 'contacts', label: 'Contacts' },
             { id: 'research', label: dealCompanyIntel?.thesis_built ? '🔬 Research ✓' : '🔬 Research' },
           ].map(t => (
@@ -2833,72 +2864,6 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
               </div>
             )}
 
-            {/* ── Project Files ─────────────────────────────────────── */}
-            {projectFiles.length > 0 && (() => {
-              const annotated = projectFiles.map(f => {
-                if (f.task_id) {
-                  const t = tasks.find(t => t.id === f.task_id);
-                  return { ...f, _context: t ? t.title : 'Task' };
-                }
-                if (f.milestone_id) {
-                  const m = milestones.find(m => m.id === f.milestone_id);
-                  return { ...f, _context: m ? m.title : 'Milestone' };
-                }
-                return { ...f, _context: null };
-              });
-              return (
-                <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: '12px 16px', marginTop: 10 }}>
-                  <div style={{ fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--text-faint)', marginBottom: 8 }}>
-                    Project Files <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>· {projectFiles.length}</span>
-                  </div>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                    {annotated.map(f => {
-                      const confirming = confirmDeleteFile === f.id;
-                      return confirming ? (
-                        <div key={f.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '4px 8px', borderRadius: 20, background: '#fef2f2', border: '1px solid #fecaca' }}>
-                          <span style={{ fontSize: 11, color: '#ef4444', fontWeight: 600, whiteSpace: 'nowrap' }}>Remove "{f.name.length > 20 ? f.name.slice(0, 20) + '…' : f.name}"?</span>
-                          <button onClick={() => handleArchiveFile(f)} style={{ fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 10, border: '1px solid #d1d5db', background: 'var(--bg)', color: 'var(--text-muted)', cursor: 'pointer', whiteSpace: 'nowrap' }}>Archive</button>
-                          <button onClick={() => handleDeleteFile(f)} style={{ fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 10, border: 'none', background: '#ef4444', color: '#fff', cursor: 'pointer', whiteSpace: 'nowrap' }}>Delete</button>
-                          <button onClick={() => setConfirmDeleteFile(null)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: 12, padding: '0 0 0 2px', lineHeight: 1 }}>✕</button>
-                        </div>
-                      ) : (
-                        <div key={f.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '4px 8px 4px 7px', borderRadius: 20, background: 'var(--bg)', border: '1px solid var(--border-light)', maxWidth: 280 }}>
-                          <span style={{ fontSize: 13, flexShrink: 0, lineHeight: 1 }}>{fileIcon(f.mime_type)}</span>
-                          <a href={f.url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, fontWeight: 600, color: 'var(--accent)', textDecoration: 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 160 }} title={f.name}>{f.name}</a>
-                          {f.size && <span style={{ fontSize: 10, color: 'var(--text-faint)', whiteSpace: 'nowrap', flexShrink: 0 }}>{fmtFileSize(f.size)}</span>}
-                          <button onClick={() => setConfirmDeleteFile(f.id)} style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 11, padding: '0 0 0 2px', flexShrink: 0, lineHeight: 1 }} title="Remove">✕</button>
-                        </div>
-                      );
-                    })}
-                  </div>
-
-                  {/* Archived files */}
-                  {archivedFiles.length > 0 && (
-                    <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--border-light)' }}>
-                      <button
-                        onClick={() => setArchivedFilesOpen(v => !v)}
-                        style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-faint)', background: 'none', border: 'none', cursor: 'pointer', padding: 0, textTransform: 'uppercase', letterSpacing: '.04em' }}
-                      >
-                        {archivedFilesOpen ? '▲' : '▼'} Archived ({archivedFiles.length})
-                      </button>
-                      {archivedFilesOpen && (
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
-                          {archivedFiles.map(f => (
-                            <div key={f.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '4px 8px 4px 7px', borderRadius: 20, background: 'var(--bg)', border: '1px solid var(--border-light)', opacity: 0.6, maxWidth: 280 }}>
-                              <span style={{ fontSize: 13, flexShrink: 0, lineHeight: 1 }}>{fileIcon(f.mime_type)}</span>
-                              <span style={{ fontSize: 11, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 140 }} title={f.name}>{f.name}</span>
-                              <button onClick={() => handleRestoreFile(f)} style={{ fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-muted)', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}>Restore</button>
-                              <button onClick={() => handleDeleteFile(f)} style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 11, padding: '0 0 0 2px', flexShrink: 0, lineHeight: 1 }} title="Delete permanently">✕</button>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              );
-            })()}
-
             {/* ── Project Estimate ──────────────────────────────────────── */}
             {tasks.length > 0 && (
               <ProjectForecast
@@ -3115,6 +3080,216 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
           </div>
         )}
 
+        {/* ── Files tab ── */}
+        {projectTab === 'files' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+
+            {/* Upload / Link CTAs */}
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button
+                onClick={() => triggerFileUpload(activeProject.id)}
+                style={{ fontSize: 12, fontWeight: 700, padding: '7px 16px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-muted)', cursor: 'pointer' }}
+              >📎 Upload File</button>
+              <button
+                onClick={() => openLinkModal(activeProject.id)}
+                style={{ fontSize: 12, fontWeight: 700, padding: '7px 16px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-muted)', cursor: 'pointer' }}
+              >🔗 Add Link</button>
+            </div>
+
+            {/* Active files */}
+            {projectFiles.length === 0 ? (
+              <div style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-faint)', fontSize: 13, border: '1px dashed var(--border)', borderRadius: 10 }}>
+                No files yet. Upload a file or add a link above.
+              </div>
+            ) : (() => {
+              const projectLevel = projectFiles.filter(f => !f.milestone_id && !f.task_id);
+              const milestoneLevel = projectFiles.filter(f => f.milestone_id && !f.task_id);
+              const taskLevel = projectFiles.filter(f => f.task_id);
+              return (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                  {projectLevel.length > 0 && (
+                    <div>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 8 }}>Project files</div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                        {projectLevel.map(f => {
+                          const confirming = confirmDeleteFile === f.id;
+                          return confirming ? (
+                            <div key={f.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8 }}>
+                              <span style={{ fontSize: 12, color: '#ef4444', fontWeight: 600, flex: 1 }}>Remove "{f.name.length > 30 ? f.name.slice(0, 30) + '…' : f.name}"?</span>
+                              <button onClick={() => handleArchiveFile(f)} style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text-muted)', cursor: 'pointer' }}>Archive</button>
+                              <button onClick={() => handleDeleteFile(f)} style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 6, border: 'none', background: '#ef4444', color: '#fff', cursor: 'pointer' }}>Delete</button>
+                              <button onClick={() => setConfirmDeleteFile(null)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: 14 }}>✕</button>
+                            </div>
+                          ) : (
+                            <div key={f.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: 'var(--bg)', border: '1px solid var(--border-light)', borderRadius: 8 }}>
+                              <span style={{ fontSize: 16, flexShrink: 0 }}>{fileIcon(f.mime_type)}</span>
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <a href={f.url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, fontWeight: 600, color: 'var(--accent)', textDecoration: 'none', display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</a>
+                                {f.size && <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>{fmtFileSize(f.size)}</span>}
+                              </div>
+                              <button onClick={() => setConfirmDeleteFile(f.id)} style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 13, padding: '2px 4px', flexShrink: 0 }} title="Remove">✕</button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                  {milestoneLevel.length > 0 && (
+                    <div>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 8 }}>Milestone files</div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                        {milestoneLevel.map(f => {
+                          const ms = milestones.find(m => m.id === f.milestone_id);
+                          const confirming = confirmDeleteFile === f.id;
+                          return (
+                            <div key={f.id}>
+                              {ms && <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', marginBottom: 2 }}>{ms.title}</div>}
+                              {confirming ? (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8 }}>
+                                  <span style={{ fontSize: 12, color: '#ef4444', fontWeight: 600, flex: 1 }}>Remove "{f.name.length > 30 ? f.name.slice(0, 30) + '…' : f.name}"?</span>
+                                  <button onClick={() => handleArchiveFile(f)} style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text-muted)', cursor: 'pointer' }}>Archive</button>
+                                  <button onClick={() => handleDeleteFile(f)} style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 6, border: 'none', background: '#ef4444', color: '#fff', cursor: 'pointer' }}>Delete</button>
+                                  <button onClick={() => setConfirmDeleteFile(null)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: 14 }}>✕</button>
+                                </div>
+                              ) : (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: 'var(--bg)', border: '1px solid var(--border-light)', borderRadius: 8 }}>
+                                  <span style={{ fontSize: 16, flexShrink: 0 }}>{fileIcon(f.mime_type)}</span>
+                                  <div style={{ flex: 1, minWidth: 0 }}>
+                                    <a href={f.url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, fontWeight: 600, color: 'var(--accent)', textDecoration: 'none', display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</a>
+                                    {f.size && <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>{fmtFileSize(f.size)}</span>}
+                                  </div>
+                                  <button onClick={() => setConfirmDeleteFile(f.id)} style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 13, padding: '2px 4px', flexShrink: 0 }} title="Remove">✕</button>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                  {taskLevel.length > 0 && (
+                    <div>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 8 }}>Task files</div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                        {taskLevel.map(f => {
+                          const task = tasks.find(t => t.id === f.task_id);
+                          const confirming = confirmDeleteFile === f.id;
+                          return (
+                            <div key={f.id}>
+                              {task && <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', marginBottom: 2 }}>{task.title}</div>}
+                              {confirming ? (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8 }}>
+                                  <span style={{ fontSize: 12, color: '#ef4444', fontWeight: 600, flex: 1 }}>Remove "{f.name.length > 30 ? f.name.slice(0, 30) + '…' : f.name}"?</span>
+                                  <button onClick={() => handleArchiveFile(f)} style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text-muted)', cursor: 'pointer' }}>Archive</button>
+                                  <button onClick={() => handleDeleteFile(f)} style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 6, border: 'none', background: '#ef4444', color: '#fff', cursor: 'pointer' }}>Delete</button>
+                                  <button onClick={() => setConfirmDeleteFile(null)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: 14 }}>✕</button>
+                                </div>
+                              ) : (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: 'var(--bg)', border: '1px solid var(--border-light)', borderRadius: 8 }}>
+                                  <span style={{ fontSize: 16, flexShrink: 0 }}>{fileIcon(f.mime_type)}</span>
+                                  <div style={{ flex: 1, minWidth: 0 }}>
+                                    <a href={f.url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, fontWeight: 600, color: 'var(--accent)', textDecoration: 'none', display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</a>
+                                    {f.size && <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>{fmtFileSize(f.size)}</span>}
+                                  </div>
+                                  <button onClick={() => setConfirmDeleteFile(f.id)} style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 13, padding: '2px 4px', flexShrink: 0 }} title="Remove">✕</button>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+
+            {/* Archived files */}
+            {archivedFiles.length > 0 && (
+              <div style={{ borderTop: '1px solid var(--border-light)', paddingTop: 12 }}>
+                <button
+                  onClick={() => setArchivedFilesOpen(v => !v)}
+                  style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-faint)', background: 'none', border: 'none', cursor: 'pointer', padding: 0, textTransform: 'uppercase', letterSpacing: '.04em' }}
+                >
+                  {archivedFilesOpen ? '▲' : '▼'} Archived ({archivedFiles.length})
+                </button>
+                {archivedFilesOpen && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 8 }}>
+                    {archivedFiles.map(f => (
+                      <div key={f.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 12px', background: 'var(--bg)', border: '1px solid var(--border-light)', borderRadius: 8, opacity: 0.6 }}>
+                        <span style={{ fontSize: 16, flexShrink: 0 }}>{fileIcon(f.mime_type)}</span>
+                        <span style={{ flex: 1, fontSize: 12, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</span>
+                        <button onClick={() => handleRestoreFile(f)} style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-muted)', cursor: 'pointer', flexShrink: 0 }}>Restore</button>
+                        <button onClick={() => handleDeleteFile(f)} style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 13, padding: '2px 4px', flexShrink: 0 }}>✕</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ── Proposals ── */}
+            <div style={{ borderTop: '1px solid var(--border)', paddingTop: 20 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                <div style={{ fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--text-faint)' }}>📋 Proposals</div>
+                <button
+                  onClick={() => setShowImporter(true)}
+                  style={{ fontSize: 11, fontWeight: 700, padding: '4px 12px', borderRadius: 20, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-muted)', cursor: 'pointer' }}
+                >+ Import Proposal</button>
+              </div>
+              {(activeProject.proposals || []).length === 0 && !activeProject.proposal_text && !activeProject.proposal_pdf_url ? (
+                <div style={{ fontSize: 12, color: 'var(--text-faint)', fontStyle: 'italic' }}>No proposals imported yet.</div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {/* Legacy single proposal (pre-multi-proposal) */}
+                  {(activeProject.proposal_text || activeProject.proposal_pdf_url) && (activeProject.proposals || []).length === 0 && (
+                    <div style={{ padding: '10px 14px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <span style={{ fontSize: 14 }}>📄</span>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: 12, fontWeight: 700 }}>Original Proposal</div>
+                        {activeProject.proposal_text && <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 2 }}>{activeProject.proposal_text.slice(0, 80)}…</div>}
+                      </div>
+                      {activeProject.proposal_pdf_url && (
+                        <a href={activeProject.proposal_pdf_url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, fontWeight: 700, color: 'var(--accent)', textDecoration: 'none', flexShrink: 0 }}>View PDF</a>
+                      )}
+                    </div>
+                  )}
+                  {/* New multi-proposal entries */}
+                  {(activeProject.proposals || []).map((p, i) => (
+                    <div key={p.id || i} style={{ padding: '10px 14px', background: 'var(--surface)', border: `1px solid ${p.primary ? 'var(--accent)' : 'var(--border)'}`, borderRadius: 8, display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <span style={{ fontSize: 14 }}>📄</span>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 12, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 6 }}>
+                          {p.name}
+                          {p.primary && <span style={{ fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 10, background: 'var(--accent)', color: '#fff' }}>Primary</span>}
+                        </div>
+                        {p.text_excerpt && <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.text_excerpt}</div>}
+                        <div style={{ fontSize: 10, color: 'var(--text-faint)', marginTop: 2 }}>{new Date(p.created_at).toLocaleDateString()}</div>
+                      </div>
+                      <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                        {p.pdf_url && (
+                          <a href={p.pdf_url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, fontWeight: 700, color: 'var(--accent)', textDecoration: 'none' }}>PDF</a>
+                        )}
+                        {!p.primary && (
+                          <button
+                            onClick={async () => {
+                              const updated = { ...activeProject, proposals: (activeProject.proposals || []).map((pr, j) => ({ ...pr, primary: j === i })) };
+                              setActiveProject(updated);
+                              await upsertProject(updated);
+                            }}
+                            style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text-muted)', cursor: 'pointer' }}
+                          >Set primary</button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+          </div>
+        )}
+
         {/* ── Contacts tab ── */}
         {projectTab === 'contacts' && (() => {
           // Merge primary contact (stored on project) with company contact_angles,
@@ -3221,6 +3396,16 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
             )}
           </div>
         )}
+
+        {/* ── Archive pill — bottom right ── */}
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 32, paddingBottom: 8 }}>
+          <button
+            onClick={handleArchiveProject}
+            style={{ fontSize: 11, fontWeight: 700, padding: '5px 14px', borderRadius: 20, border: `1px solid ${confirmDeleteProj ? '#ef4444' : 'var(--border)'}`, background: confirmDeleteProj ? '#fef2f2' : 'var(--surface)', color: confirmDeleteProj ? '#ef4444' : 'var(--text-faint)', cursor: 'pointer', transition: 'all .15s' }}
+          >
+            {confirmDeleteProj ? '⚠️ Confirm archive' : '📦 Archive project'}
+          </button>
+        </div>
 
       </div>
 
