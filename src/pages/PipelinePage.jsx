@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, Fragment } from 'react';
 import { supabase } from '../lib/supabase';
 import EmailDraftModal from '../components/EmailDraftModal';
-import { ENGAGEMENT_META, ENGAGEMENT_OPTIONS } from '../lib/anthropic';
+import { ENGAGEMENT_META, ENGAGEMENT_OPTIONS, generateQuickNextStep } from '../lib/anthropic';
 import { upsertDeal, addActivity } from '../lib/deals';
 
 const STATUS_LABELS = {
@@ -217,6 +217,20 @@ export default function PipelinePage({ icp = {}, refreshKey = 0, onNavigate }) {
           activity_date: new Date().toISOString().slice(0, 10),
           assigned_to:   'Mike',
         });
+      }
+      // Generate a quick AI next step and save to the company record
+      // Fire in background — don't block the rain animation
+      if (resolvedCompany.id) {
+        generateQuickNextStep(resolvedCompany.name, noteText, deal.notes)
+          .then(nextStep => {
+            if (nextStep) {
+              supabase.from('companies')
+                .update({ thesis_next_step: nextStep, updated_at: new Date().toISOString() })
+                .eq('id', resolvedCompany.id)
+                .then(({ error }) => { if (error) console.error('Failed to save next step:', error.message); });
+            }
+          })
+          .catch(e => console.error('generateQuickNextStep failed:', e.message));
       }
       // Mark entry as won in DB and remove from list immediately
       await supabase.from('pipeline_entries').update({ status: 'won', updated_at: new Date().toISOString() }).eq('id', entry.id);

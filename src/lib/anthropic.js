@@ -1420,6 +1420,27 @@ export async function generateProjectSummary(proposalText) {
   return text.trim();
 }
 
+export async function generateQuickNextStep(companyName, noteText, dealNotes = '') {
+  const context = [
+    noteText?.trim() ? `LATEST NOTE:\n${noteText.trim()}` : '',
+    dealNotes?.trim() && dealNotes.trim() !== noteText?.trim() ? `PRIOR CONTEXT:\n${dealNotes.trim()}` : '',
+  ].filter(Boolean).join('\n\n');
+
+  const data = await withTimeout(
+    callClaude({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 120,
+      messages: [{
+        role: 'user',
+        content: `You are a B2B sales advisor. Based on the context below for ${companyName}, write a single concrete next action for the sales rep — 1–2 sentences, specific and actionable, starting with a verb (e.g. "Send a follow-up email...", "Schedule a discovery call...", "Share the proposal..."). No preamble, no sign-off.\n\n${context}`,
+      }],
+    }),
+    15000
+  );
+  const text = (data.content || []).find(b => b.type === 'text')?.text || '';
+  return text.trim();
+}
+
 export async function generateRejectionResponse(taskTitle, projectName, rejectionNotes) {
   const data = await withTimeout(
     callClaude({
