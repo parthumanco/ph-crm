@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, Fragment } from 'react';
 import { supabase } from '../lib/supabase';
 import EmailDraftModal from '../components/EmailDraftModal';
 import { ENGAGEMENT_META, ENGAGEMENT_OPTIONS } from '../lib/anthropic';
-import { upsertDeal } from '../lib/deals';
+import { upsertDeal, addActivity } from '../lib/deals';
 
 const STATUS_LABELS = {
   active:    { label: 'Active',     cls: 'badge-blue'  },
@@ -183,25 +183,41 @@ export default function PipelinePage({ icp = {}, refreshKey = 0, onNavigate }) {
     return last ? daysSince(last.sent_date) >= 7 : true;
   }).length;
 
-  const handleCreateDeal = async (entry, company) => {
+  const handleCreateDeal = async (entry, company, freshNotes = null) => {
     const key = entry.id;
     if (creatingDeal[key]) return;
+    // Guard: company must be resolved — look it up from state if not passed correctly
+    const resolvedCompany = (company?.id ? company : companies[entry.company_id]) || company || {};
+    if (!resolvedCompany.name) { alert('Could not resolve company — please try again.'); return; }
     setCreatingDeal(p => ({ ...p, [key]: true }));
     try {
-      const primaryContact = (company.contacts || [])[0] || {};
-      // Build deal notes from outreach history so context carries into Pipeline
+      const primaryContact = (resolvedCompany.contacts || [])[0] || {};
+      // Build deal notes — freshNotes takes priority over stale entry.notes
       const noteParts = [];
-      if (entry.notes?.trim())      noteParts.push(`Outreach notes:\n${entry.notes.trim()}`);
-      if (entry.last_reply?.trim()) noteParts.push(`Prospect reply:\n${entry.last_reply.trim()}`);
+      const noteText = freshNotes ?? entry.notes;
+      if (noteText?.trim())           noteParts.push(`Outreach notes:\n${noteText.trim()}`);
+      if (entry.last_reply?.trim())   noteParts.push(`Prospect reply:\n${entry.last_reply.trim()}`);
 
-      await upsertDeal({
-        company_id:    company.id,
-        company_name:  company.name,
+      const deal = await upsertDeal({
+        company_id:    resolvedCompany.id,
+        company_name:  resolvedCompany.name,
         contact_name:  primaryContact.name  || '',
         contact_email: primaryContact.email || '',
         stage:         'outreach',
         notes:         noteParts.length ? noteParts.join('\n\n') : null,
       });
+
+      // Log note as activity so it appears in the deal's activity log
+      if (noteText?.trim() && deal?.id) {
+        await addActivity({
+          deal_id:       deal.id,
+          company_id:    resolvedCompany.id,
+          type:          'note',
+          summary:       noteText.trim(),
+          activity_date: new Date().toISOString().slice(0, 10),
+          assigned_to:   'Mike',
+        });
+      }
       // Mark entry as won in DB and remove from list immediately
       await supabase.from('pipeline_entries').update({ status: 'won', updated_at: new Date().toISOString() }).eq('id', entry.id);
       setEntries(es => es.filter(e => e.id !== entry.id));
@@ -518,12 +534,12 @@ export default function PipelinePage({ icp = {}, refreshKey = 0, onNavigate }) {
           entry={notesEntry}
           company={companies[notesEntry.company_id] || {}}
           onClose={() => setNotesEntry(null)}
-          onSave={() => {
+          onSave={(freshNotes) => {
             const entry   = notesEntry;
             const company = companies[notesEntry.company_id] || {};
             load();
             setNotesEntry(null);
-            handleCreateDeal(entry, company);
+            handleCreateDeal(entry, company, freshNotes);
           }}
         />
       )}
@@ -919,7 +935,7 @@ function NotesModal({ entry, company, onClose, onSave }) {
     try {
       const { error } = await supabase.from('pipeline_entries').update({ notes, updated_at: new Date().toISOString() }).eq('id', entry.id);
       if (error) throw new Error(error.message);
-      onSave();
+      onSave(notes);
     } catch (e) {
       alert('Error saving notes: ' + e.message);
     } finally {
