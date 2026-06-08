@@ -2179,7 +2179,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
         {/* ── Project tabs ── */}
         <div style={{ display: 'flex', gap: 0, borderBottom: '2px solid var(--border)', marginBottom: 20 }}>
           {[
-            { id: 'timeline', label: 'Project' },
+            { id: 'timeline', label: 'Tasks' },
             { id: 'activity', label: dealActivities.length > 0 ? `Activity (${dealActivities.length})` : 'Activity' },
             { id: 'files', label: projectFiles.length > 0 ? `Files (${projectFiles.length})` : 'Files' },
             { id: 'contacts', label: 'Contacts' },
