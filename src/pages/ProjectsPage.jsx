@@ -817,14 +817,25 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
     setMilestones(prev => prev.filter(m => m.id !== ms.id));
     setArchivedMilestones(prev => [{ ...ms, archived_at: new Date().toISOString() }, ...prev]);
     setShowArchivedMilestones(true);
+    // Remove the milestone's tasks from state so progress bar stays accurate
+    setTasks(prev => prev.filter(t => t.milestone_id !== ms.id));
+    setAllTasks(prev => ({
+      ...prev,
+      [activeProject.id]: (prev[activeProject.id] || []).filter(t => t.milestone_id !== ms.id),
+    }));
   };
 
   const handleRestoreMilestone = async (ms) => {
     await restoreMilestone(ms.id);
     setArchivedMilestones(prev => prev.filter(m => m.id !== ms.id));
-    // Re-fetch milestones to restore correct order
-    const fresh = await fetchMilestones(activeProject.id);
+    // Re-fetch both milestones and tasks so restored milestone's tasks come back
+    const [fresh, freshTasks] = await Promise.all([
+      fetchMilestones(activeProject.id),
+      fetchProjectTasks(activeProject.id),
+    ]);
     setMilestones(fresh);
+    setTasks(freshTasks);
+    setAllTasks(prev => ({ ...prev, [activeProject.id]: freshTasks }));
   };
 
   // ── Hard delete (permanent) ───────────────────────────────────────────────
@@ -880,6 +891,12 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
     await deleteMilestone(ms.id);
     setArchivedMilestones(prev => prev.filter(m => m.id !== ms.id));
     setConfirmHardDelete(null);
+    // Remove the milestone's tasks from state (DB cascade removes them too)
+    setTasks(prev => prev.filter(t => t.milestone_id !== ms.id));
+    setAllTasks(prev => ({
+      ...prev,
+      [activeProject.id]: (prev[activeProject.id] || []).filter(t => t.milestone_id !== ms.id),
+    }));
   };
 
   const handleHardDeleteProject = async (project) => {
