@@ -2205,7 +2205,6 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
           <div className="empty-state"><div className="spinner" /><p style={{ marginTop: 12 }}>Loading timeline…</p></div>
         ) : milestones.length === 0 ? (
           <div className="empty-state">
-            <div className="empty-icon">📅</div>
             <h3>No milestones yet</h3>
             <p>Import a proposal to auto-generate a timeline, or add milestones manually.</p>
             <div style={{ display: 'flex', gap: 8, justifyContent: 'center', marginTop: 12 }}>
