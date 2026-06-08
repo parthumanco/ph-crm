@@ -1121,24 +1121,25 @@ export default function SignalWatchPage({ onNavigate, icp, refreshKey = 0 }) {
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           {toolbarLabel('Scan')}
           {companies.length > 0 && (scanningAll || weeklyScanRunning || autoDeepQueue.length > 0) && (
-            <button className="btn btn-secondary" onClick={() => { cancelRef.current.cancelled = true; setScanningAll(false); setWeeklyScanRunning(false); setAutoDeepQueue([]); autoDeepRunning.current = false; localStorage.removeItem('ph_scan_active'); }}>
-              ⏹ Stop
+            <button className="btn btn-secondary" style={{ borderRadius: 20 }} onClick={() => { cancelRef.current.cancelled = true; setScanningAll(false); setWeeklyScanRunning(false); setAutoDeepQueue([]); autoDeepRunning.current = false; localStorage.removeItem('ph_scan_active'); }}>
+              Stop
             </button>
           )}
           {companies.length > 0 && (
-            <button className="btn btn-primary" onClick={scanAll} disabled={scanningAll || !unscannedCount}>
-              {unscannedCount ? `▶ Resume Scan (${unscannedCount} left)` : '✅ All Scanned'}
+            <button className="btn btn-primary" style={{ borderRadius: 20 }} onClick={scanAll} disabled={scanningAll || !unscannedCount}>
+              {unscannedCount ? `Resume Scan (${unscannedCount} left)` : 'All Scanned'}
             </button>
           )}
           {companies.length > 0 && (
             <div style={{ position: 'relative' }}>
               <button
                 className="btn btn-secondary"
+                style={{ borderRadius: 20 }}
                 disabled={weeklyScanRunning || scanningAll}
                 onClick={() => setRescanFilteredDropdownOpen(o => !o)}
                 title="Rescan companies matching current filters"
               >
-                {weeklyScanRunning ? <><span className="spinner" /> Scanning…</> : '🔄 Scan ▾'}
+                {weeklyScanRunning ? <><span className="spinner" /> Scanning…</> : 'Scan ▾'}
               </button>
               {rescanFilteredDropdownOpen && (
                 <>
@@ -1186,6 +1187,7 @@ export default function SignalWatchPage({ onNavigate, icp, refreshKey = 0 }) {
             {toolbarLabel('Deep')}
             <button
               className="btn btn-secondary"
+              style={{ borderRadius: 20 }}
               disabled={autoDeepQueue.length > 0 || scanningAll}
               onClick={() => {
                 const toDeep = companiesRef.current
@@ -1197,17 +1199,18 @@ export default function SignalWatchPage({ onNavigate, icp, refreshKey = 0 }) {
                 setAutoDeepProgress({ done: 0, total: toDeep.length });
               }}
             >
-              🔍 Deep Scan All
+              Deep Scan All
             </button>
             {toolbarDivider}
             <div style={{ position: 'relative' }}>
               <button
                 className="btn btn-secondary"
+                style={{ borderRadius: 20 }}
                 disabled={autoDeepQueue.length > 0 || scanningAll}
                 onClick={() => setDeepScanDropdownOpen(o => !o)}
                 title="Deep scan companies matching current filters"
               >
-                🎯 Deep Scan Filtered ▾
+                Deep Scan Filtered ▾
               </button>
               {deepScanDropdownOpen && (
                 <>
@@ -1258,26 +1261,16 @@ export default function SignalWatchPage({ onNavigate, icp, refreshKey = 0 }) {
         {/* Row 3: Data */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           {toolbarLabel('Data')}
-          <button className="btn btn-secondary" onClick={() => setShowAddForm(v => !v)}>➕ Add Company</button>
-          <button className="btn btn-secondary" onClick={() => fileInputRef.current?.click()}>📂 Import CSV</button>
+          <button className="btn btn-secondary" style={{ borderRadius: 20 }} onClick={() => setShowAddForm(v => !v)}>+ Add Company</button>
+          <button className="btn btn-secondary" style={{ borderRadius: 20 }} onClick={() => fileInputRef.current?.click()}>Import CSV</button>
           {companies.length > 0 && (
-            <button className="btn btn-secondary" onClick={exportCSV} title="Download all companies as CSV">⬇️ Export CSV</button>
-          )}
-          {!hqFillDone && companies.filter(c => !c.hq).length > 0 && (
-            <button
-              className="btn btn-secondary"
-              disabled={hqFillRunning || scanningAll || weeklyScanRunning}
-              onClick={fillMissingHq}
-              title={`Fill HQ for ${companies.filter(c => !c.hq).length} companies missing location data`}
-            >
-              {hqFillRunning ? `📍 Filling HQ… ${hqFillProgress.done}/${hqFillProgress.total}` : `📍 Fill Missing HQ (${companies.filter(c => !c.hq).length})`}
-            </button>
+            <button className="btn btn-secondary" style={{ borderRadius: 20 }} onClick={exportCSV} title="Download all companies as CSV">Export CSV</button>
           )}
           {toolbarDivider}
           {companies.length > 0 && (
-            <button className="btn btn-ghost btn-sm" onClick={clearAll} style={{ color: 'var(--red)' }} title="Delete Signal Watch companies (keeps pipeline)">🗑️ Clear All</button>
+            <button className="btn btn-ghost btn-sm" style={{ borderRadius: 20, color: 'var(--red)' }} onClick={clearAll} title="Delete Signal Watch companies (keeps pipeline)">Clear All</button>
           )}
-          <button className="btn btn-ghost btn-sm" onClick={startFresh} style={{ color: 'var(--red)', fontWeight: 700 }} title="Wipe everything and start over">⚠️ Start Fresh</button>
+          <button className="btn btn-ghost btn-sm" style={{ borderRadius: 20, color: 'var(--red)', fontWeight: 700 }} onClick={startFresh} title="Wipe everything and start over">Start Fresh</button>
         </div>
 
         <input ref={fileInputRef} type="file" accept=".csv" multiple style={{ display: 'none' }} onChange={e => handleFiles(e.target.files)} />
