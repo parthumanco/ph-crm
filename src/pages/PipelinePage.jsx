@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, Fragment } from 'react';
 import { supabase } from '../lib/supabase';
 import EmailDraftModal from '../components/EmailDraftModal';
 import { ENGAGEMENT_META, ENGAGEMENT_OPTIONS, generateQuickNextStep } from '../lib/anthropic';
-import { upsertDeal, addActivity } from '../lib/deals';
+import { upsertDeal, addActivity, addTask } from '../lib/deals';
 
 const STATUS_LABELS = {
   active:    { label: 'Active',     cls: 'badge-blue'  },
@@ -219,13 +219,24 @@ export default function PipelinePage({ icp = {}, refreshKey = 0, onNavigate }) {
         });
       }
       // Kick off AI next step early (concurrent with animation) so it lands before the card opens
-      const nextStepPromise = resolvedCompany.id
+      const nextStepPromise = (resolvedCompany.id && noteText?.trim())
         ? generateQuickNextStep(resolvedCompany.name, noteText, deal.notes)
-            .then(nextStep => {
-              if (nextStep) {
-                return supabase.from('companies')
-                  .update({ thesis_next_step: nextStep, updated_at: new Date().toISOString() })
-                  .eq('id', resolvedCompany.id);
+            .then(async nextStep => {
+              if (!nextStep) return;
+              console.log('[nextStep] generated:', nextStep);
+              // Save to company record so AI RECOMMENDED box shows it
+              await supabase.from('companies')
+                .update({ thesis_next_step: nextStep, updated_at: new Date().toISOString() })
+                .eq('id', resolvedCompany.id);
+              // Also create a real task in MY NEXT STEPS on the deal card
+              if (deal?.id) {
+                await addTask({
+                  deal_id:       deal.id,
+                  company_id:    resolvedCompany.id,
+                  title:         nextStep,
+                  due_date:      null,
+                  assigned_to:   'Mike',
+                });
               }
             })
             .catch(e => console.error('generateQuickNextStep failed:', e.message))
