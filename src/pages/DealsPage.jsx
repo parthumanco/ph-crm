@@ -419,16 +419,16 @@ export default function DealsPage({ refreshKey = 0 }) {
       )}
 
       <div className="page-header">
-        <div className="page-header-left">
-          <button className="btn btn-primary" onClick={() => { setSelectedDeal(null); setShowNewDeal(true); }}>
+        <div className="page-header-left" style={{ display: 'flex', gap: 8 }}>
+          <button className="btn btn-primary" style={{ borderRadius: 20, padding: '7px 18px' }} onClick={() => { setSelectedDeal(null); setShowNewDeal(true); }}>
             + New Deal
           </button>
           <button
             className="btn btn-secondary"
             onClick={() => setShowProspectImporter(true)}
-            style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+            style={{ borderRadius: 20, padding: '7px 18px', display: 'flex', alignItems: 'center', gap: 6 }}
           >
-            📝 Log Meeting
+            Log Meeting
           </button>
         </div>
         <div className="page-header-actions" />
