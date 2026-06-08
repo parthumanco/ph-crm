@@ -100,7 +100,12 @@ export default function PipelinePage({ icp = {}, refreshKey = 0, onNavigate }) {
   const updateStatus = useCallback(async (entryId, status) => {
     await supabase.from('pipeline_entries').update({ status, updated_at: new Date().toISOString() }).eq('id', entryId);
     setEntries(es => es.map(e => e.id === entryId ? { ...e, status } : e));
-  }, []);
+    if (status !== 'active') {
+      const entry   = entries.find(e => e.id === entryId);
+      const company = entry ? companies[entry.company_id] : null;
+      if (entry && company) handleCreateDeal(entry, company);
+    }
+  }, [entries, companies]);
 
   const updateEngagement = useCallback(async (companyId, engType) => {
     setCompanies(prev => ({ ...prev, [companyId]: { ...prev[companyId], engagement_type: engType } }));
@@ -391,16 +396,17 @@ export default function PipelinePage({ icp = {}, refreshKey = 0, onNavigate }) {
                           </span>
                         </td>
                         <td>
-                          <div style={{ display: 'flex', gap: 4 }}>
-                            <button className="btn btn-secondary btn-xs" onClick={() => setResponseModal({ entry, company })}>Log Reply</button>
-                            <button className="btn btn-ghost btn-xs" onClick={() => setNotesEntry(entry)}>Notes</button>
+                          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                            <button className="btn btn-secondary btn-xs" style={{ borderRadius: 20 }} onClick={() => setResponseModal({ entry, company })}>Log Reply</button>
+                            <button className="btn btn-ghost btn-xs" style={{ borderRadius: 20 }} onClick={() => setNotesEntry(entry)}>Notes</button>
                             <button
-                              className="btn btn-ghost btn-xs"
+                              className="btn btn-primary btn-xs"
+                              style={{ borderRadius: 20 }}
                               onClick={() => handleCreateDeal(entry, company)}
                               disabled={!!creatingDeal[entry.id]}
-                              title="Create a deal in the Deals pipeline for this company"
+                              title="Create a deal in the Pipeline"
                             >
-                              {creatingDeal[entry.id] ? '…' : '$ Deal'}
+                              {creatingDeal[entry.id] ? '…' : 'Move to Pipeline'}
                             </button>
                           </div>
                         </td>
@@ -490,7 +496,12 @@ export default function PipelinePage({ icp = {}, refreshKey = 0, onNavigate }) {
         <ResponseModal
           {...responseModal}
           onClose={() => setResponseModal(null)}
-          onSave={() => { load(); setResponseModal(null); }}
+          onSave={() => {
+            load();
+            const { entry, company } = responseModal;
+            setResponseModal(null);
+            handleCreateDeal(entry, company);
+          }}
         />
       )}
 
@@ -499,7 +510,13 @@ export default function PipelinePage({ icp = {}, refreshKey = 0, onNavigate }) {
           entry={notesEntry}
           company={companies[notesEntry.company_id] || {}}
           onClose={() => setNotesEntry(null)}
-          onSave={() => { load(); setNotesEntry(null); }}
+          onSave={() => {
+            const entry   = notesEntry;
+            const company = companies[notesEntry.company_id] || {};
+            load();
+            setNotesEntry(null);
+            handleCreateDeal(entry, company);
+          }}
         />
       )}
 
