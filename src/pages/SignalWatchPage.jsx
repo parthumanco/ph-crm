@@ -209,7 +209,7 @@ export default function SignalWatchPage({ onNavigate, icp, refreshKey = 0 }) {
           from += PAGE;
         }
         if (allData.length) {
-          const { data: pipelineEntries } = await supabase.from('pipeline_entries').select('company_id');
+          const { data: pipelineEntries } = await supabase.from('pipeline_entries').select('company_id').neq('status', 'won');
           const inPipeline = new Set((pipelineEntries || []).map(e => e.company_id));
           const loaded = allData.map(c => ({ ...c, _key: c.id }));
           setCompanies(loaded);
@@ -802,13 +802,28 @@ export default function SignalWatchPage({ onNavigate, icp, refreshKey = 0 }) {
       monday.setDate(today.getDate() - today.getDay() + 1);
       const weekStart = monday.toISOString().slice(0, 10);
 
-      const { error } = await supabase.from('pipeline_entries').insert({
-        company_id: company.id,
-        current_touch: 0,
-        status: 'active',
-        week_start: weekStart,
-      });
-      if (error && !error.message.includes('duplicate')) throw error;
+      // If a 'won' entry exists, restore it; otherwise insert fresh
+      const { data: existing } = await supabase
+        .from('pipeline_entries')
+        .select('id, status')
+        .eq('company_id', company.id)
+        .limit(1);
+
+      if (existing?.length) {
+        const { error } = await supabase
+          .from('pipeline_entries')
+          .update({ status: 'active', updated_at: new Date().toISOString() })
+          .eq('id', existing[0].id);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase.from('pipeline_entries').insert({
+          company_id: company.id,
+          current_touch: 0,
+          status: 'active',
+          week_start: weekStart,
+        });
+        if (error && !error.message.includes('duplicate')) throw error;
+      }
       setAddedToPipeline(s => ({ ...s, [company.id]: true }));
     } catch (e) {
       alert('Error adding to pipeline: ' + e.message);
