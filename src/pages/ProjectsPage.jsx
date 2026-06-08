@@ -3382,12 +3382,30 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                 {dealCompanyIntel.triggers?.length > 0 && (
                   <div>
                     <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 8 }}>Signals & Triggers</div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                      {(Array.isArray(dealCompanyIntel.triggers) ? dealCompanyIntel.triggers : []).map((tr, i) => (
-                        <div key={i} style={{ padding: '10px 12px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.5 }}>
-                          {typeof tr === 'string' ? tr : (tr.text || tr.title || JSON.stringify(tr))}
-                        </div>
-                      ))}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      {(Array.isArray(dealCompanyIntel.triggers) ? dealCompanyIntel.triggers : []).map((tr, i) => {
+                        // Triggers may arrive as JSON strings — parse them
+                        let t = tr;
+                        if (typeof tr === 'string') {
+                          try { t = JSON.parse(tr); } catch { t = { detail: tr }; }
+                        }
+                        const urgencyColor = t.urgency === 'high' ? '#dc2626' : t.urgency === 'medium' ? '#d97706' : 'var(--text-faint)';
+                        return (
+                          <div key={i} style={{ padding: '10px 14px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8 }}>
+                            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: t.detail ? 5 : 0 }}>
+                              <div style={{ flex: 1, fontSize: 12, fontWeight: 700, color: 'var(--text)', lineHeight: 1.4 }}>
+                                {t.headline || t.title || t.text || '—'}
+                              </div>
+                              <div style={{ display: 'flex', gap: 5, flexShrink: 0, alignItems: 'center' }}>
+                                {t.date && <span style={{ fontSize: 10, color: 'var(--text-faint)', whiteSpace: 'nowrap' }}>{t.date}</span>}
+                                {t.urgency && <span style={{ fontSize: 10, fontWeight: 700, color: urgencyColor, textTransform: 'uppercase', letterSpacing: '.03em' }}>{t.urgency}</span>}
+                                {t.category && <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 10, background: 'var(--bg)', border: '1px solid var(--border-light)', color: 'var(--text-muted)', textTransform: 'capitalize' }}>{t.category}</span>}
+                              </div>
+                            </div>
+                            {t.detail && <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.55 }}>{t.detail}</div>}
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
                 )}
