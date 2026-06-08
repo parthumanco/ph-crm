@@ -375,6 +375,13 @@ input[type="text"], input[type="email"], input[type="url"], input[type="date"], 
   font-family: 'Inter', inherit;
 }
 
+/* macOS Safari/Chrome ignore font-family on date/time inputs without this */
+input[type="date"], input[type="time"] {
+  -webkit-appearance: none;
+  appearance: none;
+  font-family: 'Inter', sans-serif;
+}
+
 input:focus, textarea:focus, select:focus {
   outline: none;
   border-color: var(--accent);
