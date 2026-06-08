@@ -4,6 +4,26 @@ import { parseMeetingWithAI, saveProjectMeeting, OWNERS } from '../lib/projects'
 const today = new Date().toISOString().slice(0, 10);
 
 /**
+ * Best-effort: score a task title against milestone names and return the
+ * milestone id that has the most word overlap. Falls back to the first milestone.
+ */
+function suggestMilestoneId(taskTitle, milestones) {
+  if (!milestones?.length) return '';
+  const stopWords = new Set(['the','and','for','with','that','this','from','will','have','been','are','was','our','all','can','not','but','its','your']);
+  const taskWords = taskTitle.toLowerCase().split(/\W+/).filter(w => w.length > 2 && !stopWords.has(w));
+  if (!taskWords.length) return milestones[0].id;
+  let bestId = milestones[0].id;
+  let bestScore = 0;
+  for (const ms of milestones) {
+    const msWords = ms.title.toLowerCase().split(/\W+/).filter(w => !stopWords.has(w));
+    const score = taskWords.reduce((s, tw) =>
+      s + (msWords.some(mw => mw.includes(tw) || tw.includes(mw)) ? 1 : 0), 0);
+    if (score > bestScore) { bestScore = score; bestId = ms.id; }
+  }
+  return bestId;
+}
+
+/**
  * TranscriptImporter
  *
  * Props:
@@ -64,9 +84,14 @@ export default function TranscriptImporter({ projectId, dealId, milestones = [],
       setItems(
         (result.action_items || []).map(ai => ({
           ...ai,
-          selected:    true,
-          milestoneId: (isDealMode || isProspectMode) ? '' : (defaultMsId || (milestones[0]?.id ?? '')),
-          owner:       ai.owner && owners.includes(ai.owner) ? ai.owner : '',
+          selected:         true,
+          // In project mode: use the explicit defaultMsId (per-milestone entry point) if set,
+          // otherwise auto-suggest the best milestone based on keyword overlap.
+          milestoneId:      (isDealMode || isProspectMode)
+            ? ''
+            : (defaultMsId || suggestMilestoneId(ai.title, milestones)),
+          owner:            ai.owner && owners.includes(ai.owner) ? ai.owner : '',
+          estimated_hours:  '',
         }))
       );
       setStep('preview');
@@ -96,16 +121,18 @@ export default function TranscriptImporter({ projectId, dealId, milestones = [],
       // Build tasks for each selected action item
       const now = new Date().toISOString();
       const tasks = selectedItems.map(it => ({
-        id:           crypto.randomUUID(),
-        project_id:   projectId,
-        milestone_id: it.milestoneId || null,
-        title:        it.title,
-        assigned_to:  it.owner || null,
-        due_date:     it.due_date || null,
-        notes:        it.notes || null,
-        completed:    false,
-        order_index:  999,
-        created_at:   now,
+        id:               crypto.randomUUID(),
+        project_id:       projectId,
+        milestone_id:     it.milestoneId || null,
+        title:            it.title,
+        assigned_to:      it.owner || null,
+        due_date:         it.due_date || null,
+        notes:            it.notes || null,
+        estimated_hours:  it.estimated_hours !== '' && it.estimated_hours != null
+                            ? parseFloat(it.estimated_hours) : null,
+        completed:        false,
+        order_index:      999,
+        created_at:       now,
       }));
 
       // Save meeting record
@@ -343,6 +370,23 @@ export default function TranscriptImporter({ projectId, dealId, milestones = [],
                               style={{ fontSize: 12, padding: '4px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)' }}
                             />
                           </div>
+
+                          {/* Estimated hours — project mode only */}
+                          {!isDealMode && !isProspectMode && (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                              <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em' }}>Hrs</label>
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.5"
+                                value={it.estimated_hours}
+                                onChange={e => updateItem(i, { estimated_hours: e.target.value })}
+                                disabled={!it.selected}
+                                placeholder="—"
+                                style={{ fontSize: 12, padding: '4px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', width: 64 }}
+                              />
+                            </div>
+                          )}
 
                         </div>
                       </div>
