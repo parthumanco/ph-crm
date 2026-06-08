@@ -2256,6 +2256,12 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
         </div>
 
         {projectTab === 'timeline' && (<>
+        {activeProject.internal_notes && (
+          <div style={{ marginBottom: 16, padding: '10px 14px', background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: 8, display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+            <span style={{ fontSize: 14, flexShrink: 0, marginTop: 1 }}>📌</span>
+            <div style={{ fontSize: 12, color: '#92400e', lineHeight: 1.65, whiteSpace: 'pre-wrap', flex: 1 }}>{activeProject.internal_notes}</div>
+          </div>
+        )}
         {loadingDetail ? (
           <div className="empty-state"><div className="spinner" /><p style={{ marginTop: 12 }}>Loading timeline…</p></div>
         ) : milestones.length === 0 ? (
@@ -3037,6 +3043,19 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
         {/* ── Activity tab ── */}
         {projectTab === 'activity' && (
           <div>
+            {/* ── Project Notes ── */}
+            <div style={{ marginBottom: 24 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 6 }}>Project Notes</div>
+              <textarea
+                value={activeProject.internal_notes || ''}
+                onChange={e => setActiveProject(p => ({ ...p, internal_notes: e.target.value }))}
+                onBlur={handleSaveProject}
+                placeholder="Internal notes — context, client quirks, scope considerations, things to remember before communicating…"
+                rows={4}
+                style={{ width: '100%', fontSize: 13, lineHeight: 1.65, resize: 'vertical' }}
+              />
+            </div>
+
             {dealTasks.filter(t => !t.completed).length > 0 && (
               <div style={{ marginBottom: 20 }}>
                 <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 8 }}>Open Next Steps</div>
@@ -3757,6 +3776,17 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
 
               {portalUrl && <div style={{ marginTop: 12, fontSize: 11, color: 'var(--text-faint)', textAlign: 'right' }}>💡 Once Gmail opens, paste to drop in the styled message</div>}
 
+              {/* Project notes — shown as context before sending */}
+              {project.internal_notes && (
+                <div style={{ marginTop: 12, padding: '9px 12px', background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: 7, display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                  <span style={{ fontSize: 13, flexShrink: 0 }}>📌</span>
+                  <div>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: '#92400e', textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 3 }}>Project Notes</div>
+                    <div style={{ fontSize: 12, color: '#92400e', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>{project.internal_notes}</div>
+                  </div>
+                </div>
+              )}
+
               {/* Footer */}
               <div style={{ display: 'flex', alignItems: 'center', marginTop: 14, gap: 10 }}>
                 {/* Approve internally escape hatch */}
@@ -3920,6 +3950,16 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
               {portalUrl && (
                 <div style={{ marginTop: 14, fontSize: 11, color: 'var(--text-faint)', textAlign: 'right' }}>
                   💡 Once Gmail opens, just paste to drop in the styled message
+                </div>
+              )}
+              {/* Project notes — shown as context before sending */}
+              {project?.internal_notes && (
+                <div style={{ marginTop: 12, padding: '9px 12px', background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: 7, display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                  <span style={{ fontSize: 13, flexShrink: 0 }}>📌</span>
+                  <div>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: '#92400e', textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 3 }}>Project Notes</div>
+                    <div style={{ fontSize: 12, color: '#92400e', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>{project.internal_notes}</div>
+                  </div>
                 </div>
               )}
               <div style={{ display: 'flex', gap: 10, marginTop: 8, justifyContent: 'flex-end' }}>
