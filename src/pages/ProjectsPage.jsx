@@ -697,14 +697,13 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
   };
 
   const handleSelectContact = async (e) => {
-    const idx = parseInt(e.target.value, 10);
-    if (isNaN(idx)) return;
+    const val = e.target.value;
+    if (!val) return;
     e.target.value = '';
-    const company = projectCompany;
-    if (!company) return;
-    const picked = (company.contacts || [])[idx];
-    if (!picked) return;
-    const already = (activeProject.contacts || []).some(c => c.name === picked.name);
+    let picked;
+    try { picked = JSON.parse(val); } catch { return; }
+    if (!picked?.name) return;
+    const already = (activeProject.contacts || []).some(c => c.name?.toLowerCase() === picked.name.toLowerCase());
     if (already) return;
     await saveProjectContacts([...(activeProject.contacts || []), { name: picked.name, title: picked.title || '', email: picked.email || '' }]);
   };
@@ -2147,21 +2146,35 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
               ))}
             </div>
 
-            {/* Dropdown — contacts from this company */}
-            {!addingContact && (
-              projectCompany ? (
-                <select onChange={handleSelectContact} defaultValue="" style={{ fontSize: 12, padding: '4px 8px', width: '100%', color: 'var(--text-muted)' }}>
-                  <option value="" disabled>Add contact from {projectCompany.name}…</option>
-                  {(projectCompany.contacts || []).map((c, i) => (
-                    <option key={i} value={i}>{c.name}{c.title ? ` — ${c.title}` : ''}</option>
+            {/* Dropdown — contacts from company card + deal research, merged */}
+            {!addingContact && (() => {
+              // Build merged pool: company card contacts + deal research contact_angles
+              const pool = new Map();
+              (projectCompany?.contacts || []).forEach(c => {
+                if (c.name?.trim()) pool.set(c.name.trim().toLowerCase(), { name: c.name.trim(), title: c.title || '', email: c.email || '' });
+              });
+              (dealCompanyIntel?.contact_angles || []).forEach(c => {
+                if (!c.name?.trim()) return;
+                const key = c.name.trim().toLowerCase();
+                const existing = pool.get(key) || {};
+                pool.set(key, { name: c.name.trim(), title: c.title || existing.title || '', email: c.email || existing.email || '' });
+              });
+              // Remove already-added contacts
+              const added = new Set((activeProject.contacts || []).map(c => c.name?.trim().toLowerCase()));
+              const available = Array.from(pool.values()).filter(c => !added.has(c.name.toLowerCase()));
+              const sourceName = projectCompany?.name || activeProject.client_name;
+              if (!sourceName && available.length === 0) {
+                return <div style={{ fontSize: 11, color: 'var(--text-faint)', fontStyle: 'italic' }}>Set a client name to load contacts</div>;
+              }
+              return (
+                <select onChange={handleSelectContact} value="" style={{ fontSize: 12, padding: '4px 8px', width: '100%', color: 'var(--text-muted)' }}>
+                  <option value="" disabled>Add contact{sourceName ? ` from ${sourceName}` : ''}…</option>
+                  {available.map((c, i) => (
+                    <option key={i} value={JSON.stringify(c)}>{c.name}{c.title ? ` — ${c.title}` : ''}</option>
                   ))}
                 </select>
-              ) : (
-                <div style={{ fontSize: 11, color: 'var(--text-faint)', fontStyle: 'italic' }}>
-                  {activeProject.client_name ? `No company card found for "${activeProject.client_name}"` : 'Set a client name to load contacts'}
-                </div>
-              )
-            )}
+              );
+            })()}
 
             {/* Add new contact form */}
             {addingContact && (
