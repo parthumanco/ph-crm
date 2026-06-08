@@ -138,6 +138,30 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
     setSaving(true);
     try {
       const saved = await upsertDeal(deal);
+      // If stage moved back to an early stage, restore the pipeline entry so the
+      // company reappears in Active Outreach without needing the ↩ button
+      if (['prospect', 'outreach', 'responded'].includes(deal.stage) && deal.company_id) {
+        const { data: existing } = await supabase
+          .from('pipeline_entries')
+          .select('id, status')
+          .eq('company_id', deal.company_id)
+          .limit(1);
+        if (existing?.length) {
+          if (existing[0].status === 'won') {
+            await supabase.from('pipeline_entries')
+              .update({ status: 'active', updated_at: new Date().toISOString() })
+              .eq('id', existing[0].id);
+          }
+        } else {
+          await supabase.from('pipeline_entries').insert({
+            company_id: deal.company_id,
+            status: 'active',
+            notes: deal.notes || null,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          });
+        }
+      }
       onSaved(saved);
       onClose();
     } catch (e) {
