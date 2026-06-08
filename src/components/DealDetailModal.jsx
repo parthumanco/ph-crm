@@ -673,7 +673,7 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
                   { id: 'nextsteps',  label: openTasks.length > 0 ? `Next Steps (${openTasks.length})` : 'Next Steps' },
                   { id: 'activities', label: 'Activity' },
                   { id: 'meetings',   label: meetings.length > 0 ? `Meetings (${meetings.length})` : 'Meetings' },
-                  { id: 'research',   label: companyIntel?.thesis_built ? '🔬 Research ✓' : '🔬 Research' },
+                  { id: 'research',   label: 'Research' },
                   { id: 'contacts',   label: 'Contacts' },
                 ].map(t => (
                   <button
