@@ -2269,8 +2269,8 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
             <h3>No milestones yet</h3>
             <p>Import a proposal to auto-generate a timeline, or add milestones manually.</p>
             <div style={{ display: 'flex', gap: 8, justifyContent: 'center', marginTop: 12 }}>
-              <button className="btn" onClick={() => setShowImporter(true)}>📋 Import Proposal</button>
-              <button className="btn btn-primary" onClick={handleAddMilestone}>+ Add Milestone</button>
+              <button className="btn" onClick={() => setShowImporter(true)} style={{ borderRadius: 20, padding: '7px 18px' }}>Import Proposal</button>
+              <button className="btn btn-primary" onClick={handleAddMilestone} style={{ borderRadius: 20, padding: '7px 18px' }}>+ Add Milestone</button>
             </div>
           </div>
         ) : (<>
