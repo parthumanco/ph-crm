@@ -2021,11 +2021,11 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
           {/* Row 1 – content actions */}
           <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
             {[
-              { label: '📎 Upload', action: () => triggerFileUpload(activeProject.id) },
-              { label: '🔗 Link', action: () => openLinkModal(activeProject.id) },
-              { label: '📋 Proposal', action: () => setShowImporter(true) },
-              { label: '📝 Transcript', action: () => { setTranscriptDefaultMs(null); setShowTranscriptImporter(true); } },
-              { label: '🌐 Portal', action: () => setShowShareModal(true) },
+              { label: 'Upload File', action: () => triggerFileUpload(activeProject.id) },
+              { label: 'Insert Link', action: () => openLinkModal(activeProject.id) },
+              { label: '+ Proposal', action: () => setShowImporter(true) },
+              { label: '+ Transcript', action: () => { setTranscriptDefaultMs(null); setShowTranscriptImporter(true); } },
+              { label: 'Client Portal', action: () => setShowShareModal(true) },
             ].map(({ label, action }) => (
               <button
                 key={label}
