@@ -196,6 +196,9 @@ export default function PipelinePage({ icp = {}, refreshKey = 0, onNavigate }) {
         contact_email: primaryContact.email || '',
         stage: 'outreach',
       });
+      // Mark entry as won in DB and remove from list immediately
+      await supabase.from('pipeline_entries').update({ status: 'won', updated_at: new Date().toISOString() }).eq('id', entry.id);
+      setEntries(es => es.filter(e => e.id !== entry.id));
       // Phase 1: character grabs bills
       setRainAnim({ company: company.name, phase: 'grip' });
       // Phase 2: throw + rain
