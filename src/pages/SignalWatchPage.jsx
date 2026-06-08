@@ -1852,19 +1852,19 @@ function CompanyCard({ company, distMiles, status, isScanning, scanningAll, week
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexShrink: 0 }}>
           {hasResult && (
             <>
-              <span className="score-badge" style={{ background: sc + '22', color: sc, borderColor: sc }}>SIG {company.overall_score}/10</span>
+              <span style={{ fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 20, background: sc + '22', color: sc, border: `1px solid ${sc}` }}>SIG {company.overall_score}/10</span>
               {company.icp_score && (
-                <span className="score-badge" style={{ background: scoreColor(company.icp_score) + '22', color: scoreColor(company.icp_score), borderColor: scoreColor(company.icp_score) }}>
+                <span style={{ fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 20, background: scoreColor(company.icp_score) + '22', color: scoreColor(company.icp_score), border: `1px solid ${scoreColor(company.icp_score)}` }}>
                   ICP {company.icp_score}/10
                 </span>
               )}
             </>
           )}
           {isQueued && (
-            <span style={{ fontSize: 10, fontWeight: 700, color: '#92400e', background: '#fef3c7', padding: '2px 7px', borderRadius: 4 }}>⏳ Queued</span>
+            <span style={{ fontSize: 10, fontWeight: 700, color: '#92400e', background: '#fef3c7', padding: '3px 10px', borderRadius: 20, border: '1px solid #fde047' }}>Queued</span>
           )}
           {isDone && (
-            <span style={{ fontSize: 10, fontWeight: 700, color: '#15803d', background: '#dcfce7', padding: '2px 7px', borderRadius: 4 }}>✓ Done</span>
+            <span style={{ fontSize: 10, fontWeight: 700, color: '#15803d', background: '#dcfce7', padding: '3px 10px', borderRadius: 20, border: '1px solid #86efac' }}>Done</span>
           )}
           {(isScanning || status === 'Scanning…') && (
             <span style={{ fontSize: 11, color: 'var(--accent)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 4 }}>
@@ -1873,17 +1873,17 @@ function CompanyCard({ company, distMiles, status, isScanning, scanningAll, week
           )}
           <button
             className="btn btn-sm"
-            style={company.deep_scanned ? { background: '#fef08a', color: '#854d0e', border: '1px solid #fde047' } : {}}
+            style={{ borderRadius: 20, ...(company.deep_scanned ? { background: '#fef08a', color: '#854d0e', border: '1px solid #fde047' } : {}) }}
             onClick={e => { e.stopPropagation(); onScan(); }}
             disabled={isScanning}
           >
-            {isScanning ? <><span className="spinner" /> Scanning…</> : '🔍 Deep Scan'}
+            {isScanning ? <><span className="spinner" /> Scanning…</> : 'Deep Scan'}
           </button>
           {hasResult && (
             isAddedToPipeline ? (
-              <button className="btn btn-ghost btn-sm" onClick={e => { e.stopPropagation(); onNavigatePipeline(); }}>✅ In Prospects →</button>
+              <button className="btn btn-ghost btn-sm" style={{ borderRadius: 20 }} onClick={e => { e.stopPropagation(); onNavigatePipeline(); }}>In Prospects →</button>
             ) : (
-              <button className="btn btn-green btn-sm" onClick={e => { e.stopPropagation(); onAddToPipeline(); }} disabled={isAddingToPipeline}>
+              <button className="btn btn-green btn-sm" style={{ borderRadius: 20 }} onClick={e => { e.stopPropagation(); onAddToPipeline(); }} disabled={isAddingToPipeline}>
                 {isAddingToPipeline ? <><span className="spinner" /> Adding…</> : '+ Add to Prospects'}
               </button>
             )
