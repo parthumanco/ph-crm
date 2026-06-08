@@ -13,7 +13,8 @@ import {
   projColor, projLabel, msColor, msLabel,
   daysBetween, addDays, projectProgress, fmtDate,
 } from '../lib/projects';
-import { fetchDeals } from '../lib/deals';
+import { fetchDeals, fetchActivities, addActivity, fetchTasks, ACTIVITY_TYPES } from '../lib/deals';
+import { fetchCompanyIntel } from '../lib/clients';
 import ProposalImporter from '../components/ProposalImporter';
 import TranscriptImporter from '../components/TranscriptImporter';
 
@@ -388,7 +389,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
   const [newTaskMs, setNewTaskMs]           = useState(null);        // ms id for new task row
   const [newTaskTitle, setNewTaskTitle]     = useState('');
   const [showNewProject, setShowNewProject] = useState(false);
-  const [newProj, setNewProj]               = useState({ name: '', client_name: '', contact_name: '', status: 'active', start_date: new Date().toISOString().slice(0, 10), end_date: '', description: '' });
+  const [newProj, setNewProj]               = useState({ name: '', client_name: '', contact_name: '', status: 'active', start_date: new Date().toISOString().slice(0, 10), end_date: '', description: '', source_deal_id: '' });
   const [savingProj, setSavingProj]         = useState(false);
   const [projError, setProjError]           = useState('');
   const [confirmDeleteProj, setConfirmDeleteProj] = useState(false);
@@ -445,6 +446,15 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
   };
   const [showEstimate, setShowEstimate]           = useState(false);
   const [proposalPanel, setProposalPanel]         = useState(null); // { task } | null
+
+  // Deal-context tabs state
+  const [projectTab, setProjectTab]               = useState('timeline');
+  const [dealActivities, setDealActivities]       = useState([]);
+  const [dealTasks, setDealTasks]                 = useState([]);
+  const [dealCompanyIntel, setDealCompanyIntel]   = useState(null);
+  const [addingDealAct, setAddingDealAct]         = useState(false);
+  const [dealActForm, setDealActForm]             = useState({ type: 'call', summary: '', activity_date: new Date().toISOString().slice(0,10), assigned_to: 'Mike' });
+  const [savingDealAct, setSavingDealAct]         = useState(false);
 
   // File state
   const [projectFiles, setProjectFiles]         = useState([]);
@@ -566,6 +576,11 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
     setMeetings([]);
     setMeetingsExpanded(false);
     setShowTranscript(null);
+    setProjectTab('timeline');
+    setDealActivities([]);
+    setDealTasks([]);
+    setDealCompanyIntel(null);
+    setAddingDealAct(false);
     setShareToken(project.share_token || '');
     setSharePassword(project.portal_password || '');
     setShareClientEmail(project.client_email || '');
@@ -596,6 +611,22 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
       setProjectFiles(files);
       setArchivedFiles(archivedF);
       setMeetings(mtgs);
+      // Load deal context if linked
+      if (project.source_deal_id) {
+        Promise.all([
+          fetchActivities(project.source_deal_id),
+          fetchTasks(project.source_deal_id),
+        ]).then(([acts, tsks]) => {
+          setDealActivities(acts || []);
+          setDealTasks(tsks || []);
+        }).catch(() => {});
+      }
+      // Load company intel by name (works with or without source_deal_id)
+      if (project.client_name) {
+        fetchCompanyIntel(project.client_name).then(intel => {
+          if (intel) setDealCompanyIntel(intel);
+        }).catch(() => {});
+      }
     } catch (e) {
       console.error('Failed to load project detail:', e);
       // Try loading milestones and tasks independently so a single failure
@@ -632,7 +663,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
       const saved = await upsertProject(newProj);
       await loadAll();
       setShowNewProject(false);
-      setNewProj({ name: '', client_name: '', contact_name: '', status: 'active', start_date: new Date().toISOString().slice(0, 10), end_date: '', description: '' });
+      setNewProj({ name: '', client_name: '', contact_name: '', status: 'active', start_date: new Date().toISOString().slice(0, 10), end_date: '', description: '', source_deal_id: '' });
       openProject(saved);
     } catch (e) {
       setProjError(e.message || 'Failed to save project. Check Supabase RLS is disabled on the projects table.');
@@ -1023,9 +1054,13 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
     const task = tasks.find(t => t.id === id);
     try {
       await deleteProjectTask(id);
-      const updated = tasks.filter(t => t.id !== id);
-      setTasks(updated);
-      setAllTasks(prev => ({ ...prev, [activeProject.id]: updated }));
+      // Use functional updates to avoid stale-closure overwrites when
+      // multiple tasks are deleted in quick succession.
+      setTasks(prev => prev.filter(t => t.id !== id));
+      setAllTasks(prev => ({
+        ...prev,
+        [activeProject.id]: (prev[activeProject.id] || []).filter(t => t.id !== id),
+      }));
       // Stash for in-session restore
       if (task) {
         setDeletedTasks(prev => ({
@@ -1262,9 +1297,19 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
   const handleTranscriptImported = async ({ meeting, tasks: newTasks }) => {
     setShowTranscriptImporter(false);
     setTranscriptDefaultMs(null);
-    // Prepend new meeting to log
-    setMeetings(prev => [meeting, ...prev]);
-    if (newTasks.length === 0) return;
+
+    // Re-fetch meetings from DB so we always show what's actually saved
+    try {
+      const updatedMeetings = await fetchProjectMeetings(activeProject.id);
+      setMeetings(updatedMeetings);
+      if (updatedMeetings.length > 0) setMeetingsExpanded(true);
+    } catch {
+      // Fallback to optimistic insert
+      if (meeting) { setMeetings(prev => [meeting, ...prev]); setMeetingsExpanded(true); }
+    }
+
+    if (!newTasks?.length) return;
+
     // Insert tasks into DB
     try {
       const { data: inserted, error } = await supabase
@@ -1272,13 +1317,23 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
         .insert(newTasks)
         .select();
       if (error) throw error;
-      setTasks(prev => [...prev, ...(inserted || newTasks)]);
+      const savedTasks = inserted || newTasks;
+      setTasks(prev => [...prev, ...savedTasks]);
       setAllTasks(prev => ({
         ...prev,
-        [activeProject.id]: [...(prev[activeProject.id] || []), ...(inserted || newTasks)],
+        [activeProject.id]: [...(prev[activeProject.id] || []), ...savedTasks],
       }));
+      // Auto-expand any milestones that received new tasks
+      const newMsIds = new Set(savedTasks.map(t => t.milestone_id).filter(Boolean));
+      if (newMsIds.size > 0) {
+        setExpanded(prev => {
+          const next = { ...prev };
+          newMsIds.forEach(id => { next[id] = true; });
+          return next;
+        });
+      }
     } catch (e) {
-      console.error('Failed to insert transcript tasks:', e);
+      alert('Failed to save tasks from transcript: ' + e.message);
     }
   };
 
@@ -1829,7 +1884,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                     defaultValue=""
                     onChange={e => {
                       const d = wonDeals.find(x => x.id === e.target.value);
-                      if (d) setNewProj(p => ({ ...p, client_name: d.company_name || '', contact_name: d.contact_name || '' }));
+                      if (d) setNewProj(p => ({ ...p, client_name: d.company_name || '', contact_name: d.contact_name || '', source_deal_id: e.target.value }));
                     }}
                   >
                     <option value="">Select client…</option>
@@ -2077,6 +2132,30 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
           </div>
         </div>
 
+        {/* ── Project tabs ── */}
+        <div style={{ display: 'flex', gap: 0, borderBottom: '2px solid var(--border)', marginBottom: 20 }}>
+          {[
+            { id: 'timeline', label: 'Timeline' },
+            { id: 'activity', label: dealActivities.length > 0 ? `Activity (${dealActivities.length})` : 'Activity' },
+            { id: 'contacts', label: 'Contacts' },
+            { id: 'research', label: dealCompanyIntel?.thesis_built ? '🔬 Research ✓' : '🔬 Research' },
+          ].map(t => (
+            <button
+              key={t.id}
+              onClick={() => setProjectTab(t.id)}
+              style={{
+                padding: '8px 16px', fontSize: 12, fontWeight: 700,
+                background: 'none', border: 'none',
+                borderBottom: projectTab === t.id ? '2px solid var(--accent)' : '2px solid transparent',
+                marginBottom: -2, cursor: 'pointer',
+                color: projectTab === t.id ? 'var(--accent)' : 'var(--text-muted)',
+                whiteSpace: 'nowrap',
+              }}
+            >{t.label}</button>
+          ))}
+        </div>
+
+        {projectTab === 'timeline' && (<>
         {loadingDetail ? (
           <div className="empty-state"><div className="spinner" /><p style={{ marginTop: 12 }}>Loading timeline…</p></div>
         ) : milestones.length === 0 ? (
@@ -2821,15 +2900,14 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
             )}
 
             {/* ── Meetings log ──────────────────────────────────────── */}
-            {meetings.length > 0 && (
-              <div style={{ border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
+            <div style={{ border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
                 {/* Header */}
                 <button
                   onClick={() => setMeetingsExpanded(v => !v)}
                   style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '14px 18px', background: 'var(--surface)', border: 'none', cursor: 'pointer', textAlign: 'left' }}
                 >
                   <span style={{ fontSize: 14, fontWeight: 800, color: 'var(--text)', flex: 1 }}>
-                    📝 Meeting Log <span style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-faint)', marginLeft: 6 }}>{meetings.length} meeting{meetings.length !== 1 ? 's' : ''}</span>
+                    📝 Meeting Log {meetings.length > 0 && <span style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-faint)', marginLeft: 6 }}>{meetings.length} meeting{meetings.length !== 1 ? 's' : ''}</span>}
                   </span>
                   <button
                     onClick={e => { e.stopPropagation(); setTranscriptDefaultMs(null); setShowTranscriptImporter(true); }}
@@ -2840,6 +2918,17 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
 
                 {meetingsExpanded && (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+                    {meetings.length === 0 && (
+                      <div style={{ padding: '20px 18px', textAlign: 'center', color: 'var(--text-faint)', fontSize: 12 }}>
+                        No meetings logged yet.
+                        <div style={{ marginTop: 8 }}>
+                          <button
+                            onClick={() => { setTranscriptDefaultMs(null); setShowTranscriptImporter(true); }}
+                            className="btn btn-secondary btn-sm"
+                          >📝 Add first meeting</button>
+                        </div>
+                      </div>
+                    )}
                     {meetings.map((mtg, mi) => (
                       <div key={mtg.id} style={{ padding: '16px 18px', borderTop: '1px solid var(--border-light)', background: 'var(--bg)' }}>
                         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: mtg.summary ? 8 : 0 }}>
@@ -2898,7 +2987,6 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                   </div>
                 )}
               </div>
-            )}
 
             {/* Add milestone footer */}
             <button
@@ -2911,6 +2999,215 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
             </button>
           </div>
         </>)}
+        </>)}
+
+        {/* ── Activity tab ── */}
+        {projectTab === 'activity' && (
+          <div>
+            {dealTasks.filter(t => !t.completed).length > 0 && (
+              <div style={{ marginBottom: 20 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 8 }}>Open Next Steps</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {dealTasks.filter(t => !t.completed).map(t => (
+                    <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: 'var(--surface)', borderRadius: 6, border: '1px solid var(--border)' }}>
+                      <span style={{ fontSize: 13, color: 'var(--text)', flex: 1 }}>{t.title}</span>
+                      {t.due_date && <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>{t.due_date}</span>}
+                      {t.assigned_to && <span style={{ fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 3, background: t.assigned_to === 'Mike' ? '#f3e8ff' : '#eff6ff', color: t.assigned_to === 'Mike' ? '#7c3aed' : '#1d4ed8' }}>{t.assigned_to}</span>}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Meeting log shortcut */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+              <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em' }}>
+                Meeting Log {meetings.length > 0 && <span style={{ fontWeight: 500, color: 'var(--text-faint)' }}>({meetings.length})</span>}
+              </span>
+              <button className="btn btn-secondary btn-xs" onClick={() => { setTranscriptDefaultMs(null); setShowTranscriptImporter(true); }}>+ Add Meeting</button>
+            </div>
+            {meetings.length === 0 ? (
+              <p style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 20, textAlign: 'center', padding: '12px 0' }}>No meetings logged yet.</p>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 20 }}>
+                {meetings.map(mtg => (
+                  <div key={mtg.id} style={{ padding: '12px 14px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>{mtg.title}</div>
+                    {mtg.meeting_date && <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 2 }}>{new Date(mtg.meeting_date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'long', day: 'numeric', year: 'numeric' })}</div>}
+                    {mtg.summary && <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6, marginTop: 6 }}>{mtg.summary}</div>}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+              <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em' }}>Activity Log</span>
+              {activeProject.source_deal_id && (
+                <button className="btn btn-secondary btn-xs" onClick={() => setAddingDealAct(a => !a)}>+ Log Activity</button>
+              )}
+            </div>
+
+            {addingDealAct && activeProject.source_deal_id && (
+              <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: 12, marginBottom: 12 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 8 }}>
+                  <select value={dealActForm.type} onChange={e => setDealActForm(f => ({ ...f, type: e.target.value }))} style={{ fontSize: 12 }}>
+                    {ACTIVITY_TYPES.map(t => <option key={t} value={t}>{t.charAt(0).toUpperCase() + t.slice(1)}</option>)}
+                  </select>
+                  <input type="date" value={dealActForm.activity_date} onChange={e => setDealActForm(f => ({ ...f, activity_date: e.target.value }))} style={{ fontSize: 12 }} />
+                  <select value={dealActForm.assigned_to} onChange={e => setDealActForm(f => ({ ...f, assigned_to: e.target.value }))} style={{ fontSize: 12 }}>
+                    {(['Mike','Pete']).map(o => <option key={o} value={o}>{o}</option>)}
+                  </select>
+                </div>
+                <textarea rows={2} placeholder="What happened?" value={dealActForm.summary} onChange={e => setDealActForm(f => ({ ...f, summary: e.target.value }))} style={{ width: '100%', fontSize: 12, marginBottom: 8 }} />
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <button className="btn btn-primary btn-sm" disabled={savingDealAct || !dealActForm.summary.trim()} onClick={async () => {
+                    setSavingDealAct(true);
+                    try {
+                      await addActivity({ ...dealActForm, deal_id: activeProject.source_deal_id });
+                      const updated = await fetchActivities(activeProject.source_deal_id);
+                      setDealActivities(updated);
+                      setDealActForm(f => ({ ...f, summary: '' }));
+                      setAddingDealAct(false);
+                    } catch(e) { alert(e.message); } finally { setSavingDealAct(false); }
+                  }}>{savingDealAct ? 'Saving…' : 'Log'}</button>
+                  <button className="btn btn-ghost btn-sm" onClick={() => setAddingDealAct(false)}>Cancel</button>
+                </div>
+              </div>
+            )}
+
+            {dealActivities.length === 0 && (
+              <p style={{ fontSize: 12, color: 'var(--text-faint)', textAlign: 'center', padding: '24px 0' }}>
+                {activeProject.source_deal_id ? 'No activity logged on this deal yet.' : 'No deal linked — create the project from a won deal to see activity here.'}
+              </p>
+            )}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {dealActivities.map(a => {
+                const ICONS = { email:'✉️', call:'📞', meeting:'🤝', note:'📝', proposal:'📄', contract:'✍️' };
+                return (
+                  <div key={a.id} style={{ display: 'flex', gap: 10, padding: '10px 12px', background: 'var(--surface)', borderRadius: 6, border: '1px solid var(--border)' }}>
+                    <span style={{ fontSize: 16, flexShrink: 0, marginTop: 1 }}>{ICONS[a.type] || '📝'}</span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', marginBottom: 2 }}>
+                        <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'capitalize' }}>{a.type}</span>
+                        <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>{a.activity_date}</span>
+                        {a.assigned_to && <span style={{ fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 3, background: a.assigned_to === 'Mike' ? '#f3e8ff' : '#eff6ff', color: a.assigned_to === 'Mike' ? '#7c3aed' : '#1d4ed8' }}>{a.assigned_to}</span>}
+                      </div>
+                      <p style={{ fontSize: 12, color: 'var(--text)', margin: 0, lineHeight: 1.5 }}>{a.summary}</p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* ── Contacts tab ── */}
+        {projectTab === 'contacts' && (() => {
+          // Merge primary contact (stored on project) with company contact_angles,
+          // deduplicating by lowercase name — same logic as DealDetailModal.
+          const contactMap = new Map();
+          if (activeProject.contact_name?.trim()) {
+            const name = activeProject.contact_name.trim();
+            contactMap.set(name.toLowerCase(), { name, email: null, title: null, source: 'project', is_primary: true });
+          }
+          (dealCompanyIntel?.contact_angles || []).forEach(c => {
+            if (!c.name?.trim()) return;
+            const name = c.name.trim();
+            const key  = name.toLowerCase();
+            const existing = contactMap.get(key) || {};
+            contactMap.set(key, { ...existing, ...c, name, email: c.email || existing.email || null });
+          });
+          const mergedContacts = Array.from(contactMap.values());
+
+          return (
+            <div>
+              {mergedContacts.length === 0 ? (
+                <p style={{ fontSize: 12, color: 'var(--text-faint)', textAlign: 'center', padding: '24px 0' }}>No contacts found. Build a research thesis on the linked deal to discover contacts.</p>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  {mergedContacts.map((c, i) => (
+                    <div key={i} style={{ padding: '14px 16px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                        <div>
+                          <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--text)' }}>{c.name}</div>
+                          {c.title && <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 1 }}>{c.title}</div>}
+                          {c.email && <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 2 }}>{c.email}</div>}
+                          {c.linkedin && <a href={c.linkedin} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: 'var(--accent)', marginTop: 2, display: 'block' }}>LinkedIn ↗</a>}
+                        </div>
+                        {c.is_primary && <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 10, background: '#dcfce7', color: '#166534' }}>Primary</span>}
+                      </div>
+                      {c.notes && <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 8, lineHeight: 1.5 }}>{c.notes}</div>}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
+        {/* ── Research tab ── */}
+        {projectTab === 'research' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            {!dealCompanyIntel ? (
+              <p style={{ fontSize: 12, color: 'var(--text-faint)', textAlign: 'center', padding: '24px 0' }}>No research found for {activeProject.client_name || 'this client'}.</p>
+            ) : (
+              <>
+                {dealCompanyIntel.summary && (
+                  <div style={{ padding: '14px 16px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10 }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 6 }}>Company</div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 4 }}>{dealCompanyIntel.name}</div>
+                    <p style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6, margin: 0 }}>{dealCompanyIntel.summary}</p>
+                  </div>
+                )}
+                {dealCompanyIntel.recommended_angle && (
+                  <div style={{ padding: '12px 14px', background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 8, display: 'flex', gap: 10 }}>
+                    <span style={{ fontSize: 15, flexShrink: 0 }}>💡</span>
+                    <div>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: '#c2410c', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 3 }}>Positioning Angle</div>
+                      <p style={{ fontSize: 12, color: '#7c2d12', lineHeight: 1.6, margin: 0 }}>{dealCompanyIntel.recommended_angle}</p>
+                    </div>
+                  </div>
+                )}
+                {dealCompanyIntel.thesis_next_step && (
+                  <div style={{ padding: '12px 14px', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8, display: 'flex', gap: 10 }}>
+                    <span style={{ fontSize: 15, flexShrink: 0 }}>🎯</span>
+                    <div>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: '#15803d', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 3 }}>Next Action</div>
+                      <p style={{ fontSize: 12, color: '#14532d', lineHeight: 1.6, margin: 0 }}>{dealCompanyIntel.thesis_next_step}</p>
+                    </div>
+                  </div>
+                )}
+                {dealCompanyIntel.research_items?.length > 0 && (
+                  <div>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 8 }}>Research Materials</div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      {dealCompanyIntel.research_items.map((item, i) => (
+                        <div key={i} style={{ padding: '10px 12px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8 }}>
+                          <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)' }}>{{ link: '🔗', document: '📄', note: '📝' }[item.type] || '📎'} {item.title}</div>
+                          {item.url && <a href={item.url} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: 'var(--accent)', display: 'block', marginTop: 3 }}>{item.url}</a>}
+                          {item.body && <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '4px 0 0', lineHeight: 1.5 }}>{item.body}</p>}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {dealCompanyIntel.triggers?.length > 0 && (
+                  <div>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 8 }}>Signals & Triggers</div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      {(Array.isArray(dealCompanyIntel.triggers) ? dealCompanyIntel.triggers : []).map((tr, i) => (
+                        <div key={i} style={{ padding: '10px 12px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                          {typeof tr === 'string' ? tr : (tr.text || tr.title || JSON.stringify(tr))}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
+
       </div>
 
       {/* Global file input */}
