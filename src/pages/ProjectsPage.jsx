@@ -2192,8 +2192,8 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                 ) : (
                   <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>Import a proposal to auto-generate</span>
                 )}
-                {/* Clear button — shown when there's a saved summary but no proposal to regenerate from */}
-                {activeProject.description && !activeProject.proposal_text && (
+                {/* Clear button — shown whenever there's a saved summary */}
+                {activeProject.description && (
                   <button
                     onClick={async () => {
                       const updated = { ...activeProject, description: null };
