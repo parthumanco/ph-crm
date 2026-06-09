@@ -2386,14 +2386,59 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
         {loadingDetail ? (
           <div className="empty-state"><div className="spinner" /><p style={{ marginTop: 12 }}>Loading timeline…</p></div>
         ) : milestones.length === 0 ? (
-          <div className="empty-state">
-            <h3>No milestones yet</h3>
-            <p>Import a proposal to auto-generate a timeline, or add milestones manually.</p>
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'center', marginTop: 12 }}>
-              <button className="btn" onClick={() => setShowImporter(true)} style={{ borderRadius: 20, padding: '7px 18px' }}>Import Proposal</button>
-              <button className="btn btn-primary" onClick={handleAddMilestone} style={{ borderRadius: 20, padding: '7px 18px' }}>+ Add Milestone</button>
+          <>
+            {/* Unassigned tasks even when no milestones exist yet */}
+            {(() => {
+              const unassigned = tasks.filter(t => !t.milestone_id && !t.deleted_at);
+              if (!unassigned.length) return null;
+              return (
+                <div style={{ border: '1px solid #fde68a', borderRadius: 10, overflow: 'hidden', background: '#fffbeb', marginBottom: 16 }}>
+                  <div style={{ padding: '12px 18px', display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: '#92400e', textTransform: 'uppercase', letterSpacing: '.04em' }}>Unassigned Tasks</span>
+                    <span style={{ fontSize: 11, color: '#b45309', marginLeft: 4 }}>{unassigned.length} task{unassigned.length !== 1 ? 's' : ''} — not yet placed in a milestone</span>
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+                    {unassigned.map(task => (
+                      <div key={task.id} style={{ padding: '10px 18px', borderTop: '1px solid #fde68a', display: 'flex', alignItems: 'center', gap: 10, background: 'var(--bg)' }}>
+                        <span style={{ fontSize: 13, flex: 1, color: 'var(--text)' }}>{task.title}</span>
+                        {task.assigned_to && <span style={{ fontSize: 10, fontWeight: 700, padding: '1px 7px', borderRadius: 10, background: '#f3e8ff', color: '#7c3aed' }}>{task.assigned_to}</span>}
+                        {task.due_date && <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>{new Date(task.due_date + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>}
+                        <select
+                          defaultValue=""
+                          onChange={async e => {
+                            const msId = e.target.value;
+                            if (!msId) return;
+                            const updated = { ...task, milestone_id: msId };
+                            await supabase.from('project_tasks').update({ milestone_id: msId }).eq('id', task.id);
+                            setTasks(prev => prev.map(t => t.id === task.id ? updated : t));
+                            setAllTasks(prev => ({ ...prev, [activeProject.id]: (prev[activeProject.id] || []).map(t => t.id === task.id ? updated : t) }));
+                            setExpanded(prev => ({ ...prev, [msId]: true }));
+                          }}
+                          style={{ fontSize: 11, padding: '2px 6px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text-muted)', cursor: 'pointer' }}
+                        >
+                          <option value="">Move to milestone…</option>
+                          {milestones.map(ms => <option key={ms.id} value={ms.id}>{ms.title}</option>)}
+                        </select>
+                        <button
+                          onClick={() => { setConfirmDeleteTask(task.id); }}
+                          style={{ fontSize: 10, padding: '2px 6px', borderRadius: 5, border: '1px solid var(--border)', background: 'none', color: 'var(--red)', cursor: 'pointer' }}
+                          title="Delete task"
+                        >✕</button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
+            <div className="empty-state">
+              <h3>No milestones yet</h3>
+              <p>Import a proposal to auto-generate a timeline, or add milestones manually.</p>
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'center', marginTop: 12 }}>
+                <button className="btn" onClick={() => setShowImporter(true)} style={{ borderRadius: 20, padding: '7px 18px' }}>Import Proposal</button>
+                <button className="btn btn-primary" onClick={handleAddMilestone} style={{ borderRadius: 20, padding: '7px 18px' }}>+ Add Milestone</button>
+              </div>
             </div>
-          </div>
+          </>
         ) : (<>
 
           {/* ── Gantt ─────────────────────────────────────────────────── */}
