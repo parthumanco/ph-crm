@@ -2119,6 +2119,129 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
   }, {});
   const msForTasks = id => tasksByMs[id] || [];
 
+  // ── Unassigned task row — same look/feel as milestone task rows ──────────
+  const renderUnassignedTaskRow = (task) => {
+    const pendingDelete  = confirmDeleteTask === task.id;
+    const isEditingThis  = editingTask === task.id;
+    const hasOpenRejection = task.completed && task.rejected_at;
+    return (
+      <div
+        key={task.id}
+        className="task-row"
+        style={{
+          borderBottom: '1px solid #fde68a',
+          background: hasOpenRejection ? '#fffbeb' : 'var(--bg)',
+          borderLeft:  hasOpenRejection ? '3px solid #f59e0b' : 'none',
+          position: 'relative',
+        }}
+      >
+        {isEditingThis ? (
+          <div
+            style={{ display: 'flex', flexWrap: 'wrap', gap: 8, padding: '10px 16px 10px 48px', alignItems: 'center', background: 'var(--bg)', borderLeft: '3px solid var(--accent)' }}
+            onBlur={e => {
+              if (!e.currentTarget.contains(e.relatedTarget)) {
+                const numInput = e.currentTarget.querySelector('input[type="number"]');
+                if (numInput) editTaskDraftRef.current = { ...editTaskDraftRef.current, estimated_hours: numInput.value };
+                handleSaveTaskEdit(task);
+                setEditingTask(null);
+              }
+            }}
+          >
+            <input type="text" autoFocus value={editTaskDraft.title} onChange={e => setEditDraft(d => ({ ...d, title: e.target.value }))} onKeyDown={e => { if (e.key === 'Enter') { handleSaveTaskEdit(task); setEditingTask(null); } if (e.key === 'Escape') setEditingTask(null); }} style={{ flex: '1 1 180px', fontSize: 13, padding: '5px 10px', fontWeight: 600 }} placeholder="Task title" />
+            <div><Lbl>Due date</Lbl><input type="date" value={editTaskDraft.due_date} onChange={e => setEditDraft(d => ({ ...d, due_date: e.target.value }))} style={{ fontSize: 12, padding: '4px 8px', width: 'auto' }} /></div>
+            <div><Lbl>Assigned to</Lbl><select value={editTaskDraft.assigned_to} onChange={e => setEditDraft(d => ({ ...d, assigned_to: e.target.value }))} style={{ fontSize: 12, padding: '4px 8px', width: 'auto' }}><option value="">—</option>{owners.map(o => <option key={o} value={o}>{o}</option>)}</select></div>
+            <div><Lbl>Est. hrs</Lbl><input type="number" min="0" step="0.5" value={editTaskDraft.estimated_hours} onChange={e => setEditDraft(d => ({ ...d, estimated_hours: e.target.value }))} placeholder="—" style={{ fontSize: 12, padding: '4px 8px', width: 70 }} /></div>
+          </div>
+        ) : (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 16px 9px 48px' }}>
+            <input
+              type="checkbox"
+              checked={task.completed}
+              onChange={() => handleToggleTask(task)}
+              style={{ width: 15, height: 15, accentColor: '#f59e0b', cursor: 'pointer', flexShrink: 0 }}
+            />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <span
+                style={{ fontSize: 13, color: task.approved_at ? 'var(--text-faint)' : 'var(--text)', textDecoration: task.approved_at ? 'line-through' : 'none', textDecorationColor: '#ef4444', cursor: 'text' }}
+                onDoubleClick={() => startEditTask(task)}
+                title="Double-click to edit"
+              >{task.title}</span>
+              {task.completed && task.approved_at && <div style={{ fontSize: 10, marginTop: 2, color: '#10b981', fontWeight: 600 }}>✓ Approved{task.approved_by ? ` by ${task.approved_by}` : ''}</div>}
+              {task.completed && !task.approved_at && !task.rejected_at && <div style={{ fontSize: 10, marginTop: 2, color: 'var(--text-faint)' }}>✓ Completed {fmtDate(task.completed_at)}</div>}
+              {hasOpenRejection && <div style={{ fontSize: 10, marginTop: 2, color: '#f59e0b', fontWeight: 700 }}>⟳ In Progress — changes requested</div>}
+            </div>
+            {/* Inline assign */}
+            <select
+              value={task.assigned_to || ''}
+              onChange={async e => {
+                const updated = { ...task, assigned_to: e.target.value };
+                await upsertProjectTask(updated);
+                const patch = t => t.id === task.id ? updated : t;
+                setTasks(prev => prev.map(patch));
+                setAllTasks(prev => ({ ...prev, [activeProject.id]: (prev[activeProject.id] || []).map(patch) }));
+              }}
+              style={{ fontSize: 11, padding: '2px 4px', border: '1px solid var(--border)', borderRadius: 4, background: 'var(--surface)', color: task.assigned_to ? 'var(--text)' : 'var(--text-faint)', flexShrink: 0, maxWidth: 110 }}
+            >
+              <option value="">Unassigned</option>
+              {owners.map(o => <option key={o} value={o}>{o}</option>)}
+            </select>
+            {/* Inline hours */}
+            <input
+              type="number" min="0" step="0.5" placeholder="hrs"
+              value={task.estimated_hours ?? ''}
+              onChange={e => {
+                const hrs = e.target.value === '' ? null : parseFloat(e.target.value);
+                const patch = t => t.id === task.id ? { ...t, estimated_hours: hrs } : t;
+                setTasks(prev => prev.map(patch));
+                setAllTasks(prev => ({ ...prev, [activeProject.id]: (prev[activeProject.id] || []).map(patch) }));
+              }}
+              onBlur={async e => { const hrs = e.target.value === '' ? null : parseFloat(e.target.value); await upsertProjectTask({ ...task, estimated_hours: hrs }); }}
+              style={{ fontSize: 11, padding: '2px 5px', border: '1px solid var(--border)', borderRadius: 4, background: 'var(--surface)', width: 52, flexShrink: 0, color: 'var(--text)' }}
+            />
+            {task.due_date && <span style={{ fontSize: 11, color: 'var(--text-faint)', whiteSpace: 'nowrap', flexShrink: 0 }}>{fmtDate(task.due_date)}</span>}
+            {/* Action buttons */}
+            <div className="task-actions" style={{ display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 }}>
+              <button onClick={() => startEditTask(task)} title="Edit task" style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: '4px 5px', borderRadius: 4, display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+                <svg width="15" height="15" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M9.5 2.5l2 2-7 7H2.5v-2l7-7z"/></svg>
+              </button>
+              {milestones.length > 0 && (
+                <select
+                  defaultValue=""
+                  onChange={async e => {
+                    const msId = e.target.value;
+                    if (!msId) return;
+                    const updated = { ...task, milestone_id: msId };
+                    await supabase.from('project_tasks').update({ milestone_id: msId }).eq('id', task.id);
+                    setTasks(prev => prev.map(t => t.id === task.id ? updated : t));
+                    setAllTasks(prev => ({ ...prev, [activeProject.id]: (prev[activeProject.id] || []).map(t => t.id === task.id ? updated : t) }));
+                    setExpanded(prev => ({ ...prev, [msId]: true }));
+                  }}
+                  style={{ fontSize: 10, padding: '2px 4px', border: '1px solid var(--border)', borderRadius: 4, background: 'var(--surface)', color: 'var(--text-muted)', cursor: 'pointer', maxWidth: 130 }}
+                >
+                  <option value="">Move to milestone…</option>
+                  {milestones.map(ms => <option key={ms.id} value={ms.id}>{ms.title}</option>)}
+                </select>
+              )}
+              <button onClick={e => { e.stopPropagation(); triggerFileUpload(activeProject.id, null, null, task.id); }} title="Attach file" style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: '4px 5px', borderRadius: 4, display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+                <svg width="15" height="15" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M12 7L7 12a3.5 3.5 0 01-5-5l5-5a2 2 0 012.83 2.83L5 9.5a.71.71 0 01-1-1L8.5 4"/></svg>
+              </button>
+              <button onClick={e => { e.stopPropagation(); openLinkModal(activeProject.id, null, task.id); }} title="Add link" style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: '4px 5px', borderRadius: 4, display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+                <svg width="15" height="15" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M5.5 8.5l3-3"/><path d="M8.5 5.5L10 4a2.12 2.12 0 013 3l-1.5 1.5"/><path d="M5.5 8.5L4 10a2.12 2.12 0 01-3-3l1.5-1.5"/></svg>
+              </button>
+              <button
+                onClick={() => { if (pendingDelete) { handleDeleteTask(task.id); setConfirmDeleteTask(null); } else { setConfirmDeleteTask(task.id); } }}
+                title="Delete task"
+                style={{ background: pendingDelete ? '#fef2f2' : 'none', border: pendingDelete ? '1px solid #fecaca' : 'none', color: pendingDelete ? '#ef4444' : 'var(--text-faint)', cursor: 'pointer', fontSize: 10, fontWeight: 700, padding: pendingDelete ? '2px 6px' : '4px 5px', borderRadius: 4, display: 'flex', alignItems: 'center', flexShrink: 0, whiteSpace: 'nowrap', transition: 'all .15s' }}
+              >
+                {pendingDelete ? '✕ Delete?' : <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 3 11 3"/><path d="M5 3V2h4v1"/><rect x="3" y="4" width="8" height="9" rx="1"/><line x1="6" y1="7" x2="6" y2="10"/><line x1="8" y1="7" x2="8" y2="10"/></svg>}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
     <>
       <div className="page-header">
@@ -2398,34 +2521,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                     <span style={{ fontSize: 11, color: '#b45309', marginLeft: 4 }}>{unassigned.length} task{unassigned.length !== 1 ? 's' : ''} — not yet placed in a milestone</span>
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
-                    {unassigned.map(task => (
-                      <div key={task.id} style={{ padding: '10px 18px', borderTop: '1px solid #fde68a', display: 'flex', alignItems: 'center', gap: 10, background: 'var(--bg)' }}>
-                        <span style={{ fontSize: 13, flex: 1, color: 'var(--text)' }}>{task.title}</span>
-                        {task.assigned_to && <span style={{ fontSize: 10, fontWeight: 700, padding: '1px 7px', borderRadius: 10, background: '#f3e8ff', color: '#7c3aed' }}>{task.assigned_to}</span>}
-                        {task.due_date && <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>{new Date(task.due_date + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>}
-                        <select
-                          defaultValue=""
-                          onChange={async e => {
-                            const msId = e.target.value;
-                            if (!msId) return;
-                            const updated = { ...task, milestone_id: msId };
-                            await supabase.from('project_tasks').update({ milestone_id: msId }).eq('id', task.id);
-                            setTasks(prev => prev.map(t => t.id === task.id ? updated : t));
-                            setAllTasks(prev => ({ ...prev, [activeProject.id]: (prev[activeProject.id] || []).map(t => t.id === task.id ? updated : t) }));
-                            setExpanded(prev => ({ ...prev, [msId]: true }));
-                          }}
-                          style={{ fontSize: 11, padding: '2px 6px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text-muted)', cursor: 'pointer' }}
-                        >
-                          <option value="">Move to milestone…</option>
-                          {milestones.map(ms => <option key={ms.id} value={ms.id}>{ms.title}</option>)}
-                        </select>
-                        <button
-                          onClick={() => { setConfirmDeleteTask(task.id); }}
-                          style={{ fontSize: 10, padding: '2px 6px', borderRadius: 5, border: '1px solid var(--border)', background: 'none', color: 'var(--red)', cursor: 'pointer' }}
-                          title="Delete task"
-                        >✕</button>
-                      </div>
-                    ))}
+                    {unassigned.map(task => renderUnassignedTaskRow(task))}
                   </div>
                 </div>
               );
@@ -3045,34 +3141,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                     <span style={{ fontSize: 11, color: '#b45309', marginLeft: 4 }}>{unassigned.length} task{unassigned.length !== 1 ? 's' : ''} — not yet placed in a milestone</span>
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
-                    {unassigned.map(task => (
-                      <div key={task.id} style={{ padding: '10px 18px', borderTop: '1px solid #fde68a', display: 'flex', alignItems: 'center', gap: 10, background: 'var(--bg)' }}>
-                        <span style={{ fontSize: 13, flex: 1, color: 'var(--text)' }}>{task.title}</span>
-                        {task.assigned_to && <span style={{ fontSize: 10, fontWeight: 700, padding: '1px 7px', borderRadius: 10, background: '#f3e8ff', color: '#7c3aed' }}>{task.assigned_to}</span>}
-                        {/* Milestone reassign dropdown */}
-                        <select
-                          defaultValue=""
-                          onChange={async e => {
-                            const msId = e.target.value;
-                            if (!msId) return;
-                            const updated = { ...task, milestone_id: msId };
-                            await supabase.from('project_tasks').update({ milestone_id: msId }).eq('id', task.id);
-                            setTasks(prev => prev.map(t => t.id === task.id ? updated : t));
-                            setAllTasks(prev => ({ ...prev, [activeProject.id]: (prev[activeProject.id] || []).map(t => t.id === task.id ? updated : t) }));
-                            setExpanded(prev => ({ ...prev, [msId]: true }));
-                          }}
-                          style={{ fontSize: 11, padding: '2px 6px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text-muted)', cursor: 'pointer' }}
-                        >
-                          <option value="">Move to milestone…</option>
-                          {milestones.map(ms => <option key={ms.id} value={ms.id}>{ms.title}</option>)}
-                        </select>
-                        <button
-                          onClick={() => { setConfirmDeleteTask(task.id); }}
-                          style={{ fontSize: 10, padding: '2px 6px', borderRadius: 5, border: '1px solid var(--border)', background: 'none', color: 'var(--red)', cursor: 'pointer' }}
-                          title="Delete task"
-                        >✕</button>
-                      </div>
-                    ))}
+                    {unassigned.map(task => renderUnassignedTaskRow(task))}
                   </div>
                 </div>
               );
