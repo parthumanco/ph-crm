@@ -2217,9 +2217,32 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                 onDoubleClick={() => startEditTask(task)}
                 title="Double-click to edit"
               >{task.title}</span>
-              {task.completed && task.approved_at && <div style={{ fontSize: 10, marginTop: 2, color: '#10b981', fontWeight: 600 }}>✓ Approved{task.approved_by ? ` by ${task.approved_by}` : ''}</div>}
-              {task.completed && !task.approved_at && !task.rejected_at && <div style={{ fontSize: 10, marginTop: 2, color: 'var(--text-faint)' }}>✓ Completed {fmtDate(task.completed_at)}</div>}
-              {hasOpenRejection && <div style={{ fontSize: 10, marginTop: 2, color: '#f59e0b', fontWeight: 700 }}>⟳ In Progress — changes requested</div>}
+              {task.completed && (() => {
+                const chain = task.review_chain || [];
+                const lastSentEvent = [...chain].reverse().find(e => e.type === 'sent' || e.type === 'revised_sent');
+                const isAwaiting = !task.approved_at && !task.rejected_at && !!lastSentEvent;
+                const isUnsent   = !task.approved_at && !task.rejected_at && !lastSentEvent;
+                const portalEmail = (activeProject.contacts || [])[0]?.email || activeProject.client_email || '';
+                const hasPortalEmail = !!(activeProject.share_token && portalEmail);
+                return (
+                  <div style={{ fontSize: 10, marginTop: 2, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    {hasOpenRejection && <span style={{ color: '#f59e0b', fontWeight: 700 }}>⟳ In Progress — changes requested</span>}
+                    {!hasOpenRejection && task.approved_at && <span style={{ color: '#10b981', fontWeight: 600 }}>✓ Approved{task.approved_by ? ` by ${task.approved_by}` : ''}</span>}
+                    {!hasOpenRejection && !task.approved_at && !isAwaiting && (
+                      <>
+                        <span style={{ color: 'var(--text-faint)' }}>✓ Completed {fmtDate(task.completed_at)}</span>
+                        {isUnsent && hasPortalEmail && (
+                          <button
+                            onClick={() => { setExtraRecipients([]); setShowContactDropdown(false); setTaskCompleteEmail({ task, project: activeProject }); }}
+                            style={{ fontSize: 10, fontWeight: 800, padding: '2px 10px', borderRadius: 20, border: 'none', background: '#ef4444', color: '#fff', cursor: 'pointer', whiteSpace: 'nowrap', letterSpacing: '.02em' }}
+                          >Notify client</button>
+                        )}
+                      </>
+                    )}
+                  </div>
+                );
+              })()}
+              {!task.completed && hasOpenRejection && <div style={{ fontSize: 10, marginTop: 2, color: '#f59e0b', fontWeight: 700 }}>⟳ In Progress — changes requested</div>}
             </div>
             {/* Inline assign */}
             <select
