@@ -52,13 +52,29 @@ export default function TranscriptImporter({ projectId, dealId, milestones = [],
   const [draggingOver, setDraggingOver] = useState(false);
   const fileInputRef = useRef(null);
 
+  const stripRtf = (rtf) => {
+    // Remove RTF control words, groups, and binary data; extract plain text
+    return rtf
+      .replace(/\{[^{}]*\}/g, '')          // remove simple groups
+      .replace(/\\[a-z]+[-\d]* ?/g, '')     // remove control words
+      .replace(/\\\n/g, '\n')               // line breaks
+      .replace(/\\\{|\\\}/g, '')            // escaped braces
+      .replace(/[{}\\]/g, '')               // remaining braces/backslashes
+      .replace(/\r\n|\r/g, '\n')
+      .trim();
+  };
+
   const readFileAsText = (file) => new Promise((resolve, reject) => {
     if (file.type === 'application/pdf') {
       reject(new Error('PDF detected — please copy the transcript text from Granola and paste it here instead.'));
       return;
     }
     const reader = new FileReader();
-    reader.onload = e => resolve(e.target.result);
+    reader.onload = e => {
+      const text = e.target.result;
+      const isRtf = file.name.toLowerCase().endsWith('.rtf') || file.type === 'application/rtf' || file.type === 'text/rtf';
+      resolve(isRtf ? stripRtf(text) : text);
+    };
     reader.onerror = () => reject(new Error('Could not read file'));
     reader.readAsText(file);
   });
@@ -240,9 +256,9 @@ export default function TranscriptImporter({ projectId, dealId, milestones = [],
                   onClick={() => fileInputRef.current?.click()}
                   style={{ fontSize: 11, padding: '4px 12px', borderRadius: 20, border: '1px solid var(--border)', background: 'none', color: 'var(--text-faint)', cursor: 'pointer' }}
                 >📎 Or browse for file…</button>
-                <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>(.txt or .md — for PDF, copy &amp; paste from Granola)</span>
+                <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>(.txt, .md, .rtf — for PDF, copy &amp; paste from Granola)</span>
               </div>
-              <input ref={fileInputRef} type="file" accept=".txt,.md,.markdown" style={{ display: 'none' }} onChange={handleFileDrop} />
+              <input ref={fileInputRef} type="file" accept=".txt,.md,.markdown,.rtf" style={{ display: 'none' }} onChange={handleFileDrop} />
               {error && <div style={{ fontSize: 12, color: '#ef4444', padding: '8px 12px', background: '#fef2f2', borderRadius: 6, border: '1px solid #fecaca' }}>{error}</div>}
             </div>
           )}
