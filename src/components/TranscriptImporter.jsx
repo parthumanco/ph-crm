@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { parseMeetingWithAI, saveProjectMeeting, OWNERS } from '../lib/projects';
 
 const today = new Date().toISOString().slice(0, 10);
@@ -49,6 +49,34 @@ export default function TranscriptImporter({ projectId, dealId, milestones = [],
   const [transcript, setTranscript] = useState(initialTranscript);
   const [error, setError]           = useState('');
   const [parsed, setParsed]         = useState(null);      // raw AI output
+  const [draggingOver, setDraggingOver] = useState(false);
+  const fileInputRef = useRef(null);
+
+  const readFileAsText = (file) => new Promise((resolve, reject) => {
+    if (file.type === 'application/pdf') {
+      reject(new Error('PDF detected — please copy the transcript text from Granola and paste it here instead.'));
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = e => resolve(e.target.result);
+    reader.onerror = () => reject(new Error('Could not read file'));
+    reader.readAsText(file);
+  });
+
+  const handleFileDrop = async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDraggingOver(false);
+    const file = e.dataTransfer?.files?.[0] || e.target?.files?.[0];
+    if (!file) return;
+    try {
+      const text = await readFileAsText(file);
+      setTranscript(text);
+      setError('');
+    } catch (err) {
+      setError(err.message);
+    }
+  };
 
   // Prospect mode: company + contact fields
   const [companyName, setCompanyName]   = useState('');
@@ -187,14 +215,34 @@ export default function TranscriptImporter({ projectId, dealId, milestones = [],
           {/* ── Paste step ── */}
           {(step === 'paste' || step === 'parsing') && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-              <textarea
-                value={transcript}
-                onChange={e => setTranscript(e.target.value)}
-                placeholder="Paste your Granola transcript or any meeting notes here…"
-                rows={14}
-                disabled={step === 'parsing'}
-                style={{ width: '100%', resize: 'vertical', fontSize: 12, lineHeight: 1.6, fontFamily: 'inherit', padding: '10px 12px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', outline: 'none', opacity: step === 'parsing' ? 0.6 : 1 }}
-              />
+              <div
+                onDragOver={e => { e.preventDefault(); e.stopPropagation(); setDraggingOver(true); }}
+                onDragLeave={e => { e.preventDefault(); setDraggingOver(false); }}
+                onDrop={handleFileDrop}
+                style={{ position: 'relative' }}
+              >
+                <textarea
+                  value={transcript}
+                  onChange={e => setTranscript(e.target.value)}
+                  placeholder="Paste your Granola transcript or drag a .txt / .md file here…"
+                  rows={14}
+                  disabled={step === 'parsing'}
+                  style={{ width: '100%', resize: 'vertical', fontSize: 12, lineHeight: 1.6, fontFamily: 'inherit', padding: '10px 12px', borderRadius: 8, border: `1px solid ${draggingOver ? 'var(--accent)' : 'var(--border)'}`, background: draggingOver ? 'var(--surface)' : 'var(--surface)', color: 'var(--text)', outline: 'none', opacity: step === 'parsing' ? 0.6 : 1, boxSizing: 'border-box', transition: 'border-color .15s' }}
+                />
+                {draggingOver && (
+                  <div style={{ position: 'absolute', inset: 0, borderRadius: 8, border: '2px dashed var(--accent)', background: 'rgba(251,191,36,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none' }}>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--accent)' }}>Drop file to import</span>
+                  </div>
+                )}
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  style={{ fontSize: 11, padding: '4px 12px', borderRadius: 20, border: '1px solid var(--border)', background: 'none', color: 'var(--text-faint)', cursor: 'pointer' }}
+                >📎 Or browse for file…</button>
+                <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>(.txt or .md — for PDF, copy &amp; paste from Granola)</span>
+              </div>
+              <input ref={fileInputRef} type="file" accept=".txt,.md,.markdown" style={{ display: 'none' }} onChange={handleFileDrop} />
               {error && <div style={{ fontSize: 12, color: '#ef4444', padding: '8px 12px', background: '#fef2f2', borderRadius: 6, border: '1px solid #fecaca' }}>{error}</div>}
             </div>
           )}
