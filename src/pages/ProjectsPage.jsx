@@ -2259,7 +2259,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                     color: hasMentions ? '#fff' : 'var(--text-faint)',
                   }}
                   title="View meeting mentions"
-                >💬 Mentions</button>
+                >Mentions</button>
               );
             })()}
             {/* Action buttons */}
