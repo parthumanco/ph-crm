@@ -438,6 +438,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
   const [mentionsPanel, setMentionsPanel]         = useState(null); // task | null
   // Suggested task updates from AI (from transcript import)
   const [pendingUpdates, setPendingUpdates]       = useState([]);   // [{ existing_task_title, field, suggested_value, reason, accepted }]
+  const [nearDupeWarning, setNearDupeWarning]     = useState([]);   // task titles that may overlap
   // Structured project notes — stored as JSON array in internal_notes
   const [projectNotes, setProjectNotes]           = useState([]);     // [{ id, text, created_at }]
   const [addingNote, setAddingNote]               = useState(false);
@@ -1539,10 +1540,10 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
         .select();
       if (error) throw error;
       const savedTasks = inserted || uniqueTasks;
+      if (nearDupes.length > 0) setNearDupeWarning(nearDupes.map(t => ({ newTitle: t.title, similar: findSimilarTasks(t.title || '', tasks).map(s => s.title) })));
       const parts = [];
       if (savedTasks.length) parts.push(`${savedTasks.length} task${savedTasks.length !== 1 ? 's' : ''} added`);
       if (skippedCount > 0) parts.push(`${skippedCount} exact duplicate${skippedCount !== 1 ? 's' : ''} skipped`);
-      if (nearDupes.length > 0) parts.push(`⚠️ ${nearDupes.length} may overlap with existing tasks:\n${nearDupes.map(t => `• ${t.title}`).join('\n')}`);
       if (meetingMilestoneId && !milestones.find(m => m.id === meetingMilestoneId)) parts.push(`📋 New milestone created: "${meeting.title}"`);
       if (parts.length) alert(parts.join(' · '));
       setTasks(prev => [...prev, ...savedTasks]);
@@ -2697,6 +2698,23 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
         </div>
 
         {projectTab === 'timeline' && (<>
+        {nearDupeWarning.length > 0 && (
+          <div style={{ marginBottom: 16, padding: '12px 14px', background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: 8 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 12, fontWeight: 800, color: '#92400e', marginBottom: 6 }}>⚠️ Possible task overlap from recent import</div>
+                {nearDupeWarning.map((w, i) => (
+                  <div key={i} style={{ fontSize: 12, color: '#92400e', marginBottom: 4 }}>
+                    <span style={{ fontWeight: 600 }}>"{w.newTitle}"</span>
+                    <span style={{ color: '#b45309' }}> — may overlap with: </span>
+                    {w.similar.map((s, j) => <span key={j} style={{ fontStyle: 'italic' }}>"{s}"{j < w.similar.length - 1 ? ', ' : ''}</span>)}
+                  </div>
+                ))}
+              </div>
+              <button onClick={() => setNearDupeWarning([])} style={{ background: 'none', border: 'none', color: '#92400e', cursor: 'pointer', fontSize: 16, padding: '0 2px', flexShrink: 0 }}>✕</button>
+            </div>
+          </div>
+        )}
         {activeProject.internal_notes && (
           <div style={{ marginBottom: 16, padding: '10px 14px', background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: 8, display: 'flex', gap: 10, alignItems: 'flex-start' }}>
             <span style={{ fontSize: 14, flexShrink: 0, marginTop: 1 }}>📌</span>
