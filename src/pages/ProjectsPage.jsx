@@ -3255,7 +3255,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                                         ) : (
                                           <span
                                             key={ai_i}
-                                            onClick={() => setActionItemDraft({ title: ai.title || '', assigned_to: ai.owner || '', estimated_hours: ai.estimated_hours || '', milestone_id: milestones[0]?.id || null })}
+                                            onClick={() => { const base = mtg.meeting_date ? new Date(mtg.meeting_date + 'T12:00:00') : new Date(); base.setDate(base.getDate() + 7); setActionItemDraft({ title: ai.title || '', assigned_to: ai.owner || '', estimated_hours: ai.estimated_hours || '', milestone_id: milestones[0]?.id || null, due_date: base.toISOString().slice(0,10) }); }}
                                             title="Click to add as task"
                                             style={{ fontSize: 11, padding: '2px 8px', borderRadius: 12, background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text-muted)', cursor: 'pointer', transition: 'background .15s, border-color .15s' }}
                                             onMouseEnter={e => { e.currentTarget.style.background = 'var(--accent-light, #ede9fe)'; e.currentTarget.style.borderColor = 'var(--accent)'; }}
@@ -3512,7 +3512,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                                     ) : (
                                       <span
                                         key={ai_i}
-                                        onClick={() => setActionItemDraft({ title: ai.title || '', assigned_to: ai.owner || '', estimated_hours: ai.estimated_hours || '', milestone_id: milestones[0]?.id || null })}
+                                        onClick={() => { const base = mtg.meeting_date ? new Date(mtg.meeting_date + 'T12:00:00') : new Date(); base.setDate(base.getDate() + 7); setActionItemDraft({ title: ai.title || '', assigned_to: ai.owner || '', estimated_hours: ai.estimated_hours || '', milestone_id: milestones[0]?.id || null, due_date: base.toISOString().slice(0,10) }); }}
                                         title="Click to add as task"
                                         style={{ fontSize: 11, padding: '2px 8px', borderRadius: 12, background: 'var(--bg)', border: '1px solid var(--border)', color: 'var(--text-muted)', cursor: 'pointer', transition: 'background .15s, border-color .15s' }}
                                         onMouseEnter={e => { e.currentTarget.style.background = 'var(--accent-light, #ede9fe)'; e.currentTarget.style.borderColor = 'var(--accent)'; }}
@@ -4555,6 +4555,19 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
               </div>
             </div>
 
+            {/* Due date */}
+            <div style={{ marginBottom: 12 }}>
+              <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 4 }}>
+                Due date <span style={{ fontWeight: 400, textTransform: 'none', color: 'var(--text-faint)' }}>(suggested — edit freely)</span>
+              </label>
+              <input
+                type="date"
+                value={actionItemDraft.due_date || ''}
+                onChange={e => setActionItemDraft(d => ({ ...d, due_date: e.target.value }))}
+                style={{ width: '100%', fontSize: 13, padding: '7px 10px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)' }}
+              />
+            </div>
+
             {/* Milestone */}
             {milestones.length > 0 && (
               <div style={{ marginBottom: 12 }}>
@@ -4603,6 +4616,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                       title:           actionItemDraft.title.trim(),
                       assigned_to:     actionItemDraft.assigned_to || '',
                       estimated_hours: actionItemDraft.estimated_hours !== '' && actionItemDraft.estimated_hours != null ? parseFloat(actionItemDraft.estimated_hours) : null,
+                      due_date:        actionItemDraft.due_date || null,
                       completed:       false,
                       order_index:     tasks.filter(t => t.milestone_id === (actionItemDraft.milestone_id || null)).length,
                       created_at:      new Date().toISOString(),
