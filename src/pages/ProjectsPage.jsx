@@ -3113,11 +3113,27 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                               placeholder="Meeting title"
                               style={{ fontSize: 13, fontWeight: 700, padding: '5px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)' }}
                             />
+                            <div style={{ display: 'flex', gap: 8 }}>
+                              <input
+                                type="date"
+                                value={editMeetingDraft.meeting_date || ''}
+                                onChange={e => setEditMeetingDraft(d => ({ ...d, meeting_date: e.target.value }))}
+                                style={{ fontSize: 12, padding: '4px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', width: 160 }}
+                              />
+                              <input
+                                type="text"
+                                value={editMeetingDraft.meeting_time || ''}
+                                onChange={e => setEditMeetingDraft(d => ({ ...d, meeting_time: e.target.value }))}
+                                placeholder="Time (e.g. 10:00 AM)"
+                                style={{ fontSize: 12, padding: '4px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', width: 140 }}
+                              />
+                            </div>
                             <input
-                              type="date"
-                              value={editMeetingDraft.meeting_date || ''}
-                              onChange={e => setEditMeetingDraft(d => ({ ...d, meeting_date: e.target.value }))}
-                              style={{ fontSize: 12, padding: '4px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', width: 160 }}
+                              type="text"
+                              value={Array.isArray(editMeetingDraft.attendees) ? editMeetingDraft.attendees.join(', ') : (editMeetingDraft.attendees || '')}
+                              onChange={e => setEditMeetingDraft(d => ({ ...d, attendees: e.target.value.split(',').map(s => s.trim()).filter(Boolean) }))}
+                              placeholder="Attendees (comma-separated)"
+                              style={{ fontSize: 12, padding: '4px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)' }}
                             />
                             <textarea
                               value={editMeetingDraft.summary || ''}
@@ -3147,12 +3163,20 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                               >
                                 <div style={{ flex: 1 }}>
                                   <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>{mtg.title}</div>
-                                  {mtg.meeting_date && (
-                                    <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 2 }}>
-                                      {new Date(mtg.meeting_date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'long', day: 'numeric', year: 'numeric' })}
-                                    </div>
-                                  )}
-                                  {/* Collapsed preview — first 120 chars of summary */}
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 2, flexWrap: 'wrap' }}>
+                                    {mtg.meeting_date && (
+                                      <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>
+                                        {new Date(mtg.meeting_date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'long', day: 'numeric', year: 'numeric' })}
+                                      </span>
+                                    )}
+                                    {mtg.meeting_time && (
+                                      <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>· {mtg.meeting_time}</span>
+                                    )}
+                                    {mtg.attendees?.length > 0 && (
+                                      <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>· {mtg.attendees.join(', ')}</span>
+                                    )}
+                                  </div>
+                                  {/* Collapsed preview */}
                                   {!isExpanded && mtg.summary && (
                                     <div style={{ fontSize: 12, color: 'var(--text-faint)', marginTop: 4, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
                                       {mtg.summary}
@@ -3166,7 +3190,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                                     </button>
                                   )}
                                   <button
-                                    onClick={() => { setEditingMeeting(mtg.id); setEditMeetingDraft({ title: mtg.title, meeting_date: mtg.meeting_date || '', summary: mtg.summary || '' }); }}
+                                    onClick={() => { setEditingMeeting(mtg.id); setEditMeetingDraft({ title: mtg.title, meeting_date: mtg.meeting_date || '', meeting_time: mtg.meeting_time || '', attendees: mtg.attendees || [], summary: mtg.summary || '' }); }}
                                     style={{ fontSize: 10, padding: '3px 7px', borderRadius: 5, border: '1px solid var(--border)', background: 'none', color: 'var(--text-faint)', cursor: 'pointer' }}
                                     title="Edit meeting"
                                   >✏</button>

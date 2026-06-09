@@ -137,13 +137,15 @@ export default function TranscriptImporter({ projectId, dealId, milestones = [],
 
       // Save meeting record
       const meeting = await saveProjectMeeting({
-        projectId:   projectId || null,
-        dealId:      resolvedDealId || null,
-        title:       parsed.title || 'Meeting',
-        meetingDate: parsed.meeting_date || null,
-        summary:     parsed.summary || null,
+        projectId:    projectId || null,
+        dealId:       resolvedDealId || null,
+        title:        parsed.title || 'Meeting',
+        meetingDate:  parsed.meeting_date || null,
+        meetingTime:  parsed.meeting_time || null,
+        attendees:    parsed.attendees || [],
+        summary:      parsed.summary || null,
         transcript,
-        actionItems: selectedItems.map(({ title, owner, due_date, notes }) => ({ title, owner, due_date, notes })),
+        actionItems:  selectedItems.map(({ title, owner, due_date, notes }) => ({ title, owner, due_date, notes })),
       });
 
       onImported({ meeting, tasks, milestoneId: defaultMsId, dealId: resolvedDealId, companyName: companyName.trim() });

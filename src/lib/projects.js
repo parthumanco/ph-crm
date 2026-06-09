@@ -726,17 +726,19 @@ export async function fetchProjectMeetings(projectId) {
   return data || [];
 }
 
-export async function saveProjectMeeting({ projectId, dealId, title, meetingDate, summary, transcript, actionItems }) {
+export async function saveProjectMeeting({ projectId, dealId, title, meetingDate, meetingTime, attendees, summary, transcript, actionItems }) {
   const { data, error } = await supabase
     .from('project_meetings')
     .insert({
-      project_id:   projectId || null,
-      deal_id:      dealId    || null,
+      project_id:    projectId || null,
+      deal_id:       dealId    || null,
       title,
-      meeting_date: meetingDate || null,
-      summary:      summary || null,
-      transcript:   transcript || null,
-      action_items: actionItems || [],
+      meeting_date:  meetingDate  || null,
+      meeting_time:  meetingTime  || null,
+      attendees:     attendees?.length ? attendees : null,
+      summary:       summary || null,
+      transcript:    transcript || null,
+      action_items:  actionItems || [],
     })
     .select()
     .single();
@@ -851,6 +853,8 @@ Return ONLY a valid JSON object with no markdown, no explanation, no code fences
   "company_name": "The client or prospect company name if identifiable from context, otherwise null",
   "contact_name": "The primary external contact's full name if mentioned, otherwise null",
   "contact_email": "The primary external contact's email if mentioned, otherwise null",
+  "attendees": ["Full Name", "Full Name"],
+  "meeting_time": "HH:MM in 12-hour format if a time is mentioned, otherwise null",
   "summary": "2-3 sentence summary of what was discussed and decided",
   "action_items": [
     {
