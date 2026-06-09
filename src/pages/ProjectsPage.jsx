@@ -484,11 +484,15 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
       const taskMap = {};
       const fileMap = {};
       await Promise.all(ps.map(async p => {
-        const [tasks, files] = await Promise.all([
+        const [tasks, milestones, files] = await Promise.all([
           fetchProjectTasks(p.id),
+          fetchMilestones(p.id),
           fetchProjectFiles(p.id),
         ]);
-        taskMap[p.id] = tasks;
+        // Apply the same active-milestone filter used in openProject so the
+        // card progress bar ignores tasks that belong to archived milestones
+        const activeMsIds = new Set(milestones.map(m => m.id));
+        taskMap[p.id] = tasks.filter(t => !t.milestone_id || activeMsIds.has(t.milestone_id));
         fileMap[p.id] = files;
       }));
       setAllTasks(taskMap);
