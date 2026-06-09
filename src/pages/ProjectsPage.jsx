@@ -2165,6 +2165,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
     const pendingDelete  = confirmDeleteTask === task.id;
     const isEditingThis  = editingTask === task.id;
     const hasOpenRejection = task.completed && task.rejected_at;
+    const taskFiles      = projectFiles.filter(f => f.task_id === task.id);
     return (
       <div
         key={task.id}
@@ -2332,6 +2333,28 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                 {pendingDelete ? '✕ Delete?' : <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 3 11 3"/><path d="M5 3V2h4v1"/><rect x="3" y="4" width="8" height="9" rx="1"/><line x1="6" y1="7" x2="6" y2="10"/><line x1="8" y1="7" x2="8" y2="10"/></svg>}
               </button>
             </div>
+          </div>
+        )}
+        {/* ── Task-level attached files ── */}
+        {taskFiles.length > 0 && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, padding: '4px 16px 8px 48px' }}>
+            {taskFiles.map(f => (
+              <a
+                key={f.id}
+                href={f.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={e => e.stopPropagation()}
+                style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '3px 8px', borderRadius: 4, background: 'var(--bg)', border: '1px solid #fde68a', fontSize: 11, color: 'var(--accent)', textDecoration: 'none' }}
+              >
+                <span>{fileIcon(f.mime_type)}</span>
+                <span style={{ maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</span>
+                <button
+                  onClick={e => { e.preventDefault(); e.stopPropagation(); handleDeleteFile(f); }}
+                  style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: '0 0 0 2px', fontSize: 11, lineHeight: 1 }}
+                >✕</button>
+              </a>
+            ))}
           </div>
         )}
         {/* ── Chain of custody ── */}
