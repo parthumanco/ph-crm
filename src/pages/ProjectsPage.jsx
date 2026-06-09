@@ -431,6 +431,9 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
   const [editingMeeting, setEditingMeeting]       = useState(null);   // meeting id being edited
   const [editMeetingDraft, setEditMeetingDraft]   = useState({});     // { title, meeting_date, summary }
   const [savingMeeting, setSavingMeeting]         = useState(false);
+  // Action-item → Task push
+  const [actionItemDraft, setActionItemDraft]     = useState(null); // { title, assigned_to, estimated_hours, milestone_id } | null
+  const [pushingActionItem, setPushingActionItem] = useState(false);
   // Structured project notes — stored as JSON array in internal_notes
   const [projectNotes, setProjectNotes]           = useState([]);     // [{ id, text, created_at }]
   const [addingNote, setAddingNote]               = useState(false);
@@ -3209,7 +3212,14 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                                   {mtg.action_items?.length > 0 && (
                                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: 8 }}>
                                       {mtg.action_items.map((ai, ai_i) => (
-                                        <span key={ai_i} style={{ fontSize: 11, padding: '2px 8px', borderRadius: 12, background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text-muted)' }}>
+                                        <span
+                                          key={ai_i}
+                                          onClick={() => setActionItemDraft({ title: ai.title || '', assigned_to: ai.owner || '', estimated_hours: ai.estimated_hours || '', milestone_id: milestones[0]?.id || null })}
+                                          title="Click to add as task"
+                                          style={{ fontSize: 11, padding: '2px 8px', borderRadius: 12, background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text-muted)', cursor: 'pointer', transition: 'background .15s, border-color .15s' }}
+                                          onMouseEnter={e => { e.currentTarget.style.background = 'var(--accent-light, #ede9fe)'; e.currentTarget.style.borderColor = 'var(--accent)'; }}
+                                          onMouseLeave={e => { e.currentTarget.style.background = 'var(--surface)'; e.currentTarget.style.borderColor = 'var(--border)'; }}
+                                        >
                                           {ai.owner && <span style={{ fontWeight: 700, color: 'var(--accent)', marginRight: 4 }}>{ai.owner}</span>}
                                           {ai.title}
                                         </span>
@@ -3446,7 +3456,14 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                               {mtg.action_items?.length > 0 && (
                                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: 8 }}>
                                   {mtg.action_items.map((ai, ai_i) => (
-                                    <span key={ai_i} style={{ fontSize: 11, padding: '2px 8px', borderRadius: 12, background: 'var(--bg)', border: '1px solid var(--border)', color: 'var(--text-muted)' }}>
+                                    <span
+                                      key={ai_i}
+                                      onClick={() => setActionItemDraft({ title: ai.title || '', assigned_to: ai.owner || '', estimated_hours: ai.estimated_hours || '', milestone_id: milestones[0]?.id || null })}
+                                      title="Click to add as task"
+                                      style={{ fontSize: 11, padding: '2px 8px', borderRadius: 12, background: 'var(--bg)', border: '1px solid var(--border)', color: 'var(--text-muted)', cursor: 'pointer', transition: 'background .15s, border-color .15s' }}
+                                      onMouseEnter={e => { e.currentTarget.style.background = 'var(--accent-light, #ede9fe)'; e.currentTarget.style.borderColor = 'var(--accent)'; }}
+                                      onMouseLeave={e => { e.currentTarget.style.background = 'var(--bg)'; e.currentTarget.style.borderColor = 'var(--border)'; }}
+                                    >
                                       {ai.owner && <span style={{ fontWeight: 700, color: 'var(--accent)', marginRight: 4 }}>{ai.owner}</span>}
                                       {ai.title}
                                     </span>
@@ -4424,6 +4441,108 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
       )}
 
       {/* Transcript importer modal */}
+      {/* ── Action Item → Task modal ── */}
+      {actionItemDraft && activeProject && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.35)' }} onClick={() => setActionItemDraft(null)} />
+          <div style={{ position: 'relative', zIndex: 1, background: 'var(--bg)', borderRadius: 14, padding: 24, width: 440, maxWidth: '95vw', boxShadow: '0 16px 48px rgba(0,0,0,0.18)' }}>
+            <button
+              onClick={() => setActionItemDraft(null)}
+              style={{ position: 'absolute', top: 14, right: 14, background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: 'var(--text-muted)', lineHeight: 1, padding: '2px 6px' }}
+            >✕</button>
+            <h3 style={{ fontSize: 15, fontWeight: 800, marginBottom: 4 }}>Add as Task</h3>
+            <p style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 18, lineHeight: 1.4 }}>
+              Edit the details below and click <strong>Add to Tasks</strong> to push this to the Tasks tab.
+            </p>
+
+            {/* Title */}
+            <div style={{ marginBottom: 12 }}>
+              <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 4 }}>Task title</label>
+              <input
+                autoFocus
+                type="text"
+                value={actionItemDraft.title}
+                onChange={e => setActionItemDraft(d => ({ ...d, title: e.target.value }))}
+                style={{ width: '100%', fontSize: 13, padding: '7px 10px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)' }}
+              />
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
+              {/* Assigned to */}
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 4 }}>Assign to</label>
+                <select
+                  value={actionItemDraft.assigned_to}
+                  onChange={e => setActionItemDraft(d => ({ ...d, assigned_to: e.target.value }))}
+                  style={{ width: '100%', fontSize: 13, padding: '7px 10px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)' }}
+                >
+                  <option value="">Unassigned</option>
+                  {(['Mike', 'Pete']).map(o => <option key={o} value={o}>{o}</option>)}
+                </select>
+              </div>
+              {/* Estimated hours */}
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 4 }}>Est. hours</label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.5"
+                  placeholder="e.g. 2"
+                  value={actionItemDraft.estimated_hours}
+                  onChange={e => setActionItemDraft(d => ({ ...d, estimated_hours: e.target.value }))}
+                  style={{ width: '100%', fontSize: 13, padding: '7px 10px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)' }}
+                />
+              </div>
+            </div>
+
+            {/* Milestone */}
+            {milestones.length > 0 && (
+              <div style={{ marginBottom: 20 }}>
+                <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 4 }}>Milestone</label>
+                <select
+                  value={actionItemDraft.milestone_id || ''}
+                  onChange={e => setActionItemDraft(d => ({ ...d, milestone_id: e.target.value || null }))}
+                  style={{ width: '100%', fontSize: 13, padding: '7px 10px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)' }}
+                >
+                  <option value="">No milestone (unassigned)</option>
+                  {milestones.map(ms => <option key={ms.id} value={ms.id}>{ms.title}</option>)}
+                </select>
+              </div>
+            )}
+
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button
+                className="btn btn-primary btn-sm"
+                disabled={pushingActionItem || !actionItemDraft.title.trim()}
+                onClick={async () => {
+                  setPushingActionItem(true);
+                  try {
+                    const saved = await upsertProjectTask({
+                      project_id:      activeProject.id,
+                      milestone_id:    actionItemDraft.milestone_id || null,
+                      title:           actionItemDraft.title.trim(),
+                      assigned_to:     actionItemDraft.assigned_to || '',
+                      estimated_hours: actionItemDraft.estimated_hours !== '' && actionItemDraft.estimated_hours != null ? parseFloat(actionItemDraft.estimated_hours) : null,
+                      completed:       false,
+                      order_index:     tasks.filter(t => t.milestone_id === (actionItemDraft.milestone_id || null)).length,
+                      created_at:      new Date().toISOString(),
+                    });
+                    const updated = [...tasks, saved];
+                    setTasks(updated);
+                    setAllTasks(prev => ({ ...prev, [activeProject.id]: updated }));
+                    setActionItemDraft(null);
+                  } catch(e) { alert(e.message); } finally { setPushingActionItem(false); }
+                }}
+                style={{ borderRadius: 20, flex: 1 }}
+              >
+                {pushingActionItem ? 'Adding…' : '➕ Add to Tasks'}
+              </button>
+              <button className="btn btn-secondary btn-sm" onClick={() => setActionItemDraft(null)} style={{ borderRadius: 20 }}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showTranscriptImporter && activeProject && (
         <TranscriptImporter
           projectId={activeProject.id}
