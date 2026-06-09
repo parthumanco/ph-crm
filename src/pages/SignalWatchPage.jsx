@@ -133,7 +133,7 @@ function parseCSV(text) {
   }).filter(Boolean);
 }
 
-export default function SignalWatchPage({ onNavigate, icp, refreshKey = 0 }) {
+export default function SignalWatchPage({ onNavigate, icp, refreshKey = 0, isActive = false }) {
   // companies: array of {id (db uuid), _tempId, name, website, hq, contacts, ...scan fields}
   const [companies, setCompanies]     = useState([]);
   const [scanning, setScanning]       = useState({});
@@ -366,8 +366,9 @@ export default function SignalWatchPage({ onNavigate, icp, refreshKey = 0 }) {
     handleFiles(e.dataTransfer.files);
   }, [handleFiles]);
 
-  // ── Document-level drag-and-drop (works anywhere on the page) ───────────────
+  // ── Document-level drag-and-drop (only active when this page is visible) ────
   useEffect(() => {
+    if (!isActive) return;
     const onDragOver = e => { e.preventDefault(); setDragOver(true); };
     const onDragLeave = e => { if (!e.relatedTarget) setDragOver(false); };
     const onDropDoc = e => {
@@ -383,7 +384,7 @@ export default function SignalWatchPage({ onNavigate, icp, refreshKey = 0 }) {
       document.removeEventListener('dragleave', onDragLeave);
       document.removeEventListener('drop', onDropDoc);
     };
-  }, [handleFiles]);
+  }, [handleFiles, isActive]);
 
   // ── Save scan result to Supabase ─────────────────────────────────────────────
 

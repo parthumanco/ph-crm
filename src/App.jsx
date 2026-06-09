@@ -115,7 +115,7 @@ export default function App() {
           <ClientsPage onNavigate={handleSetPage} refreshKey={pageKeys.clients || 0} icp={icp} />
         </PageSlot>
         <PageSlot active={page === 'signals'}>
-          <SignalWatchPage onNavigate={handleSetPage} icp={icp} refreshKey={pageKeys.signals || 0} />
+          <SignalWatchPage onNavigate={handleSetPage} icp={icp} refreshKey={pageKeys.signals || 0} isActive={page === 'signals'} />
         </PageSlot>
         <PageSlot active={page === 'pipeline'}>
           <PipelinePage icp={icp} refreshKey={pageKeys.pipeline || 0} onNavigate={handleSetPage} />
