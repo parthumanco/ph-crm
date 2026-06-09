@@ -2192,6 +2192,16 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
             <div><Lbl>Due date</Lbl><input type="date" value={editTaskDraft.due_date} onChange={e => setEditDraft(d => ({ ...d, due_date: e.target.value }))} style={{ fontSize: 12, padding: '4px 8px', width: 'auto' }} /></div>
             <div><Lbl>Assigned to</Lbl><select value={editTaskDraft.assigned_to} onChange={e => setEditDraft(d => ({ ...d, assigned_to: e.target.value }))} style={{ fontSize: 12, padding: '4px 8px', width: 'auto' }}><option value="">—</option>{owners.map(o => <option key={o} value={o}>{o}</option>)}</select></div>
             <div><Lbl>Est. hrs</Lbl><input type="number" min="0" step="0.5" value={editTaskDraft.estimated_hours} onChange={e => setEditDraft(d => ({ ...d, estimated_hours: e.target.value }))} placeholder="—" style={{ fontSize: 12, padding: '4px 8px', width: 70 }} /></div>
+            <div style={{ display: 'flex', gap: 6, marginLeft: 'auto' }}>
+              <button
+                onMouseDown={e => { e.preventDefault(); handleSaveTaskEdit(task); setEditingTask(null); }}
+                style={{ fontSize: 11, fontWeight: 700, padding: '4px 14px', borderRadius: 6, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer', whiteSpace: 'nowrap' }}
+              >Save</button>
+              <button
+                onMouseDown={e => { e.preventDefault(); setEditingTask(null); }}
+                style={{ fontSize: 11, padding: '4px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}
+              >Cancel</button>
+            </div>
           </div>
         ) : (
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 16px 9px 48px' }}>
@@ -2301,6 +2311,84 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
             </div>
           </div>
         )}
+        {/* ── Chain of custody ── */}
+        {!isEditingThis && (() => {
+          const chain = task.review_chain || [];
+          const hasRejection = task.rejected_at;
+          if (chain.length === 0) return null;
+          if (task.approved_at && !expandedCoC.has(task.id)) {
+            return (
+              <div style={{ margin: '2px 16px 8px 48px' }}>
+                <button
+                  onClick={() => setExpandedCoC(prev => { const n = new Set(prev); n.add(task.id); return n; })}
+                  style={{ fontSize: 10, color: 'var(--text-faint)', background: 'none', border: 'none', cursor: 'pointer', padding: 0, textDecoration: 'underline', textUnderlineOffset: 2 }}
+                >Show review history</button>
+              </div>
+            );
+          }
+          const revisionsSent = chain.filter(e => e.type === 'revised_sent').length;
+          const nextRevNum    = revisionsSent + 1;
+          const lastSentEvent = [...chain].reverse().find(e => e.type === 'sent' || e.type === 'revised_sent');
+          const isAwaiting    = !task.approved_at && !task.rejected_at && !!lastSentEvent;
+          let rn = 0;
+          const displayChain = chain.map(ev => ev.type === 'revised_sent' ? { ...ev, revNum: ++rn } : ev);
+          if (isAwaiting) displayChain.push({ type: 'awaiting', at: null });
+          const pillFor = ev => {
+            if (ev.type === 'sent')         return { label: 'Sent to client',                  color: '#6b7280', bg: '#f3f4f6' };
+            if (ev.type === 'rejected')     return { label: `Not approved · ${ev.by || ''}`,   color: '#ef4444', bg: '#fef2f2' };
+            if (ev.type === 'revised_sent') return { label: `Rev ${ev.revNum} sent`,            color: '#3b82f6', bg: '#eff6ff' };
+            if (ev.type === 'approved')     return { label: `Approved · ${ev.by || ''}`,        color: '#10b981', bg: '#f0fdf4' };
+            if (ev.type === 'awaiting')     return { label: 'Awaiting review',                  color: '#f59e0b', bg: '#fffbeb' };
+            return { label: ev.type, color: '#94a3b8', bg: '#f9fafb' };
+          };
+          const lastRejection = hasRejection ? [...displayChain].reverse().find(e => e.type === 'rejected') : null;
+          return (
+            <div style={{ margin: '4px 16px 10px 48px' }}>
+              <div style={{ display: 'flex', flexDirection: 'column' }}>
+                {displayChain.map((ev, i) => {
+                  const p = pillFor(ev);
+                  const isLast = i === displayChain.length - 1;
+                  return (
+                    <div key={i} style={{ display: 'flex', alignItems: 'stretch' }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: 12, flexShrink: 0, marginRight: 8 }}>
+                        {i > 0 && <div style={{ width: 1.5, height: 5, background: 'var(--border)', flexShrink: 0 }} />}
+                        <div style={{ width: 7, height: 7, borderRadius: '50%', background: p.color, flexShrink: 0, border: `2px solid ${p.color}40`, marginTop: i === 0 ? 4 : 0 }} />
+                        {!isLast && <div style={{ width: 1.5, flex: 1, background: 'var(--border)', minHeight: 6 }} />}
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 7, paddingBottom: isLast ? 0 : 5 }}>
+                        <div style={{ padding: '2px 10px', borderRadius: 20, fontSize: 10, fontWeight: 700, color: p.color, background: p.bg, border: ev.type === 'awaiting' ? `1.5px dashed ${p.color}` : `1px solid ${p.color}28`, whiteSpace: 'nowrap', lineHeight: 1.5 }}>{p.label}</div>
+                        {ev.at && <span style={{ fontSize: 10, color: 'var(--text-faint)', whiteSpace: 'nowrap' }}>{fmtDate(ev.at)} · {new Date(ev.at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }).toLowerCase()}</span>}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              {lastRejection?.notes && (
+                <div style={{ margin: '6px 0 6px 20px', padding: '6px 10px', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 5, fontSize: 11, color: '#7f1d1d', lineHeight: 1.55, whiteSpace: 'pre-wrap' }}>{lastRejection.notes}</div>
+              )}
+              <div style={{ display: 'flex', gap: 8, marginTop: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+                {isAwaiting && (
+                  <button
+                    onClick={() => { setExtraRecipients([]); setShowContactDropdown(false); setTaskCompleteEmail({ task, project: activeProject }); }}
+                    style={{ fontSize: 11, fontWeight: 700, padding: '4px 12px', borderRadius: 6, border: '1px solid #f59e0b', background: 'transparent', color: '#f59e0b', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                  >Resend to client</button>
+                )}
+                {hasRejection && (
+                  <button
+                    onClick={() => openResendModal(task, activeProject)}
+                    style={{ fontSize: 11, fontWeight: 700, padding: '4px 12px', borderRadius: 6, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                  >Send Revision {nextRevNum} →</button>
+                )}
+                {task.approved_at && expandedCoC.has(task.id) && (
+                  <button
+                    onClick={() => setExpandedCoC(prev => { const n = new Set(prev); n.delete(task.id); return n; })}
+                    style={{ fontSize: 10, color: 'var(--text-faint)', background: 'none', border: 'none', cursor: 'pointer', padding: 0, textDecoration: 'underline', textUnderlineOffset: 2, marginLeft: 'auto' }}
+                  >Hide history</button>
+                )}
+              </div>
+            </div>
+          );
+        })()}
       </div>
     );
   };
