@@ -3342,13 +3342,129 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
               <p style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 20, textAlign: 'center', padding: '12px 0' }}>No meetings logged yet.</p>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 20 }}>
-                {meetings.map(mtg => (
-                  <div key={mtg.id} style={{ padding: '12px 14px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8 }}>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>{mtg.title}</div>
-                    {mtg.meeting_date && <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 2 }}>{new Date(mtg.meeting_date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'long', day: 'numeric', year: 'numeric' })}</div>}
-                    {mtg.summary && <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6, marginTop: 6 }}>{mtg.summary}</div>}
-                  </div>
-                ))}
+                {meetings.map(mtg => {
+                  const isExpanded = expandedMeetings.has(mtg.id);
+                  const toggleExpanded = () => setExpandedMeetings(prev => {
+                    const next = new Set(prev);
+                    next.has(mtg.id) ? next.delete(mtg.id) : next.add(mtg.id);
+                    return next;
+                  });
+                  return (
+                    <div key={mtg.id} style={{ padding: '12px 14px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8 }}>
+                      {editingMeeting === mtg.id ? (
+                        /* ── Inline edit form ── */
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                          <input
+                            type="text"
+                            value={editMeetingDraft.title || ''}
+                            onChange={e => setEditMeetingDraft(d => ({ ...d, title: e.target.value }))}
+                            placeholder="Meeting title"
+                            style={{ fontSize: 13, fontWeight: 700, padding: '5px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)' }}
+                          />
+                          <div style={{ display: 'flex', gap: 8 }}>
+                            <input
+                              type="date"
+                              value={editMeetingDraft.meeting_date || ''}
+                              onChange={e => setEditMeetingDraft(d => ({ ...d, meeting_date: e.target.value }))}
+                              style={{ fontSize: 12, padding: '4px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', width: 160 }}
+                            />
+                            <input
+                              type="text"
+                              value={editMeetingDraft.meeting_time || ''}
+                              onChange={e => setEditMeetingDraft(d => ({ ...d, meeting_time: e.target.value }))}
+                              placeholder="Time (e.g. 10:00 AM)"
+                              style={{ fontSize: 12, padding: '4px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', width: 140 }}
+                            />
+                          </div>
+                          <input
+                            type="text"
+                            value={Array.isArray(editMeetingDraft.attendees) ? editMeetingDraft.attendees.join(', ') : (editMeetingDraft.attendees || '')}
+                            onChange={e => setEditMeetingDraft(d => ({ ...d, attendees: e.target.value.split(',').map(s => s.trim()).filter(Boolean) }))}
+                            placeholder="Attendees (comma-separated)"
+                            style={{ fontSize: 12, padding: '4px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)' }}
+                          />
+                          <textarea
+                            value={editMeetingDraft.summary || ''}
+                            onChange={e => setEditMeetingDraft(d => ({ ...d, summary: e.target.value }))}
+                            placeholder="Summary / notes…"
+                            rows={3}
+                            style={{ fontSize: 12, padding: '6px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', lineHeight: 1.6, resize: 'vertical' }}
+                          />
+                          <div style={{ display: 'flex', gap: 6 }}>
+                            <button className="btn btn-primary btn-sm" onClick={handleSaveMeeting} disabled={savingMeeting} style={{ borderRadius: 20 }}>{savingMeeting ? 'Saving…' : 'Save'}</button>
+                            <button className="btn btn-secondary btn-sm" onClick={() => setEditingMeeting(null)} style={{ borderRadius: 20 }}>Cancel</button>
+                          </div>
+                        </div>
+                      ) : (
+                        <>
+                          {/* Header row — click to expand */}
+                          <div
+                            onClick={toggleExpanded}
+                            style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer', marginBottom: isExpanded && mtg.summary ? 8 : 0 }}
+                          >
+                            <div style={{ flex: 1 }}>
+                              <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>{mtg.title}</div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 2, flexWrap: 'wrap' }}>
+                                {mtg.meeting_date && (
+                                  <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>
+                                    {new Date(mtg.meeting_date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'long', day: 'numeric', year: 'numeric' })}
+                                  </span>
+                                )}
+                                {mtg.meeting_time && <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>· {mtg.meeting_time}</span>}
+                                {mtg.attendees?.length > 0 && <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>· {mtg.attendees.join(', ')}</span>}
+                              </div>
+                              {/* 2-line collapsed preview */}
+                              {!isExpanded && mtg.summary && (
+                                <div style={{ fontSize: 12, color: 'var(--text-faint)', marginTop: 4, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
+                                  {mtg.summary}
+                                </div>
+                              )}
+                            </div>
+                            <div style={{ display: 'flex', gap: 6, flexShrink: 0 }} onClick={e => e.stopPropagation()}>
+                              <button
+                                onClick={() => { setEditingMeeting(mtg.id); setEditMeetingDraft({ title: mtg.title, meeting_date: mtg.meeting_date || '', meeting_time: mtg.meeting_time || '', attendees: mtg.attendees || [], summary: mtg.summary || '' }); }}
+                                style={{ fontSize: 10, padding: '3px 7px', borderRadius: 5, border: '1px solid var(--border)', background: 'none', color: 'var(--text-faint)', cursor: 'pointer' }}
+                                title="Edit meeting"
+                              >✏</button>
+                              <button
+                                onClick={async () => { if (!window.confirm('Delete this meeting?')) return; await deleteProjectMeeting(mtg.id); setMeetings(prev => prev.filter(m => m.id !== mtg.id)); }}
+                                style={{ fontSize: 10, padding: '3px 6px', borderRadius: 5, border: '1px solid var(--border)', background: 'none', color: 'var(--text-faint)', cursor: 'pointer' }}
+                                title="Delete meeting"
+                              >🗑</button>
+                              <span style={{ fontSize: 11, color: 'var(--text-faint)', padding: '2px 4px' }}>{isExpanded ? '▲' : '▼'}</span>
+                            </div>
+                          </div>
+
+                          {/* Expanded content */}
+                          {isExpanded && (
+                            <>
+                              {mtg.summary && (
+                                <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6, marginBottom: 8 }}>
+                                  {mtg.summary}
+                                </div>
+                              )}
+                              {mtg.action_items?.length > 0 && (
+                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: 8 }}>
+                                  {mtg.action_items.map((ai, ai_i) => (
+                                    <span key={ai_i} style={{ fontSize: 11, padding: '2px 8px', borderRadius: 12, background: 'var(--bg)', border: '1px solid var(--border)', color: 'var(--text-muted)' }}>
+                                      {ai.owner && <span style={{ fontWeight: 700, color: 'var(--accent)', marginRight: 4 }}>{ai.owner}</span>}
+                                      {ai.title}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+                              {mtg.transcript && (
+                                <div style={{ padding: '10px 12px', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 7, fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.7, whiteSpace: 'pre-wrap', maxHeight: 320, overflowY: 'auto' }}>
+                                  {mtg.transcript}
+                                </div>
+                              )}
+                            </>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             )}
 
