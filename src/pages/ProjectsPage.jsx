@@ -1144,8 +1144,31 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
     }
   };
 
+  // Returns existing tasks whose titles are ≥50% word-overlap with newTitle.
+  // Ignores short filler words (< 3 chars) so "and", "the", "a" don't drive matches.
+  const findSimilarTasks = (newTitle, existingTasks = tasks) => {
+    const sig = str => str.toLowerCase().trim().split(/\s+/).filter(w => w.length >= 3);
+    const newWords = new Set(sig(newTitle));
+    if (newWords.size === 0) return [];
+    return existingTasks.filter(t => {
+      if (!t.title || t.title.toLowerCase().trim() === newTitle.toLowerCase().trim()) return false;
+      const exWords = sig(t.title);
+      const overlap = exWords.filter(w => newWords.has(w)).length;
+      const minLen = Math.min(newWords.size, exWords.length);
+      return minLen > 0 && overlap / minLen >= 0.5;
+    });
+  };
+
   const handleAddTask = async (milestoneId) => {
     if (!newTaskTitle.trim()) return;
+    const similar = findSimilarTasks(newTaskTitle.trim());
+    if (similar.length > 0) {
+      const names = similar.map(t => `• ${t.title}`).join('\n');
+      const ok = window.confirm(
+        `This task looks similar to ${similar.length} existing task${similar.length > 1 ? 's' : ''}:\n\n${names}\n\nAdd it anyway?`
+      );
+      if (!ok) return;
+    }
     const saved = await upsertProjectTask({
       project_id:  activeProject.id,
       milestone_id: milestoneId,
@@ -1459,7 +1482,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
 
     if (!newTasks?.length) return;
 
-    // Insert tasks into DB — skip exact-title duplicates
+    // Insert tasks into DB — skip exact-title duplicates, warn on fuzzy near-dupes
     try {
       const existingTitles = new Set(tasks.map(t => t.title?.toLowerCase().trim()).filter(Boolean));
       const uniqueTasks = newTasks.filter(t => !existingTitles.has(t.title?.toLowerCase().trim()));
@@ -1468,13 +1491,19 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
         if (skippedCount > 0) alert(`All ${skippedCount} task${skippedCount !== 1 ? 's' : ''} from this meeting already exist — none added.`);
         return;
       }
+      // Fuzzy check: flag any new tasks that are ≥50% word-overlap with an existing task
+      const nearDupes = uniqueTasks.filter(t => findSimilarTasks(t.title || '', tasks).length > 0);
       const { data: inserted, error } = await supabase
         .from('project_tasks')
         .insert(uniqueTasks)
         .select();
       if (error) throw error;
       const savedTasks = inserted || uniqueTasks;
-      if (skippedCount > 0) alert(`${savedTasks.length} task${savedTasks.length !== 1 ? 's' : ''} added · ${skippedCount} duplicate${skippedCount !== 1 ? 's' : ''} skipped.`);
+      const parts = [];
+      if (savedTasks.length) parts.push(`${savedTasks.length} task${savedTasks.length !== 1 ? 's' : ''} added`);
+      if (skippedCount > 0) parts.push(`${skippedCount} exact duplicate${skippedCount !== 1 ? 's' : ''} skipped`);
+      if (nearDupes.length > 0) parts.push(`⚠️ ${nearDupes.length} may overlap with existing tasks:\n${nearDupes.map(t => `• ${t.title}`).join('\n')}`);
+      if (parts.length) alert(parts.join(' · '));
       setTasks(prev => [...prev, ...savedTasks]);
       setAllTasks(prev => ({
         ...prev,
@@ -4523,7 +4552,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
 
             {/* Milestone */}
             {milestones.length > 0 && (
-              <div style={{ marginBottom: 20 }}>
+              <div style={{ marginBottom: 12 }}>
                 <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 4 }}>Milestone</label>
                 <select
                   value={actionItemDraft.milestone_id || ''}
@@ -4535,6 +4564,26 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                 </select>
               </div>
             )}
+
+            {/* Similarity warning — live as user edits the title */}
+            {(() => {
+              const similar = actionItemDraft.title.trim() ? findSimilarTasks(actionItemDraft.title.trim()) : [];
+              if (!similar.length) return null;
+              return (
+                <div style={{ marginBottom: 14, padding: '10px 12px', borderRadius: 8, background: '#fffbeb', border: '1px solid #fcd34d' }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: '#92400e', marginBottom: 4 }}>⚠️ Similar task{similar.length > 1 ? 's' : ''} already exist</div>
+                  {similar.map(t => (
+                    <div key={t.id} style={{ fontSize: 11, color: '#78350f', lineHeight: 1.5, display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span style={{ fontSize: 10 }}>•</span>
+                      <span>{t.title}</span>
+                      {t.assigned_to && <span style={{ fontWeight: 700, fontSize: 10, padding: '1px 5px', borderRadius: 3, background: t.assigned_to === 'Mike' ? '#f3e8ff' : '#eff6ff', color: t.assigned_to === 'Mike' ? '#7c3aed' : '#1d4ed8' }}>{t.assigned_to}</span>}
+                      {t.completed && <span style={{ fontSize: 10, color: '#16a34a', fontWeight: 700 }}>✓ done</span>}
+                    </div>
+                  ))}
+                  <div style={{ fontSize: 11, color: '#92400e', marginTop: 6 }}>You can still add it — just making sure it's intentional.</div>
+                </div>
+              );
+            })()}
 
             <div style={{ display: 'flex', gap: 8 }}>
               <button
