@@ -4539,24 +4539,23 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                       </a>
                     )}
                     <div style={{ whiteSpace: 'pre-wrap' }}>{`\nBest,\nPart Human`}</div>
+                    {taskAttachments.length > 0 && (
+                      <div style={{ marginTop: 10, paddingTop: 8, borderTop: '1px solid var(--border)' }}>
+                        <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-faint)', marginBottom: 5 }}>📎 Attached files</div>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+                          {taskAttachments.map(f => (
+                            <a key={f.id} href={f.url} target="_blank" rel="noopener noreferrer"
+                              style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 9px', background: '#f3f4f6', border: '1px solid #d1d5db', borderRadius: 4, fontSize: 11, color: '#111', textDecoration: 'none' }}
+                            >{fileIcon(f.mime_type)} {f.name}</a>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
 
-
-
               {portalUrl && <div style={{ marginTop: 12, fontSize: 11, color: 'var(--text-faint)', textAlign: 'right' }}>💡 Once Gmail opens, paste to drop in the styled message</div>}
-
-              {/* Project notes — shown as context before sending */}
-              {project.internal_notes && (
-                <div style={{ marginTop: 12, padding: '9px 12px', background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: 7, display: 'flex', gap: 8, alignItems: 'flex-start' }}>
-                  <span style={{ fontSize: 13, flexShrink: 0 }}>📌</span>
-                  <div>
-                    <div style={{ fontSize: 10, fontWeight: 700, color: '#92400e', textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 3 }}>Project Notes</div>
-                    <div style={{ fontSize: 12, color: '#92400e', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>{project.internal_notes}</div>
-                  </div>
-                </div>
-              )}
 
               {/* Footer */}
               <div style={{ display: 'flex', alignItems: 'center', marginTop: 14, gap: 10 }}>
