@@ -3184,11 +3184,6 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                                   )}
                                 </div>
                                 <div style={{ display: 'flex', gap: 6, flexShrink: 0 }} onClick={e => e.stopPropagation()}>
-                                  {mtg.transcript && isExpanded && (
-                                    <button onClick={() => setShowTranscript(showTranscript === mtg.id ? null : mtg.id)} style={{ fontSize: 10, fontWeight: 700, padding: '3px 8px', borderRadius: 5, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-faint)', cursor: 'pointer' }}>
-                                      {showTranscript === mtg.id ? 'Hide transcript' : 'Full transcript'}
-                                    </button>
-                                  )}
                                   <button
                                     onClick={() => { setEditingMeeting(mtg.id); setEditMeetingDraft({ title: mtg.title, meeting_date: mtg.meeting_date || '', meeting_time: mtg.meeting_time || '', attendees: mtg.attendees || [], summary: mtg.summary || '' }); }}
                                     style={{ fontSize: 10, padding: '3px 7px', borderRadius: 5, border: '1px solid var(--border)', background: 'none', color: 'var(--text-faint)', cursor: 'pointer' }}
@@ -3207,12 +3202,12 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                               {isExpanded && (
                                 <>
                                   {mtg.summary && (
-                                    <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6, marginBottom: (mtg.action_items?.length > 0 || showTranscript === mtg.id) ? 8 : 0 }}>
+                                    <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6, marginBottom: 8 }}>
                                       {mtg.summary}
                                     </div>
                                   )}
                                   {mtg.action_items?.length > 0 && (
-                                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: showTranscript === mtg.id ? 8 : 0 }}>
+                                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: 8 }}>
                                       {mtg.action_items.map((ai, ai_i) => (
                                         <span key={ai_i} style={{ fontSize: 11, padding: '2px 8px', borderRadius: 12, background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text-muted)' }}>
                                           {ai.owner && <span style={{ fontWeight: 700, color: 'var(--accent)', marginRight: 4 }}>{ai.owner}</span>}
@@ -3221,8 +3216,9 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                                       ))}
                                     </div>
                                   )}
-                                  {showTranscript === mtg.id && mtg.transcript && (
-                                    <div style={{ marginTop: 6, padding: '10px 12px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 7, fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.7, whiteSpace: 'pre-wrap', maxHeight: 280, overflowY: 'auto' }}>
+                                  {/* Full transcript — always visible when expanded */}
+                                  {mtg.transcript && (
+                                    <div style={{ padding: '10px 12px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 7, fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.7, whiteSpace: 'pre-wrap', maxHeight: 320, overflowY: 'auto' }}>
                                       {mtg.transcript}
                                     </div>
                                   )}
