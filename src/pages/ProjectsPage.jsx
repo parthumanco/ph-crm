@@ -895,6 +895,12 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
       ...prev,
       [task.milestone_id]: (prev[task.milestone_id] || []).filter(t => t.id !== task.id),
     }));
+    // Also purge from allTasks so the project card progress bar stays accurate
+    setAllTasks(prev => ({
+      ...prev,
+      [activeProject.id]: (prev[activeProject.id] || []).filter(t => t.id !== task.id),
+    }));
+    setTasks(prev => prev.filter(t => t.id !== task.id));
     setConfirmHardDelete(null);
   };
 
