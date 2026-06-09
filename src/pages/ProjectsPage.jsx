@@ -427,6 +427,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
   const [meetings, setMeetings]                   = useState([]);     // project meetings log
   const [meetingsExpanded, setMeetingsExpanded]   = useState(false);
   const [showTranscript, setShowTranscript]       = useState(null);   // meeting id
+  const [expandedMeetings, setExpandedMeetings]   = useState(new Set()); // expanded meeting ids
   const [editingMeeting, setEditingMeeting]       = useState(null);   // meeting id being edited
   const [editMeetingDraft, setEditMeetingDraft]   = useState({});     // { title, meeting_date, summary }
   const [savingMeeting, setSavingMeeting]         = useState(false);
@@ -582,6 +583,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
     setShowArchivedMilestones(false);
     setEditingMeeting(null);
     setEditMeetingDraft({});
+    setExpandedMeetings(new Set());
     setAddingNote(false);
     setNewNoteText('');
     setEditingNoteId(null);
@@ -3129,57 +3131,82 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                               <button className="btn btn-secondary btn-sm" onClick={() => setEditingMeeting(null)} style={{ borderRadius: 20 }}>Cancel</button>
                             </div>
                           </div>
-                        ) : (
-                          <>
-                            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: mtg.summary ? 8 : 0 }}>
-                              <div style={{ flex: 1 }}>
-                                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>{mtg.title}</div>
-                                {mtg.meeting_date && (
-                                  <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 2 }}>
-                                    {new Date(mtg.meeting_date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'long', day: 'numeric', year: 'numeric' })}
-                                  </div>
-                                )}
+                        ) : (() => {
+                          const isExpanded = expandedMeetings.has(mtg.id);
+                          const toggleExpanded = () => setExpandedMeetings(prev => {
+                            const next = new Set(prev);
+                            next.has(mtg.id) ? next.delete(mtg.id) : next.add(mtg.id);
+                            return next;
+                          });
+                          return (
+                            <>
+                              {/* Header row — always visible, click anywhere to expand */}
+                              <div
+                                onClick={toggleExpanded}
+                                style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer', marginBottom: isExpanded && mtg.summary ? 8 : 0 }}
+                              >
+                                <div style={{ flex: 1 }}>
+                                  <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>{mtg.title}</div>
+                                  {mtg.meeting_date && (
+                                    <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 2 }}>
+                                      {new Date(mtg.meeting_date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'long', day: 'numeric', year: 'numeric' })}
+                                    </div>
+                                  )}
+                                  {/* Collapsed preview — first 120 chars of summary */}
+                                  {!isExpanded && mtg.summary && (
+                                    <div style={{ fontSize: 12, color: 'var(--text-faint)', marginTop: 4, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
+                                      {mtg.summary}
+                                    </div>
+                                  )}
+                                </div>
+                                <div style={{ display: 'flex', gap: 6, flexShrink: 0 }} onClick={e => e.stopPropagation()}>
+                                  {mtg.transcript && isExpanded && (
+                                    <button onClick={() => setShowTranscript(showTranscript === mtg.id ? null : mtg.id)} style={{ fontSize: 10, fontWeight: 700, padding: '3px 8px', borderRadius: 5, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-faint)', cursor: 'pointer' }}>
+                                      {showTranscript === mtg.id ? 'Hide transcript' : 'Full transcript'}
+                                    </button>
+                                  )}
+                                  <button
+                                    onClick={() => { setEditingMeeting(mtg.id); setEditMeetingDraft({ title: mtg.title, meeting_date: mtg.meeting_date || '', summary: mtg.summary || '' }); }}
+                                    style={{ fontSize: 10, padding: '3px 7px', borderRadius: 5, border: '1px solid var(--border)', background: 'none', color: 'var(--text-faint)', cursor: 'pointer' }}
+                                    title="Edit meeting"
+                                  >✏</button>
+                                  <button
+                                    onClick={async () => { if (!window.confirm('Delete this meeting?')) return; await deleteProjectMeeting(mtg.id); setMeetings(prev => prev.filter(m => m.id !== mtg.id)); }}
+                                    style={{ fontSize: 10, padding: '3px 6px', borderRadius: 5, border: '1px solid var(--border)', background: 'none', color: 'var(--text-faint)', cursor: 'pointer' }}
+                                    title="Delete meeting"
+                                  >🗑</button>
+                                  <span style={{ fontSize: 11, color: 'var(--text-faint)', padding: '2px 4px' }}>{isExpanded ? '▲' : '▼'}</span>
+                                </div>
                               </div>
-                              <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
-                                {mtg.transcript && (
-                                  <button onClick={() => setShowTranscript(showTranscript === mtg.id ? null : mtg.id)} style={{ fontSize: 10, fontWeight: 700, padding: '3px 8px', borderRadius: 5, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-faint)', cursor: 'pointer' }}>
-                                    {showTranscript === mtg.id ? 'Hide' : 'Transcript'}
-                                  </button>
-                                )}
-                                <button
-                                  onClick={() => { setEditingMeeting(mtg.id); setEditMeetingDraft({ title: mtg.title, meeting_date: mtg.meeting_date || '', summary: mtg.summary || '' }); }}
-                                  style={{ fontSize: 10, padding: '3px 7px', borderRadius: 5, border: '1px solid var(--border)', background: 'none', color: 'var(--text-faint)', cursor: 'pointer' }}
-                                  title="Edit meeting"
-                                >✏</button>
-                                <button
-                                  onClick={async () => { if (!window.confirm('Delete this meeting?')) return; await deleteProjectMeeting(mtg.id); setMeetings(prev => prev.filter(m => m.id !== mtg.id)); }}
-                                  style={{ fontSize: 10, padding: '3px 6px', borderRadius: 5, border: '1px solid var(--border)', background: 'none', color: 'var(--text-faint)', cursor: 'pointer' }}
-                                  title="Delete meeting"
-                                >🗑</button>
-                              </div>
-                            </div>
-                            {mtg.summary && (
-                              <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6, marginBottom: (mtg.action_items?.length > 0 || showTranscript === mtg.id) ? 8 : 0 }}>
-                                {mtg.summary}
-                              </div>
-                            )}
-                            {mtg.action_items?.length > 0 && (
-                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: showTranscript === mtg.id ? 8 : 0 }}>
-                                {mtg.action_items.map((ai, ai_i) => (
-                                  <span key={ai_i} style={{ fontSize: 11, padding: '2px 8px', borderRadius: 12, background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text-muted)' }}>
-                                    {ai.owner && <span style={{ fontWeight: 700, color: 'var(--accent)', marginRight: 4 }}>{ai.owner}</span>}
-                                    {ai.title}
-                                  </span>
-                                ))}
-                              </div>
-                            )}
-                            {showTranscript === mtg.id && mtg.transcript && (
-                              <div style={{ marginTop: 6, padding: '10px 12px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 7, fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.7, whiteSpace: 'pre-wrap', maxHeight: 280, overflowY: 'auto' }}>
-                                {mtg.transcript}
-                              </div>
-                            )}
-                          </>
-                        )}
+
+                              {/* Expanded content */}
+                              {isExpanded && (
+                                <>
+                                  {mtg.summary && (
+                                    <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6, marginBottom: (mtg.action_items?.length > 0 || showTranscript === mtg.id) ? 8 : 0 }}>
+                                      {mtg.summary}
+                                    </div>
+                                  )}
+                                  {mtg.action_items?.length > 0 && (
+                                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: showTranscript === mtg.id ? 8 : 0 }}>
+                                      {mtg.action_items.map((ai, ai_i) => (
+                                        <span key={ai_i} style={{ fontSize: 11, padding: '2px 8px', borderRadius: 12, background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text-muted)' }}>
+                                          {ai.owner && <span style={{ fontWeight: 700, color: 'var(--accent)', marginRight: 4 }}>{ai.owner}</span>}
+                                          {ai.title}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  )}
+                                  {showTranscript === mtg.id && mtg.transcript && (
+                                    <div style={{ marginTop: 6, padding: '10px 12px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 7, fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.7, whiteSpace: 'pre-wrap', maxHeight: 280, overflowY: 'auto' }}>
+                                      {mtg.transcript}
+                                    </div>
+                                  )}
+                                </>
+                              )}
+                            </>
+                          );
+                        })()}
                       </div>
                     ))}
                   </div>
