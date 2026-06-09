@@ -2715,12 +2715,6 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
             </div>
           </div>
         )}
-        {activeProject.internal_notes && (
-          <div style={{ marginBottom: 16, padding: '10px 14px', background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: 8, display: 'flex', gap: 10, alignItems: 'flex-start' }}>
-            <span style={{ fontSize: 14, flexShrink: 0, marginTop: 1 }}>📌</span>
-            <div style={{ fontSize: 12, color: '#92400e', lineHeight: 1.65, whiteSpace: 'pre-wrap', flex: 1 }}>{activeProject.internal_notes}</div>
-          </div>
-        )}
         {loadingDetail ? (
           <div className="empty-state"><div className="spinner" /><p style={{ marginTop: 12 }}>Loading timeline…</p></div>
         ) : milestones.length === 0 ? (
