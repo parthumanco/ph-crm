@@ -2239,14 +2239,33 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
               onBlur={async e => { const hrs = e.target.value === '' ? null : parseFloat(e.target.value); await upsertProjectTask({ ...task, estimated_hours: hrs }); }}
               style={{ fontSize: 11, padding: '2px 5px', border: '1px solid var(--border)', borderRadius: 4, background: 'var(--surface)', width: 52, flexShrink: 0, color: 'var(--text)' }}
             />
-            {task.due_date && <span style={{ fontSize: 11, color: 'var(--text-faint)', whiteSpace: 'nowrap', flexShrink: 0 }}>{fmtDate(task.due_date)}</span>}
+            {/* Due date with label */}
+            <div style={{ flexShrink: 0, textAlign: 'center', minWidth: 64 }}>
+              <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 2 }}>Due Date</div>
+              <div style={{ fontSize: 11, color: task.due_date ? 'var(--text-muted)' : 'var(--text-faint)', whiteSpace: 'nowrap' }}>{task.due_date ? fmtDate(task.due_date) : '—'}</div>
+            </div>
+            {/* Mentions pill — colored if mentions exist */}
+            {(() => {
+              const tl = task.title?.toLowerCase() || '';
+              const hasMentions = meetings.some(m =>
+                [m.title, m.summary, m.transcript, ...(m.action_items || []).map(ai => ai.title)].some(f => f?.toLowerCase().includes(tl))
+              );
+              return (
+                <button
+                  onClick={() => setMentionsPanel(task)}
+                  style={{
+                    flexShrink: 0, fontSize: 10, fontWeight: 700, padding: '3px 9px', borderRadius: 20, cursor: 'pointer', whiteSpace: 'nowrap', border: 'none',
+                    background: hasMentions ? 'var(--accent)' : 'var(--border)',
+                    color: hasMentions ? '#fff' : 'var(--text-faint)',
+                  }}
+                  title="View meeting mentions"
+                >💬 Mentions</button>
+              );
+            })()}
             {/* Action buttons */}
             <div className="task-actions" style={{ display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 }}>
               <button onClick={() => startEditTask(task)} title="Edit task" style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: '4px 5px', borderRadius: 4, display: 'flex', alignItems: 'center', flexShrink: 0 }}>
                 <svg width="15" height="15" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M9.5 2.5l2 2-7 7H2.5v-2l7-7z"/></svg>
-              </button>
-              <button onClick={() => setMentionsPanel(task)} title="View meeting mentions" style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: '4px 5px', borderRadius: 4, display: 'flex', alignItems: 'center', flexShrink: 0 }}>
-                <svg width="15" height="15" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M2 2h10a1 1 0 011 1v6a1 1 0 01-1 1H4l-3 3V3a1 1 0 011-1z"/></svg>
               </button>
               {milestones.length > 0 && (
                 <select
@@ -2565,6 +2584,13 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                     <span style={{ fontSize: 11, color: '#b45309', marginLeft: 4 }}>{unassigned.length} task{unassigned.length !== 1 ? 's' : ''} — not yet placed in a milestone</span>
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+                    {/* Column header row */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 16px 6px 48px', borderTop: '1px solid #fde68a', background: '#fef9c3' }}>
+                      <div style={{ flex: 1, fontSize: 9, fontWeight: 700, color: '#92400e', textTransform: 'uppercase', letterSpacing: '.06em' }}>Task</div>
+                      <div style={{ width: 110, fontSize: 9, fontWeight: 700, color: '#92400e', textTransform: 'uppercase', letterSpacing: '.06em', flexShrink: 0 }}>Assigned To</div>
+                      <div style={{ width: 52, fontSize: 9, fontWeight: 700, color: '#92400e', textTransform: 'uppercase', letterSpacing: '.06em', flexShrink: 0 }}>Hrs</div>
+                      <div style={{ minWidth: 64, fontSize: 9, fontWeight: 700, color: '#92400e', textTransform: 'uppercase', letterSpacing: '.06em', flexShrink: 0, textAlign: 'center' }}>Due Date</div>
+                    </div>
                     {unassigned.map(task => renderUnassignedTaskRow(task))}
                   </div>
                 </div>
@@ -3189,6 +3215,13 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                     <span style={{ fontSize: 11, color: '#b45309', marginLeft: 4 }}>{unassigned.length} task{unassigned.length !== 1 ? 's' : ''} — not yet placed in a milestone</span>
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+                    {/* Column header row */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 16px 6px 48px', borderTop: '1px solid #fde68a', background: '#fef9c3' }}>
+                      <div style={{ flex: 1, fontSize: 9, fontWeight: 700, color: '#92400e', textTransform: 'uppercase', letterSpacing: '.06em' }}>Task</div>
+                      <div style={{ width: 110, fontSize: 9, fontWeight: 700, color: '#92400e', textTransform: 'uppercase', letterSpacing: '.06em', flexShrink: 0 }}>Assigned To</div>
+                      <div style={{ width: 52, fontSize: 9, fontWeight: 700, color: '#92400e', textTransform: 'uppercase', letterSpacing: '.06em', flexShrink: 0 }}>Hrs</div>
+                      <div style={{ minWidth: 64, fontSize: 9, fontWeight: 700, color: '#92400e', textTransform: 'uppercase', letterSpacing: '.06em', flexShrink: 0, textAlign: 'center' }}>Due Date</div>
+                    </div>
                     {unassigned.map(task => renderUnassignedTaskRow(task))}
                   </div>
                 </div>
