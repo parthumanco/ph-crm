@@ -4513,12 +4513,17 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
             {/* Title */}
             <div style={{ marginBottom: 12 }}>
               <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 4 }}>Task title</label>
-              <input
+              <textarea
                 autoFocus
-                type="text"
+                rows={2}
                 value={actionItemDraft.title}
-                onChange={e => setActionItemDraft(d => ({ ...d, title: e.target.value }))}
-                style={{ width: '100%', fontSize: 13, padding: '7px 10px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)' }}
+                onChange={e => {
+                  setActionItemDraft(d => ({ ...d, title: e.target.value }));
+                  e.target.style.height = 'auto';
+                  e.target.style.height = e.target.scrollHeight + 'px';
+                }}
+                ref={el => { if (el) { el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px'; } }}
+                style={{ width: '100%', fontSize: 13, padding: '7px 10px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', resize: 'none', lineHeight: 1.5, overflow: 'hidden', fontFamily: 'inherit' }}
               />
             </div>
 
