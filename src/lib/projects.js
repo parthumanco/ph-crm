@@ -836,15 +836,19 @@ export async function deleteProjectMeeting(id) {
   if (error) throw new Error(error.message);
 }
 
-export async function parseMeetingWithAI(transcript) {
+export async function parseMeetingWithAI(transcript, existingTasks = []) {
   const key = import.meta.env.VITE_ANTHROPIC_API_KEY;
   if (!key) throw new Error('No API key configured');
 
   const today = new Date().toISOString().slice(0, 10);
 
+  const existingTasksSection = existingTasks.length > 0
+    ? `\n\nEXISTING PROJECT TASKS (already in the system — cross-reference these):\n${existingTasks.map((t, i) => `${i + 1}. "${t.title}"${t.assigned_to ? ` · assigned: ${t.assigned_to}` : ''}${t.due_date ? ` · due: ${t.due_date}` : ''}${t.completed ? ' · ✓ completed' : ''}`).join('\n')}`
+    : '';
+
   const prompt = `You are an expert project manager. Read this meeting transcript and extract a structured summary.
 
-Today's date: ${today}
+Today's date: ${today}${existingTasksSection}
 
 Return ONLY a valid JSON object with no markdown, no explanation, no code fences:
 {
@@ -861,7 +865,17 @@ Return ONLY a valid JSON object with no markdown, no explanation, no code fences
       "title": "Specific actionable task",
       "owner": "Person responsible if mentioned, otherwise empty string",
       "due_date": "YYYY-MM-DD if a deadline is mentioned, otherwise null",
-      "notes": "Any extra context for this task, or empty string"
+      "estimated_hours": null,
+      "notes": "Any extra context for this task, or empty string",
+      "existing_task_title": "Exact title of an existing task this maps to, or null if this is a new task"
+    }
+  ],
+  "suggested_updates": [
+    {
+      "existing_task_title": "Exact title of the existing task to update",
+      "field": "due_date | title | assigned_to",
+      "suggested_value": "The new value",
+      "reason": "One sentence explaining why this update is suggested"
     }
   ]
 }
@@ -871,6 +885,9 @@ Rules:
 - Keep task titles concise and actionable (start with a verb)
 - If no action items are mentioned, return an empty array
 - For company_name: extract the client/prospect company, NOT Part Human or the user's own company
+- For existing_task_title: if an action item clearly refers to an existing task, set this to the exact existing task title so it won't be duplicated
+- For suggested_updates: if the meeting mentions a new deadline, scope change, or reassignment for an EXISTING task, suggest that update here
+- If no updates are suggested, return an empty array for suggested_updates
 - Return ONLY the raw JSON object, nothing else
 
 TRANSCRIPT:

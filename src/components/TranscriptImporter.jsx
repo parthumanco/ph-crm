@@ -41,7 +41,7 @@ function suggestMilestoneId(taskTitle, milestones) {
  *   resolveDealId — async fn(companyName, contactName, contactEmail) => dealId
  *                   called before saving; creates or finds the deal
  */
-export default function TranscriptImporter({ projectId, dealId, milestones = [], owners = OWNERS, defaultMsId, onImported, onClose, prospectMode = false, allDeals = [], resolveDealId, initialTranscript = '' }) {
+export default function TranscriptImporter({ projectId, dealId, milestones = [], owners = OWNERS, existingTasks = [], defaultMsId, onImported, onClose, prospectMode = false, allDeals = [], resolveDealId, initialTranscript = '' }) {
   const isDealMode     = !!dealId && !projectId;
   const isProspectMode = prospectMode && !dealId && !projectId;
 
@@ -65,7 +65,7 @@ export default function TranscriptImporter({ projectId, dealId, milestones = [],
     setError('');
     setStep('parsing');
     try {
-      const result = await parseMeetingWithAI(transcript);
+      const result = await parseMeetingWithAI(transcript, existingTasks);
       setParsed(result);
 
       // Populate prospect fields from AI extraction
@@ -148,7 +148,7 @@ export default function TranscriptImporter({ projectId, dealId, milestones = [],
         actionItems:  selectedItems.map(({ title, owner, due_date, notes }) => ({ title, owner, due_date, notes })),
       });
 
-      onImported({ meeting, tasks, milestoneId: defaultMsId, dealId: resolvedDealId, companyName: companyName.trim() });
+      onImported({ meeting, tasks, suggestedUpdates: parsed.suggested_updates || [], milestoneId: defaultMsId, dealId: resolvedDealId, companyName: companyName.trim() });
     } catch (e) {
       setError(e.message || 'Failed to save');
       setStep('preview');

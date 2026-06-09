@@ -434,6 +434,10 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
   // Action-item → Task push
   const [actionItemDraft, setActionItemDraft]     = useState(null); // { title, assigned_to, estimated_hours, milestone_id } | null
   const [pushingActionItem, setPushingActionItem] = useState(false);
+  // Task mentions history panel
+  const [mentionsPanel, setMentionsPanel]         = useState(null); // task | null
+  // Suggested task updates from AI (from transcript import)
+  const [pendingUpdates, setPendingUpdates]       = useState([]);   // [{ existing_task_title, field, suggested_value, reason, accepted }]
   // Structured project notes — stored as JSON array in internal_notes
   const [projectNotes, setProjectNotes]           = useState([]);     // [{ id, text, created_at }]
   const [addingNote, setAddingNote]               = useState(false);
@@ -1466,7 +1470,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
   };
 
   // ── Transcript import ─────────────────────────────────────────────────────
-  const handleTranscriptImported = async ({ meeting, tasks: newTasks }) => {
+  const handleTranscriptImported = async ({ meeting, tasks: newTasks, suggestedUpdates = [] }) => {
     setShowTranscriptImporter(false);
     setTranscriptDefaultMs(null);
 
@@ -1480,12 +1484,48 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
       if (meeting) { setMeetings(prev => [meeting, ...prev]); setMeetingsExpanded(true); }
     }
 
+    // Queue suggested updates for review (if any)
+    if (suggestedUpdates.length > 0) {
+      setPendingUpdates(suggestedUpdates.map(u => ({ ...u, accepted: true })));
+    }
+
     if (!newTasks?.length) return;
+
+    // Auto-create or find a milestone named after the meeting
+    let meetingMilestoneId = null;
+    if (meeting?.title) {
+      const existing = milestones.find(m => m.title?.toLowerCase().trim() === meeting.title.toLowerCase().trim());
+      if (existing) {
+        meetingMilestoneId = existing.id;
+      } else {
+        try {
+          const baseDate = meeting.meeting_date || new Date().toISOString().slice(0, 10);
+          const dueDate  = new Date(baseDate + 'T12:00:00');
+          dueDate.setDate(dueDate.getDate() + 14);
+          const newMs = await upsertMilestone({
+            project_id:  activeProject.id,
+            title:       meeting.title,
+            start_date:  baseDate,
+            due_date:    dueDate.toISOString().slice(0, 10),
+            status:      'in_progress',
+            order_index: milestones.length,
+            created_at:  new Date().toISOString(),
+          });
+          meetingMilestoneId = newMs.id;
+          setMilestones(prev => [...prev, newMs]);
+          setExpanded(prev => ({ ...prev, [newMs.id]: true }));
+        } catch (e) {
+          console.error('Failed to auto-create meeting milestone:', e.message);
+        }
+      }
+    }
 
     // Insert tasks into DB — skip exact-title duplicates, warn on fuzzy near-dupes
     try {
       const existingTitles = new Set(tasks.map(t => t.title?.toLowerCase().trim()).filter(Boolean));
-      const uniqueTasks = newTasks.filter(t => !existingTitles.has(t.title?.toLowerCase().trim()));
+      const uniqueTasks = newTasks
+        .filter(t => !existingTitles.has(t.title?.toLowerCase().trim()))
+        .map(t => ({ ...t, milestone_id: meetingMilestoneId || t.milestone_id || null }));
       const skippedCount = newTasks.length - uniqueTasks.length;
       if (!uniqueTasks.length) {
         if (skippedCount > 0) alert(`All ${skippedCount} task${skippedCount !== 1 ? 's' : ''} from this meeting already exist — none added.`);
@@ -1503,6 +1543,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
       if (savedTasks.length) parts.push(`${savedTasks.length} task${savedTasks.length !== 1 ? 's' : ''} added`);
       if (skippedCount > 0) parts.push(`${skippedCount} exact duplicate${skippedCount !== 1 ? 's' : ''} skipped`);
       if (nearDupes.length > 0) parts.push(`⚠️ ${nearDupes.length} may overlap with existing tasks:\n${nearDupes.map(t => `• ${t.title}`).join('\n')}`);
+      if (meetingMilestoneId && !milestones.find(m => m.id === meetingMilestoneId)) parts.push(`📋 New milestone created: "${meeting.title}"`);
       if (parts.length) alert(parts.join(' · '));
       setTasks(prev => [...prev, ...savedTasks]);
       setAllTasks(prev => ({
@@ -2204,6 +2245,9 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
               <button onClick={() => startEditTask(task)} title="Edit task" style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: '4px 5px', borderRadius: 4, display: 'flex', alignItems: 'center', flexShrink: 0 }}>
                 <svg width="15" height="15" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M9.5 2.5l2 2-7 7H2.5v-2l7-7z"/></svg>
               </button>
+              <button onClick={() => setMentionsPanel(task)} title="View meeting mentions" style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: '4px 5px', borderRadius: 4, display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+                <svg width="15" height="15" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M2 2h10a1 1 0 011 1v6a1 1 0 01-1 1H4l-3 3V3a1 1 0 011-1z"/></svg>
+              </button>
               {milestones.length > 0 && (
                 <select
                   defaultValue=""
@@ -2876,6 +2920,10 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                                       <svg width="15" height="15" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="1" width="8" height="11" rx="1"/><path d="M5 1v3h5"/><path d="M4 7h4M4 9.5h3"/></svg>
                                     </button>
                                   )}
+                                  {/* Meeting mentions */}
+                                  <button onClick={() => setMentionsPanel(task)} title="View meeting mentions" style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: '4px 5px', borderRadius: 4, display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+                                    <svg width="15" height="15" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M2 2h10a1 1 0 011 1v6a1 1 0 01-1 1H4l-3 3V3a1 1 0 011-1z"/></svg>
+                                  </button>
                                   {/* Attach file */}
                                   <button onClick={e => { e.stopPropagation(); triggerFileUpload(activeProject.id, null, null, task.id); }} disabled={uploadingFor === task.id} title="Attach file" style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: '4px 5px', borderRadius: 4, display: 'flex', alignItems: 'center', flexShrink: 0 }}>
                                     {uploadingFor === task.id
@@ -4751,11 +4799,162 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
         </div>
       )}
 
+      {/* ── Pending task updates from AI cross-reference ── */}
+      {pendingUpdates.length > 0 && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 1010, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.35)' }} onClick={() => setPendingUpdates([])} />
+          <div style={{ position: 'relative', zIndex: 1, background: 'var(--bg)', borderRadius: 14, padding: 24, width: 520, maxWidth: '95vw', boxShadow: '0 16px 48px rgba(0,0,0,0.18)', maxHeight: '80vh', overflowY: 'auto' }}>
+            <h3 style={{ fontSize: 15, fontWeight: 800, marginBottom: 4 }}>🔄 Suggested Task Updates</h3>
+            <p style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 16, lineHeight: 1.5 }}>
+              The AI noticed these possible updates to existing tasks based on the new meeting. Check the ones you'd like to apply.
+            </p>
+            {pendingUpdates.map((u, i) => (
+              <div key={i} style={{ padding: '12px 14px', borderRadius: 8, border: `1px solid ${u.accepted ? 'var(--accent)' : 'var(--border)'}`, background: u.accepted ? 'var(--accent-light, #ede9fe)' : 'var(--surface)', marginBottom: 8, cursor: 'pointer' }} onClick={() => setPendingUpdates(prev => prev.map((x, xi) => xi === i ? { ...x, accepted: !x.accepted } : x))}>
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                  <input type="checkbox" checked={u.accepted} onChange={() => {}} style={{ marginTop: 2, accentColor: 'var(--accent)', flexShrink: 0 }} />
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)', marginBottom: 2 }}>{u.existing_task_title}</div>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 4 }}>
+                      <span style={{ fontWeight: 700, textTransform: 'uppercase', fontSize: 10, letterSpacing: '.04em', color: 'var(--accent)' }}>{u.field}</span>
+                      {' '}&rarr;{' '}
+                      <span style={{ fontWeight: 600 }}>{u.suggested_value}</span>
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--text-faint)', fontStyle: 'italic' }}>{u.reason}</div>
+                  </div>
+                </div>
+              </div>
+            ))}
+            <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
+              <button
+                className="btn btn-primary btn-sm"
+                style={{ borderRadius: 20, flex: 1 }}
+                onClick={async () => {
+                  const accepted = pendingUpdates.filter(u => u.accepted);
+                  for (const u of accepted) {
+                    const task = tasks.find(t => t.title?.toLowerCase().trim() === u.existing_task_title?.toLowerCase().trim());
+                    if (!task) continue;
+                    const patch = { [u.field]: u.suggested_value };
+                    const updated = { ...task, ...patch };
+                    try {
+                      await upsertProjectTask(updated);
+                      const patchFn = t => t.id === task.id ? updated : t;
+                      setTasks(prev => prev.map(patchFn));
+                      setAllTasks(prev => ({ ...prev, [activeProject.id]: (prev[activeProject.id] || []).map(patchFn) }));
+                    } catch (e) { console.error('Update failed:', e.message); }
+                  }
+                  setPendingUpdates([]);
+                }}
+              >Apply {pendingUpdates.filter(u => u.accepted).length} update{pendingUpdates.filter(u => u.accepted).length !== 1 ? 's' : ''}</button>
+              <button className="btn btn-secondary btn-sm" onClick={() => setPendingUpdates([])} style={{ borderRadius: 20 }}>Dismiss</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Task mentions panel ── */}
+      {mentionsPanel && (() => {
+        const taskTitle = mentionsPanel.title?.toLowerCase() || '';
+        const sig = str => str.toLowerCase().split(/\s+/).filter(w => w.length >= 3);
+        const taskWords = new Set(sig(mentionsPanel.title || ''));
+        const scoreMeeting = (mtg) => {
+          const fields = [mtg.title || '', mtg.summary || '', mtg.transcript || '', ...(mtg.action_items || []).map(ai => ai.title || '')];
+          const fullText = fields.join(' ').toLowerCase();
+          if (fullText.includes(taskTitle)) return 2; // direct hit
+          const words = sig(fullText);
+          const overlap = words.filter(w => taskWords.has(w)).length;
+          return overlap / Math.max(taskWords.size, 1) >= 0.4 ? 1 : 0;
+        };
+        const matchingMeetings = meetings.map(m => ({ mtg: m, score: scoreMeeting(m) })).filter(x => x.score > 0).sort((a, b) => b.score - a.score);
+
+        // Find the snippet within a field that contains the task mention
+        const getSnippet = (text, maxLen = 200) => {
+          if (!text) return null;
+          const lower = text.toLowerCase();
+          const idx = lower.indexOf(taskTitle);
+          if (idx === -1) return text.slice(0, maxLen) + (text.length > maxLen ? '…' : '');
+          const start = Math.max(0, idx - 60);
+          const end   = Math.min(text.length, idx + taskTitle.length + 140);
+          return (start > 0 ? '…' : '') + text.slice(start, end) + (end < text.length ? '…' : '');
+        };
+
+        return (
+          <>
+            <div style={{ position: 'fixed', inset: 0, zIndex: 850, background: 'rgba(0,0,0,0.2)' }} onClick={() => setMentionsPanel(null)} />
+            <div style={{ position: 'fixed', top: 0, right: 0, bottom: 0, zIndex: 860, width: 460, maxWidth: '92vw', background: 'var(--bg)', boxShadow: '-8px 0 40px rgba(0,0,0,0.18)', display: 'flex', flexDirection: 'column', borderLeft: '1px solid var(--border)' }}>
+              {/* Header */}
+              <div style={{ padding: '20px 24px 16px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 4 }}>Meeting Mentions</div>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)', lineHeight: 1.4 }}>{mentionsPanel.title}</div>
+                  </div>
+                  <button onClick={() => setMentionsPanel(null)} style={{ background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: 'var(--text-muted)', padding: '2px 4px', lineHeight: 1 }}>✕</button>
+                </div>
+                <div style={{ fontSize: 12, color: 'var(--text-faint)', marginTop: 8 }}>
+                  {matchingMeetings.length === 0 ? 'No meetings mention this task yet.' : `Found in ${matchingMeetings.length} meeting${matchingMeetings.length !== 1 ? 's' : ''}`}
+                </div>
+              </div>
+              {/* Mention list */}
+              <div style={{ flex: 1, overflowY: 'auto', padding: '16px 24px' }}>
+                {matchingMeetings.length === 0 ? (
+                  <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--text-faint)', fontSize: 13 }}>
+                    <div style={{ fontSize: 32, marginBottom: 10 }}>💬</div>
+                    <div>This task hasn't appeared in any meeting notes yet.</div>
+                    <div style={{ fontSize: 11, marginTop: 6 }}>Mentions will show up here when a meeting transcript or summary references this task.</div>
+                  </div>
+                ) : matchingMeetings.map(({ mtg, score }) => {
+                  const dateStr = mtg.meeting_date ? new Date(mtg.meeting_date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }) : null;
+                  // Find which fields contain the mention
+                  const matchingActionItems = (mtg.action_items || []).filter(ai => ai.title?.toLowerCase().includes(taskTitle) || sig(ai.title || '').some(w => taskWords.has(w)));
+                  const summarySnippet   = mtg.summary?.toLowerCase().includes(taskTitle) || sig(mtg.summary || '').some(w => taskWords.has(w)) ? getSnippet(mtg.summary) : null;
+                  const transcriptSnippet = mtg.transcript?.toLowerCase().includes(taskTitle) ? getSnippet(mtg.transcript) : null;
+                  return (
+                    <div key={mtg.id} style={{ marginBottom: 20, padding: '14px 16px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)' }}>
+                      {/* Meeting header */}
+                      <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 2 }}>{mtg.title}</div>
+                      {dateStr && <div style={{ fontSize: 11, color: 'var(--text-faint)', marginBottom: 10 }}>{dateStr}{mtg.meeting_time ? ` · ${mtg.meeting_time}` : ''}{mtg.attendees?.length ? ` · ${mtg.attendees.join(', ')}` : ''}</div>}
+                      {/* Action item matches */}
+                      {matchingActionItems.length > 0 && (
+                        <div style={{ marginBottom: 8 }}>
+                          <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--accent)', textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 4 }}>Action Items</div>
+                          {matchingActionItems.map((ai, i) => (
+                            <div key={i} style={{ fontSize: 12, color: 'var(--text)', padding: '4px 8px', borderRadius: 6, background: 'var(--accent-light, #ede9fe)', marginBottom: 3, display: 'flex', gap: 6 }}>
+                              {ai.owner && <span style={{ fontWeight: 700, color: 'var(--accent)', flexShrink: 0 }}>{ai.owner}</span>}
+                              <span>{ai.title}</span>
+                              {ai.due_date && <span style={{ color: 'var(--text-faint)', marginLeft: 'auto', flexShrink: 0, fontSize: 10 }}>{ai.due_date}</span>}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {/* Summary snippet */}
+                      {summarySnippet && (
+                        <div style={{ marginBottom: 8 }}>
+                          <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 4 }}>Summary</div>
+                          <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6, fontStyle: 'italic' }}>"{summarySnippet}"</div>
+                        </div>
+                      )}
+                      {/* Transcript snippet */}
+                      {transcriptSnippet && (
+                        <div>
+                          <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 4 }}>Transcript</div>
+                          <div style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.65, fontFamily: 'monospace', background: 'var(--bg)', padding: '8px 10px', borderRadius: 6, whiteSpace: 'pre-wrap' }}>{transcriptSnippet}</div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </>
+        );
+      })()}
+
       {showTranscriptImporter && activeProject && (
         <TranscriptImporter
           projectId={activeProject.id}
           milestones={milestones}
           owners={owners}
+          existingTasks={tasks}
           defaultMsId={transcriptDefaultMs}
           onImported={handleTranscriptImported}
           onClose={() => { setShowTranscriptImporter(false); setTranscriptDefaultMs(null); }}
