@@ -3211,19 +3211,32 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                                   )}
                                   {mtg.action_items?.length > 0 && (
                                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: 8 }}>
-                                      {mtg.action_items.map((ai, ai_i) => (
-                                        <span
-                                          key={ai_i}
-                                          onClick={() => setActionItemDraft({ title: ai.title || '', assigned_to: ai.owner || '', estimated_hours: ai.estimated_hours || '', milestone_id: milestones[0]?.id || null })}
-                                          title="Click to add as task"
-                                          style={{ fontSize: 11, padding: '2px 8px', borderRadius: 12, background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text-muted)', cursor: 'pointer', transition: 'background .15s, border-color .15s' }}
-                                          onMouseEnter={e => { e.currentTarget.style.background = 'var(--accent-light, #ede9fe)'; e.currentTarget.style.borderColor = 'var(--accent)'; }}
-                                          onMouseLeave={e => { e.currentTarget.style.background = 'var(--surface)'; e.currentTarget.style.borderColor = 'var(--border)'; }}
-                                        >
-                                          {ai.owner && <span style={{ fontWeight: 700, color: 'var(--accent)', marginRight: 4 }}>{ai.owner}</span>}
-                                          {ai.title}
-                                        </span>
-                                      ))}
+                                      {mtg.action_items.map((ai, ai_i) => {
+                                        const alreadyTask = tasks.some(t => t.title?.toLowerCase().trim() === ai.title?.toLowerCase().trim());
+                                        return alreadyTask ? (
+                                          <span
+                                            key={ai_i}
+                                            title="Already added as a task"
+                                            style={{ fontSize: 11, padding: '2px 8px', borderRadius: 12, background: '#f0fdf4', border: '1px solid #86efac', color: '#15803d', cursor: 'default', display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                                          >
+                                            <span style={{ fontSize: 10 }}>✓</span>
+                                            {ai.owner && <span style={{ fontWeight: 700, marginRight: 2 }}>{ai.owner}</span>}
+                                            {ai.title}
+                                          </span>
+                                        ) : (
+                                          <span
+                                            key={ai_i}
+                                            onClick={() => setActionItemDraft({ title: ai.title || '', assigned_to: ai.owner || '', estimated_hours: ai.estimated_hours || '', milestone_id: milestones[0]?.id || null })}
+                                            title="Click to add as task"
+                                            style={{ fontSize: 11, padding: '2px 8px', borderRadius: 12, background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text-muted)', cursor: 'pointer', transition: 'background .15s, border-color .15s' }}
+                                            onMouseEnter={e => { e.currentTarget.style.background = 'var(--accent-light, #ede9fe)'; e.currentTarget.style.borderColor = 'var(--accent)'; }}
+                                            onMouseLeave={e => { e.currentTarget.style.background = 'var(--surface)'; e.currentTarget.style.borderColor = 'var(--border)'; }}
+                                          >
+                                            {ai.owner && <span style={{ fontWeight: 700, color: 'var(--accent)', marginRight: 4 }}>{ai.owner}</span>}
+                                            {ai.title}
+                                          </span>
+                                        );
+                                      })}
                                     </div>
                                   )}
                                   {/* Full transcript — always visible when expanded */}
@@ -3455,19 +3468,32 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                               )}
                               {mtg.action_items?.length > 0 && (
                                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: 8 }}>
-                                  {mtg.action_items.map((ai, ai_i) => (
-                                    <span
-                                      key={ai_i}
-                                      onClick={() => setActionItemDraft({ title: ai.title || '', assigned_to: ai.owner || '', estimated_hours: ai.estimated_hours || '', milestone_id: milestones[0]?.id || null })}
-                                      title="Click to add as task"
-                                      style={{ fontSize: 11, padding: '2px 8px', borderRadius: 12, background: 'var(--bg)', border: '1px solid var(--border)', color: 'var(--text-muted)', cursor: 'pointer', transition: 'background .15s, border-color .15s' }}
-                                      onMouseEnter={e => { e.currentTarget.style.background = 'var(--accent-light, #ede9fe)'; e.currentTarget.style.borderColor = 'var(--accent)'; }}
-                                      onMouseLeave={e => { e.currentTarget.style.background = 'var(--bg)'; e.currentTarget.style.borderColor = 'var(--border)'; }}
-                                    >
-                                      {ai.owner && <span style={{ fontWeight: 700, color: 'var(--accent)', marginRight: 4 }}>{ai.owner}</span>}
-                                      {ai.title}
-                                    </span>
-                                  ))}
+                                  {mtg.action_items.map((ai, ai_i) => {
+                                    const alreadyTask = tasks.some(t => t.title?.toLowerCase().trim() === ai.title?.toLowerCase().trim());
+                                    return alreadyTask ? (
+                                      <span
+                                        key={ai_i}
+                                        title="Already added as a task"
+                                        style={{ fontSize: 11, padding: '2px 8px', borderRadius: 12, background: '#f0fdf4', border: '1px solid #86efac', color: '#15803d', cursor: 'default', display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                                      >
+                                        <span style={{ fontSize: 10 }}>✓</span>
+                                        {ai.owner && <span style={{ fontWeight: 700, marginRight: 2 }}>{ai.owner}</span>}
+                                        {ai.title}
+                                      </span>
+                                    ) : (
+                                      <span
+                                        key={ai_i}
+                                        onClick={() => setActionItemDraft({ title: ai.title || '', assigned_to: ai.owner || '', estimated_hours: ai.estimated_hours || '', milestone_id: milestones[0]?.id || null })}
+                                        title="Click to add as task"
+                                        style={{ fontSize: 11, padding: '2px 8px', borderRadius: 12, background: 'var(--bg)', border: '1px solid var(--border)', color: 'var(--text-muted)', cursor: 'pointer', transition: 'background .15s, border-color .15s' }}
+                                        onMouseEnter={e => { e.currentTarget.style.background = 'var(--accent-light, #ede9fe)'; e.currentTarget.style.borderColor = 'var(--accent)'; }}
+                                        onMouseLeave={e => { e.currentTarget.style.background = 'var(--bg)'; e.currentTarget.style.borderColor = 'var(--border)'; }}
+                                      >
+                                        {ai.owner && <span style={{ fontWeight: 700, color: 'var(--accent)', marginRight: 4 }}>{ai.owner}</span>}
+                                        {ai.title}
+                                      </span>
+                                    );
+                                  })}
                                 </div>
                               )}
                               {mtg.transcript && (
