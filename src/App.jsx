@@ -124,7 +124,7 @@ export default function App() {
           <DealsPage refreshKey={pageKeys.deals || 0} />
         </PageSlot>
         <PageSlot active={page === 'support'}>
-          <SupportPage />
+          <SupportPage teamMembers={teamMembers} />
         </PageSlot>
         <PageSlot active={page === 'projects'}>
           <ProjectsPage goHomeRef={projectsGoHome} refreshKey={pageKeys.projects || 0} teamMembers={teamMembers} />

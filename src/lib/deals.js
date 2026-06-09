@@ -16,7 +16,7 @@ export const ACTIVE_STAGES  = STAGES.filter(s => !['prospect','won','lost','nurt
 export const CLOSED_STAGES  = STAGES.filter(s =>  ['won','lost','nurture'].includes(s.id));
 
 export const ACTIVITY_TYPES = ['email','call','meeting','note','proposal','contract'];
-export const OWNERS = ['Mike', 'Pete'];
+export const OWNERS = ['Mike', 'Pete', 'Jill'];
 
 export const stageColor = id => STAGES.find(s => s.id === id)?.color || '#94a3b8';
 export const stageLabel = id => STAGES.find(s => s.id === id)?.label || id;

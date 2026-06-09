@@ -6,7 +6,7 @@ import {
 } from '../lib/support';
 import { fetchDeals } from '../lib/deals';
 
-const OWNERS = ['Mike', 'Pete'];
+const FALLBACK_OWNERS = ['Mike', 'Pete', 'Jill'];
 
 function fmtDate(str) {
   if (!str) return '';
@@ -24,7 +24,8 @@ function Label({ children }) {
   );
 }
 
-export default function CaseDetailModal({ case_, onClose, onSaved }) {
+export default function CaseDetailModal({ case_, owners: ownersProp, onClose, onSaved }) {
+  const owners = ownersProp?.length ? ownersProp : FALLBACK_OWNERS;
   const isNew = !case_.id;
   const [form, setForm]             = useState({ ...case_ });
   const [messages, setMessages]     = useState([]);
@@ -241,7 +242,7 @@ export default function CaseDetailModal({ case_, onClose, onSaved }) {
                 <Label>Assigned to</Label>
                 <select value={form.assigned_to || ''} onChange={e => set('assigned_to', e.target.value)}>
                   <option value="">Unassigned</option>
-                  {OWNERS.map(o => <option key={o} value={o}>{o}</option>)}
+                  {owners.map(o => <option key={o} value={o}>{o}</option>)}
                 </select>
               </div>
               <div>
@@ -385,7 +386,7 @@ export default function CaseDetailModal({ case_, onClose, onSaved }) {
                     onChange={e => setMsgForm(f => ({ ...f, author: e.target.value }))}
                     style={{ flex: 1, fontSize: 12 }}
                   >
-                    {OWNERS.map(o => <option key={o} value={o}>{o}</option>)}
+                    {owners.map(o => <option key={o} value={o}>{o}</option>)}
                   </select>
                 </div>
                 <div style={{ display: 'flex', gap: 8 }}>

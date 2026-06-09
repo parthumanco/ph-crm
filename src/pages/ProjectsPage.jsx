@@ -3555,7 +3555,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                   </select>
                   <input type="date" value={dealActForm.activity_date} onChange={e => setDealActForm(f => ({ ...f, activity_date: e.target.value }))} style={{ fontSize: 12 }} />
                   <select value={dealActForm.assigned_to} onChange={e => setDealActForm(f => ({ ...f, assigned_to: e.target.value }))} style={{ fontSize: 12 }}>
-                    {(['Mike','Pete']).map(o => <option key={o} value={o}>{o}</option>)}
+                    {owners.map(o => <option key={o} value={o}>{o}</option>)}
                   </select>
                 </div>
                 <textarea rows={2} placeholder="What happened?" value={dealActForm.summary} onChange={e => setDealActForm(f => ({ ...f, summary: e.target.value }))} style={{ width: '100%', fontSize: 12, marginBottom: 8 }} />
@@ -4537,7 +4537,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                   style={{ width: '100%', fontSize: 13, padding: '7px 10px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)' }}
                 >
                   <option value="">Unassigned</option>
-                  {(['Mike', 'Pete']).map(o => <option key={o} value={o}>{o}</option>)}
+                  {owners.map(o => <option key={o} value={o}>{o}</option>)}
                 </select>
               </div>
               {/* Estimated hours */}

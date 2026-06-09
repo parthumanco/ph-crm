@@ -7,7 +7,7 @@ import {
 } from '../lib/support';
 import CaseDetailModal from '../components/CaseDetailModal';
 
-const OWNERS = ['Mike', 'Pete'];
+const FALLBACK_OWNERS = ['Mike', 'Pete', 'Jill'];
 
 function PriorityBadge({ priority }) {
   const color = priorityColor(priority);
@@ -56,7 +56,8 @@ function daysSince(dateStr) {
   return `${d}d ago`;
 }
 
-export default function SupportPage() {
+export default function SupportPage({ teamMembers = [] }) {
+  const owners = teamMembers.length ? teamMembers.map(m => m.name) : FALLBACK_OWNERS;
   const [cases, setCases]           = useState([]);
   const [loading, setLoading]       = useState(true);
   const [selectedCase, setSelectedCase] = useState(null);
@@ -206,7 +207,7 @@ export default function SupportPage() {
             style={{ width: 'auto', fontSize: 12, padding: '5px 10px' }}
           >
             <option value="">All Owners</option>
-            {OWNERS.map(o => <option key={o} value={o}>{o}</option>)}
+            {owners.map(o => <option key={o} value={o}>{o}</option>)}
           </select>
 
           {/* Search */}
@@ -311,6 +312,7 @@ export default function SupportPage() {
       {(selectedCase || showNew) && (
         <CaseDetailModal
           case_={selectedCase || newTemplate}
+          owners={owners}
           onClose={() => { setSelectedCase(null); setShowNew(false); }}
           onSaved={handleSaved}
         />
