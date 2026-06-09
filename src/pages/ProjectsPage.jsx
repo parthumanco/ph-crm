@@ -427,6 +427,15 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
   const [meetings, setMeetings]                   = useState([]);     // project meetings log
   const [meetingsExpanded, setMeetingsExpanded]   = useState(false);
   const [showTranscript, setShowTranscript]       = useState(null);   // meeting id
+  const [editingMeeting, setEditingMeeting]       = useState(null);   // meeting id being edited
+  const [editMeetingDraft, setEditMeetingDraft]   = useState({});     // { title, meeting_date, summary }
+  const [savingMeeting, setSavingMeeting]         = useState(false);
+  // Structured project notes — stored as JSON array in internal_notes
+  const [projectNotes, setProjectNotes]           = useState([]);     // [{ id, text, created_at }]
+  const [addingNote, setAddingNote]               = useState(false);
+  const [newNoteText, setNewNoteText]             = useState('');
+  const [editingNoteId, setEditingNoteId]         = useState(null);
+  const [editNoteText, setEditNoteText]           = useState('');
   const [showTranscriptImporter, setShowTranscriptImporter] = useState(false);
   const [transcriptDefaultMs, setTranscriptDefaultMs]       = useState(null); // ms id for per-milestone entry
   const [summaryError, setSummaryError]           = useState(null);
@@ -571,6 +580,19 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
     setShowArchivedMs({});
     setArchivedMilestones([]);
     setShowArchivedMilestones(false);
+    setEditingMeeting(null);
+    setEditMeetingDraft({});
+    setAddingNote(false);
+    setNewNoteText('');
+    setEditingNoteId(null);
+    setEditNoteText('');
+    // Parse structured notes from internal_notes JSON (or wrap legacy plain text)
+    try {
+      const raw = project.internal_notes;
+      if (!raw) { setProjectNotes([]); }
+      else if (raw.trim().startsWith('[')) { setProjectNotes(JSON.parse(raw)); }
+      else { setProjectNotes([{ id: crypto.randomUUID(), text: raw, created_at: new Date().toISOString() }]); }
+    } catch { setProjectNotes([]); }
     setMilestones([]);
     setTasks([]);
     setProjectFiles([]);
@@ -690,6 +712,53 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
     const saved = await upsertProject(activeProject);
     setActiveProject(saved);
     setProjects(prev => prev.map(p => p.id === saved.id ? saved : p));
+  };
+
+  // ── Structured project notes ──────────────────────────────────────────────
+  const saveNotes = async (notes) => {
+    const updated = { ...activeProject, internal_notes: JSON.stringify(notes) };
+    setActiveProject(updated);
+    setProjects(prev => prev.map(p => p.id === updated.id ? updated : p));
+    await upsertProject(updated);
+  };
+  const handleAddNote = async () => {
+    if (!newNoteText.trim()) return;
+    const note = { id: crypto.randomUUID(), text: newNoteText.trim(), created_at: new Date().toISOString() };
+    const updated = [note, ...projectNotes];
+    setProjectNotes(updated);
+    setNewNoteText('');
+    setAddingNote(false);
+    await saveNotes(updated);
+  };
+  const handleSaveNoteEdit = async (id) => {
+    if (!editNoteText.trim()) return;
+    const updated = projectNotes.map(n => n.id === id ? { ...n, text: editNoteText.trim(), updated_at: new Date().toISOString() } : n);
+    setProjectNotes(updated);
+    setEditingNoteId(null);
+    await saveNotes(updated);
+  };
+  const handleDeleteNote = async (id) => {
+    const updated = projectNotes.filter(n => n.id !== id);
+    setProjectNotes(updated);
+    await saveNotes(updated);
+  };
+
+  // ── Meeting edit ──────────────────────────────────────────────────────────
+  const handleSaveMeeting = async () => {
+    if (!editingMeeting) return;
+    setSavingMeeting(true);
+    try {
+      const { error } = await supabase.from('project_meetings')
+        .update({ ...editMeetingDraft, updated_at: new Date().toISOString() })
+        .eq('id', editingMeeting);
+      if (error) throw new Error(error.message);
+      setMeetings(prev => prev.map(m => m.id === editingMeeting ? { ...m, ...editMeetingDraft } : m));
+      setEditingMeeting(null);
+    } catch (e) {
+      alert('Error saving meeting: ' + e.message);
+    } finally {
+      setSavingMeeting(false);
+    }
   };
 
   // ── Project contacts ──────────────────────────────────────────────────────
@@ -1385,14 +1454,22 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
 
     if (!newTasks?.length) return;
 
-    // Insert tasks into DB
+    // Insert tasks into DB — skip exact-title duplicates
     try {
+      const existingTitles = new Set(tasks.map(t => t.title?.toLowerCase().trim()).filter(Boolean));
+      const uniqueTasks = newTasks.filter(t => !existingTitles.has(t.title?.toLowerCase().trim()));
+      const skippedCount = newTasks.length - uniqueTasks.length;
+      if (!uniqueTasks.length) {
+        if (skippedCount > 0) alert(`All ${skippedCount} task${skippedCount !== 1 ? 's' : ''} from this meeting already exist — none added.`);
+        return;
+      }
       const { data: inserted, error } = await supabase
         .from('project_tasks')
-        .insert(newTasks)
+        .insert(uniqueTasks)
         .select();
       if (error) throw error;
-      const savedTasks = inserted || newTasks;
+      const savedTasks = inserted || uniqueTasks;
+      if (skippedCount > 0) alert(`${savedTasks.length} task${savedTasks.length !== 1 ? 's' : ''} added · ${skippedCount} duplicate${skippedCount !== 1 ? 's' : ''} skipped.`);
       setTasks(prev => [...prev, ...savedTasks]);
       setAllTasks(prev => ({
         ...prev,
@@ -2878,6 +2955,50 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
               );
             })}
 
+            {/* Unassigned tasks — tasks with no milestone (e.g. from meeting imports) */}
+            {(() => {
+              const unassigned = tasks.filter(t => !t.milestone_id && !t.deleted_at);
+              if (!unassigned.length) return null;
+              return (
+                <div style={{ border: '1px solid #fde68a', borderRadius: 10, overflow: 'hidden', background: '#fffbeb', marginBottom: 16 }}>
+                  <div style={{ padding: '12px 18px', display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: '#92400e', textTransform: 'uppercase', letterSpacing: '.04em' }}>Unassigned Tasks</span>
+                    <span style={{ fontSize: 11, color: '#b45309', marginLeft: 4 }}>{unassigned.length} task{unassigned.length !== 1 ? 's' : ''} — not yet placed in a milestone</span>
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+                    {unassigned.map(task => (
+                      <div key={task.id} style={{ padding: '10px 18px', borderTop: '1px solid #fde68a', display: 'flex', alignItems: 'center', gap: 10, background: 'var(--bg)' }}>
+                        <span style={{ fontSize: 13, flex: 1, color: 'var(--text)' }}>{task.title}</span>
+                        {task.assigned_to && <span style={{ fontSize: 10, fontWeight: 700, padding: '1px 7px', borderRadius: 10, background: '#f3e8ff', color: '#7c3aed' }}>{task.assigned_to}</span>}
+                        {/* Milestone reassign dropdown */}
+                        <select
+                          defaultValue=""
+                          onChange={async e => {
+                            const msId = e.target.value;
+                            if (!msId) return;
+                            const updated = { ...task, milestone_id: msId };
+                            await supabase.from('project_tasks').update({ milestone_id: msId }).eq('id', task.id);
+                            setTasks(prev => prev.map(t => t.id === task.id ? updated : t));
+                            setAllTasks(prev => ({ ...prev, [activeProject.id]: (prev[activeProject.id] || []).map(t => t.id === task.id ? updated : t) }));
+                            setExpanded(prev => ({ ...prev, [msId]: true }));
+                          }}
+                          style={{ fontSize: 11, padding: '2px 6px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text-muted)', cursor: 'pointer' }}
+                        >
+                          <option value="">Move to milestone…</option>
+                          {milestones.map(ms => <option key={ms.id} value={ms.id}>{ms.title}</option>)}
+                        </select>
+                        <button
+                          onClick={() => { setConfirmDeleteTask(task.id); }}
+                          style={{ fontSize: 10, padding: '2px 6px', borderRadius: 5, border: '1px solid var(--border)', background: 'none', color: 'var(--red)', cursor: 'pointer' }}
+                          title="Delete task"
+                        >✕</button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
+
             {/* Archived milestones */}
             {(archivedMilestones.length > 0 || showArchivedMilestones) && (
               <div style={{ border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden', background: 'var(--surface)' }}>
@@ -2978,58 +3099,86 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                         </div>
                       </div>
                     )}
-                    {meetings.map((mtg, mi) => (
+                    {meetings.map((mtg) => (
                       <div key={mtg.id} style={{ padding: '16px 18px', borderTop: '1px solid var(--border-light)', background: 'var(--bg)' }}>
-                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: mtg.summary ? 8 : 0 }}>
-                          <div style={{ flex: 1 }}>
-                            <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>{mtg.title}</div>
-                            {mtg.meeting_date && (
-                              <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 2 }}>
-                                {new Date(mtg.meeting_date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'long', day: 'numeric', year: 'numeric' })}
+                        {editingMeeting === mtg.id ? (
+                          /* ── Inline edit form ── */
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                            <input
+                              type="text"
+                              value={editMeetingDraft.title || ''}
+                              onChange={e => setEditMeetingDraft(d => ({ ...d, title: e.target.value }))}
+                              placeholder="Meeting title"
+                              style={{ fontSize: 13, fontWeight: 700, padding: '5px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)' }}
+                            />
+                            <input
+                              type="date"
+                              value={editMeetingDraft.meeting_date || ''}
+                              onChange={e => setEditMeetingDraft(d => ({ ...d, meeting_date: e.target.value }))}
+                              style={{ fontSize: 12, padding: '4px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', width: 160 }}
+                            />
+                            <textarea
+                              value={editMeetingDraft.summary || ''}
+                              onChange={e => setEditMeetingDraft(d => ({ ...d, summary: e.target.value }))}
+                              placeholder="Summary / notes…"
+                              rows={3}
+                              style={{ fontSize: 12, padding: '6px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', lineHeight: 1.6, resize: 'vertical' }}
+                            />
+                            <div style={{ display: 'flex', gap: 6 }}>
+                              <button className="btn btn-primary btn-sm" onClick={handleSaveMeeting} disabled={savingMeeting} style={{ borderRadius: 20 }}>{savingMeeting ? 'Saving…' : 'Save'}</button>
+                              <button className="btn btn-secondary btn-sm" onClick={() => setEditingMeeting(null)} style={{ borderRadius: 20 }}>Cancel</button>
+                            </div>
+                          </div>
+                        ) : (
+                          <>
+                            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: mtg.summary ? 8 : 0 }}>
+                              <div style={{ flex: 1 }}>
+                                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>{mtg.title}</div>
+                                {mtg.meeting_date && (
+                                  <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 2 }}>
+                                    {new Date(mtg.meeting_date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'long', day: 'numeric', year: 'numeric' })}
+                                  </div>
+                                )}
+                              </div>
+                              <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                                {mtg.transcript && (
+                                  <button onClick={() => setShowTranscript(showTranscript === mtg.id ? null : mtg.id)} style={{ fontSize: 10, fontWeight: 700, padding: '3px 8px', borderRadius: 5, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-faint)', cursor: 'pointer' }}>
+                                    {showTranscript === mtg.id ? 'Hide' : 'Transcript'}
+                                  </button>
+                                )}
+                                <button
+                                  onClick={() => { setEditingMeeting(mtg.id); setEditMeetingDraft({ title: mtg.title, meeting_date: mtg.meeting_date || '', summary: mtg.summary || '' }); }}
+                                  style={{ fontSize: 10, padding: '3px 7px', borderRadius: 5, border: '1px solid var(--border)', background: 'none', color: 'var(--text-faint)', cursor: 'pointer' }}
+                                  title="Edit meeting"
+                                >✏</button>
+                                <button
+                                  onClick={async () => { if (!window.confirm('Delete this meeting?')) return; await deleteProjectMeeting(mtg.id); setMeetings(prev => prev.filter(m => m.id !== mtg.id)); }}
+                                  style={{ fontSize: 10, padding: '3px 6px', borderRadius: 5, border: '1px solid var(--border)', background: 'none', color: 'var(--text-faint)', cursor: 'pointer' }}
+                                  title="Delete meeting"
+                                >🗑</button>
+                              </div>
+                            </div>
+                            {mtg.summary && (
+                              <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6, marginBottom: (mtg.action_items?.length > 0 || showTranscript === mtg.id) ? 8 : 0 }}>
+                                {mtg.summary}
                               </div>
                             )}
-                          </div>
-                          <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
-                            {mtg.transcript && (
-                              <button
-                                onClick={() => setShowTranscript(showTranscript === mtg.id ? null : mtg.id)}
-                                style={{ fontSize: 10, fontWeight: 700, padding: '3px 8px', borderRadius: 5, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-faint)', cursor: 'pointer' }}
-                              >{showTranscript === mtg.id ? 'Hide' : 'Transcript'}</button>
+                            {mtg.action_items?.length > 0 && (
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: showTranscript === mtg.id ? 8 : 0 }}>
+                                {mtg.action_items.map((ai, ai_i) => (
+                                  <span key={ai_i} style={{ fontSize: 11, padding: '2px 8px', borderRadius: 12, background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text-muted)' }}>
+                                    {ai.owner && <span style={{ fontWeight: 700, color: 'var(--accent)', marginRight: 4 }}>{ai.owner}</span>}
+                                    {ai.title}
+                                  </span>
+                                ))}
+                              </div>
                             )}
-                            <button
-                              onClick={async () => {
-                                await deleteProjectMeeting(mtg.id);
-                                setMeetings(prev => prev.filter(m => m.id !== mtg.id));
-                              }}
-                              style={{ fontSize: 10, padding: '3px 6px', borderRadius: 5, border: '1px solid var(--border)', background: 'none', color: 'var(--text-faint)', cursor: 'pointer' }}
-                              title="Delete meeting"
-                            >🗑</button>
-                          </div>
-                        </div>
-
-                        {mtg.summary && (
-                          <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6, marginBottom: (mtg.action_items?.length > 0 || showTranscript === mtg.id) ? 8 : 0 }}>
-                            {mtg.summary}
-                          </div>
-                        )}
-
-                        {/* Action items */}
-                        {mtg.action_items?.length > 0 && (
-                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: showTranscript === mtg.id ? 8 : 0 }}>
-                            {mtg.action_items.map((ai, ai_i) => (
-                              <span key={ai_i} style={{ fontSize: 11, padding: '2px 8px', borderRadius: 12, background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text-muted)' }}>
-                                {ai.owner && <span style={{ fontWeight: 700, color: 'var(--accent)', marginRight: 4 }}>{ai.owner}</span>}
-                                {ai.title}
-                              </span>
-                            ))}
-                          </div>
-                        )}
-
-                        {/* Full transcript */}
-                        {showTranscript === mtg.id && mtg.transcript && (
-                          <div style={{ marginTop: 6, padding: '10px 12px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 7, fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.7, whiteSpace: 'pre-wrap', maxHeight: 280, overflowY: 'auto' }}>
-                            {mtg.transcript}
-                          </div>
+                            {showTranscript === mtg.id && mtg.transcript && (
+                              <div style={{ marginTop: 6, padding: '10px 12px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 7, fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.7, whiteSpace: 'pre-wrap', maxHeight: 280, overflowY: 'auto' }}>
+                                {mtg.transcript}
+                              </div>
+                            )}
+                          </>
                         )}
                       </div>
                     ))}
@@ -3055,15 +3204,69 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
           <div>
             {/* ── Project Notes ── */}
             <div style={{ marginBottom: 24 }}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 6 }}>Project Notes</div>
-              <textarea
-                value={activeProject.internal_notes || ''}
-                onChange={e => setActiveProject(p => ({ ...p, internal_notes: e.target.value }))}
-                onBlur={handleSaveProject}
-                placeholder="Internal notes — context, client quirks, scope considerations, things to remember before communicating…"
-                rows={4}
-                style={{ width: '100%', fontSize: 13, lineHeight: 1.65, resize: 'vertical' }}
-              />
+              <div style={{ display: 'flex', alignItems: 'center', marginBottom: 10 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', flex: 1 }}>Project Notes</div>
+                <button onClick={() => { setAddingNote(true); setNewNoteText(''); }} style={{ fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 20, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-muted)', cursor: 'pointer' }}>+ Add Note</button>
+              </div>
+
+              {/* New note input */}
+              {addingNote && (
+                <div style={{ marginBottom: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <textarea
+                    autoFocus
+                    value={newNoteText}
+                    onChange={e => setNewNoteText(e.target.value)}
+                    placeholder="Type a note…"
+                    rows={3}
+                    style={{ width: '100%', fontSize: 13, lineHeight: 1.65, resize: 'vertical' }}
+                  />
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <button className="btn btn-primary btn-sm" onClick={handleAddNote} style={{ borderRadius: 20 }}>Save Note</button>
+                    <button className="btn btn-secondary btn-sm" onClick={() => setAddingNote(false)} style={{ borderRadius: 20 }}>Cancel</button>
+                  </div>
+                </div>
+              )}
+
+              {/* Notes list */}
+              {projectNotes.length === 0 && !addingNote ? (
+                <div style={{ fontSize: 12, color: 'var(--text-faint)', padding: '12px 0' }}>No notes yet. Click + Add Note to start.</div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {projectNotes.map(note => (
+                    <div key={note.id} style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: '10px 12px' }}>
+                      {editingNoteId === note.id ? (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                          <textarea
+                            autoFocus
+                            value={editNoteText}
+                            onChange={e => setEditNoteText(e.target.value)}
+                            rows={3}
+                            style={{ width: '100%', fontSize: 13, lineHeight: 1.65, resize: 'vertical' }}
+                          />
+                          <div style={{ display: 'flex', gap: 6 }}>
+                            <button className="btn btn-primary btn-sm" onClick={() => handleSaveNoteEdit(note.id)} style={{ borderRadius: 20 }}>Save</button>
+                            <button className="btn btn-secondary btn-sm" onClick={() => setEditingNoteId(null)} style={{ borderRadius: 20 }}>Cancel</button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+                          <div style={{ flex: 1 }}>
+                            <div style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.65, whiteSpace: 'pre-wrap' }}>{note.text}</div>
+                            <div style={{ fontSize: 10, color: 'var(--text-faint)', marginTop: 4 }}>
+                              {new Date(note.updated_at || note.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                              {note.updated_at && note.updated_at !== note.created_at ? ' (edited)' : ''}
+                            </div>
+                          </div>
+                          <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+                            <button onClick={() => { setEditingNoteId(note.id); setEditNoteText(note.text); }} style={{ fontSize: 10, padding: '2px 7px', borderRadius: 5, border: '1px solid var(--border)', background: 'none', color: 'var(--text-faint)', cursor: 'pointer' }} title="Edit">✏</button>
+                            <button onClick={() => handleDeleteNote(note.id)} style={{ fontSize: 10, padding: '2px 6px', borderRadius: 5, border: '1px solid var(--border)', background: 'none', color: 'var(--red)', cursor: 'pointer' }} title="Delete">✕</button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             {dealTasks.filter(t => !t.completed).length > 0 && (
