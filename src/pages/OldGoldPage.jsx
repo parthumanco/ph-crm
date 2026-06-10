@@ -99,6 +99,98 @@ export default function OldGoldPage() {
   const [newTaskDue,   setNewTaskDue]   = useState('');
   const [addingTask,   setAddingTask]   = useState(false);
 
+  // Quick-drop analysis (no contact required)
+  const [dropDragging,   setDropDragging]   = useState(false);
+  const [quickText,      setQuickText]      = useState('');
+  const [quickAnalyzing, setQuickAnalyzing] = useState(false);
+  const [quickResult,    setQuickResult]    = useState(null);  // { summary, action_items }
+  const [quickError,     setQuickError]     = useState('');
+  const [quickSaveContact, setQuickSaveContact] = useState('');  // prospect id or '__new__'
+  const [quickSaving,    setQuickSaving]    = useState(false);
+  const [showQuickPanel, setShowQuickPanel] = useState(false);
+
+  // ── RTF strip helper ─────────────────────────────────────────────────────
+  const stripRtf = (rtf) => {
+    let s = rtf;
+    let prev;
+    do { prev = s; s = s.replace(/\{[^{}]*\}/g, ''); } while (s !== prev);
+    return s.replace(/\\[a-z]+[-\d]* ?/g, '').replace(/[{}\\]/g, '').replace(/\r\n|\r/g, '\n').trim();
+  };
+
+  const readFileText = (file) => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = e => {
+      const text = e.target.result;
+      const isRtf = file.name.toLowerCase().endsWith('.rtf') || file.type.includes('rtf');
+      resolve(isRtf ? stripRtf(text) : text);
+    };
+    reader.onerror = () => reject(new Error('Could not read file'));
+    reader.readAsText(file);
+  });
+
+  // ── Quick-drop analysis ────────────────────────────────────────────────────
+  const handleQuickAnalyze = async (text) => {
+    if (!text.trim()) return;
+    setQuickAnalyzing(true);
+    setQuickError('');
+    setQuickResult(null);
+    try {
+      const result = await processTranscriptWithAI(text, 'the contact', '');
+      setQuickResult(result);
+    } catch (e) {
+      setQuickError(e.message || 'Analysis failed');
+    } finally {
+      setQuickAnalyzing(false);
+    }
+  };
+
+  const handleQuickSave = async () => {
+    if (!quickResult || !quickSaveContact) return;
+    setQuickSaving(true);
+    try {
+      let prospectId = quickSaveContact;
+      let prospect = prospects.find(p => p.id === prospectId);
+
+      if (quickSaveContact === '__new__') {
+        const { data } = await supabase.from('old_gold_prospects').insert({ name: 'New Contact', status: 'warm' }).select().single();
+        prospectId = data.id;
+        prospect = data;
+        setProspects(prev => [data, ...prev]);
+      }
+
+      const { data: mtg } = await supabase.from('old_gold_meetings').insert({
+        prospect_id:  prospectId,
+        title:        `Meeting — ${fmtDate(new Date().toISOString().slice(0, 10))}`,
+        meeting_date: new Date().toISOString().slice(0, 10),
+        transcript:   quickText,
+        summary:      quickResult.summary,
+        action_items: quickResult.action_items || [],
+      }).select().single();
+
+      if (quickResult.action_items?.length && mtg) {
+        await supabase.from('old_gold_tasks').insert(
+          quickResult.action_items.map(ai => ({
+            prospect_id: prospectId,
+            meeting_id:  mtg.id,
+            title:       ai.title,
+            due_date:    ai.due_date || null,
+            notes:       ai.owner ? `Owner: ${ai.owner}` : '',
+          }))
+        );
+      }
+
+      // Jump to that contact
+      openProspect(prospect || { id: prospectId, name: 'New Contact', status: 'warm' });
+      setQuickText('');
+      setQuickResult(null);
+      setShowQuickPanel(false);
+    } catch (e) {
+      setQuickError(e.message || 'Save failed');
+    } finally {
+      setQuickSaving(false);
+    }
+  };
+
   // ── Data fetching ─────────────────────────────────────────────────────────
   const loadProspects = useCallback(async () => {
     setLoading(true);
@@ -281,6 +373,135 @@ export default function OldGoldPage() {
         </div>
 
         {addingProspect && <ProspectForm onCancel={() => setAddingProspect(false)} />}
+
+        {/* ── Quick transcript drop zone ── */}
+        <div style={{ marginBottom: 24 }}>
+          {!showQuickPanel ? (
+            /* Collapsed: small drop target */
+            <div
+              onDragOver={e => { e.preventDefault(); setDropDragging(true); }}
+              onDragLeave={() => setDropDragging(false)}
+              onDrop={async e => {
+                e.preventDefault();
+                setDropDragging(false);
+                const file = e.dataTransfer.files[0];
+                if (file) {
+                  const text = await readFileText(file);
+                  setQuickText(text);
+                }
+                setShowQuickPanel(true);
+              }}
+              onClick={() => setShowQuickPanel(true)}
+              style={{
+                border: `2px dashed ${dropDragging ? 'var(--accent)' : 'var(--border)'}`,
+                borderRadius: 10,
+                padding: '16px 20px',
+                background: dropDragging ? '#fffbeb' : 'var(--surface)',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 12,
+                transition: 'all .15s',
+              }}
+            >
+              <span style={{ fontSize: 22 }}>🪩</span>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: dropDragging ? 'var(--accent)' : 'var(--text)' }}>
+                  {dropDragging ? 'Drop to analyze' : 'Quick transcript analysis'}
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 1 }}>
+                  Drop a Granola file here or click to paste — no contact needed
+                </div>
+              </div>
+            </div>
+          ) : (
+            /* Expanded panel */
+            <div style={{ border: '1px solid var(--accent)', borderRadius: 10, background: 'var(--surface)', overflow: 'hidden' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', background: '#fffbeb', borderBottom: '1px solid #fde68a' }}>
+                <div style={{ fontSize: 13, fontWeight: 800, color: '#92400e' }}>🪩 Quick transcript analysis</div>
+                <button onClick={() => { setShowQuickPanel(false); setQuickText(''); setQuickResult(null); setQuickError(''); }} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, color: '#92400e', padding: '0 2px' }}>✕</button>
+              </div>
+
+              <div style={{ padding: 16 }}>
+                {!quickResult ? (
+                  <>
+                    <textarea
+                      autoFocus
+                      rows={8}
+                      value={quickText}
+                      onChange={e => setQuickText(e.target.value)}
+                      placeholder="Paste your Granola transcript here, or drag a .rtf / .txt file onto this area…"
+                      style={{ width: '100%', fontSize: 12, lineHeight: 1.6, fontFamily: 'monospace', marginBottom: 10, background: 'var(--bg)' }}
+                      onDragOver={e => e.preventDefault()}
+                      onDrop={async e => {
+                        e.preventDefault();
+                        const file = e.dataTransfer.files[0];
+                        if (file) setQuickText(await readFileText(file));
+                      }}
+                    />
+                    {quickError && <div style={{ fontSize: 12, color: '#ef4444', marginBottom: 8 }}>{quickError}</div>}
+                    <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                      <button onClick={() => { setShowQuickPanel(false); setQuickText(''); setQuickError(''); }} style={{ fontSize: 12, padding: '5px 14px', borderRadius: 6, border: '1px solid var(--border)', background: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}>Cancel</button>
+                      <button
+                        onClick={() => handleQuickAnalyze(quickText)}
+                        disabled={quickAnalyzing || !quickText.trim()}
+                        style={{ fontSize: 12, fontWeight: 700, padding: '5px 18px', borderRadius: 6, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer' }}
+                      >{quickAnalyzing ? '⏳ Analyzing…' : '✨ Analyze'}</button>
+                    </div>
+                  </>
+                ) : (
+                  /* Results */
+                  <>
+                    {quickResult.summary && (
+                      <div style={{ marginBottom: 14 }}>
+                        <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 5 }}>Summary</div>
+                        <div style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.6 }}>{quickResult.summary}</div>
+                      </div>
+                    )}
+                    {quickResult.action_items?.length > 0 && (
+                      <div style={{ marginBottom: 16 }}>
+                        <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--accent)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 6 }}>Action Items</div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                          {quickResult.action_items.map((ai, i) => (
+                            <div key={i} style={{ fontSize: 12, padding: '5px 9px', borderRadius: 6, background: '#ede9fe', display: 'flex', gap: 8, alignItems: 'baseline' }}>
+                              {ai.owner && <span style={{ fontWeight: 700, color: '#6d28d9', flexShrink: 0 }}>{ai.owner}</span>}
+                              <span style={{ flex: 1 }}>{ai.title}</span>
+                              {ai.due_date && <span style={{ fontSize: 10, color: '#7c3aed', flexShrink: 0 }}>{ai.due_date}</span>}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Save to contact row */}
+                    <div style={{ paddingTop: 14, borderTop: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', flexShrink: 0 }}>Save to:</div>
+                      <select
+                        value={quickSaveContact}
+                        onChange={e => setQuickSaveContact(e.target.value)}
+                        style={{ fontSize: 12, padding: '4px 8px', borderRadius: 6, border: '1px solid var(--border)', flex: 1, minWidth: 160 }}
+                      >
+                        <option value="">— pick a contact —</option>
+                        {prospects.map(p => <option key={p.id} value={p.id}>{p.name}{p.company ? ` · ${p.company}` : ''}</option>)}
+                        <option value="__new__">+ Create new contact</option>
+                      </select>
+                      <button
+                        onClick={handleQuickSave}
+                        disabled={quickSaving || !quickSaveContact}
+                        style={{ fontSize: 12, fontWeight: 700, padding: '5px 16px', borderRadius: 6, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                      >{quickSaving ? 'Saving…' : 'Save & open contact'}</button>
+                      <button
+                        onClick={() => { setQuickResult(null); setQuickText(''); setShowQuickPanel(false); }}
+                        style={{ fontSize: 12, padding: '5px 12px', borderRadius: 6, border: '1px solid var(--border)', background: 'none', cursor: 'pointer', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}
+                      >Discard</button>
+                    </div>
+                    {quickError && <div style={{ fontSize: 12, color: '#ef4444', marginTop: 8 }}>{quickError}</div>}
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
 
         {loading ? (
           <div className="empty-state"><div className="spinner" /></div>
