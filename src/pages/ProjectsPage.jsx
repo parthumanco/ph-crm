@@ -4666,7 +4666,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
       {taskCompleteEmail && (() => {
         const { task, project } = taskCompleteEmail;
         const primaryContact = (project.contacts || []).find(c => c.is_primary) || (project.contacts || [])[0];
-        const clientName   = primaryContact?.name || project.client_name || project.contact_name || 'there';
+        const clientName   = (primaryContact?.name || project.client_name || project.contact_name || '').split(' ')[0] || 'there';
         const toEmail      = primaryContact?.email || project.client_email || '';
         const portalUrl    = project.share_token ? `${window.location.origin}/portal/${project.share_token}?task=${task.id}` : null;
         const subject         = `Task complete: ${task.title}`;
@@ -4813,7 +4813,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
       {resendEmail && (() => {
         const { task, project } = resendEmail;
         const primaryContact    = (project?.contacts || []).find(c => c.is_primary) || (project?.contacts || [])[0];
-        const clientName        = primaryContact?.name || project?.client_name || 'there';
+        const clientName        = (primaryContact?.name || project?.client_name || '').split(' ')[0] || 'there';
         const toEmail           = primaryContact?.email || project?.client_email || '';
         const companyLabel      = project?.client_name || project?.name || '';
         const portalUrl         = project?.share_token ? `${window.location.origin}/portal/${project.share_token}?task=${task.id}` : null;
