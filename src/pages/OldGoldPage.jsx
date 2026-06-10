@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from '../lib/supabase';
+import { saveProjectMeeting } from '../lib/projects';
 
 // ── Tiny AI helper: extract summary + action items + contact info ─────────────
 async function processTranscriptWithAI(transcript) {
@@ -221,7 +222,12 @@ export default function OldGoldPage({ isActive = false, onNavigate }) {
           (nameLower    && p.name?.toLowerCase().includes(nameLower)) ||
           (companyLower && p.company?.toLowerCase().includes(companyLower))
         );
-        if (match) setQuickSaveContact(match.id);
+        if (match) {
+          setQuickSaveContact(match.id);
+        } else if (extracted.contact_name) {
+          // Pre-select "create new" so the button is immediately active
+          setQuickSaveContact('__new__');
+        }
       }
 
       // Cross-reference against Pipeline + Intel
@@ -308,6 +314,35 @@ export default function OldGoldPage({ isActive = false, onNavigate }) {
       setQuickSaveContact('');
     } catch (e) {
       setQuickError(e.message || 'Save failed');
+    } finally {
+      setQuickSaving(false);
+    }
+  };
+
+  // Save meeting directly into a Pipeline deal card
+  const resetQuickPanel = () => {
+    setQuickText(''); setQuickResult(null); setShowQuickPanel(false);
+    setQuickExtracted(null); setQuickCrossRefs(null); setQuickEmailHint(''); setQuickSaveContact('');
+  };
+
+  const handleSaveToDeal = async (deal) => {
+    if (!quickResult) return;
+    setQuickSaving(true);
+    setQuickError('');
+    try {
+      await saveProjectMeeting({
+        dealId:      deal.id,
+        title:       `Meeting — ${quickExtracted?.contact_name || 'Contact'} · ${fmtDate(new Date().toISOString().slice(0, 10))}`,
+        meetingDate: new Date().toISOString().slice(0, 10),
+        transcript:  quickText,
+        summary:     quickResult.summary,
+        actionItems: quickResult.action_items || [],
+        attendees:   quickExtracted?.contact_name ? [quickExtracted.contact_name] : [],
+      });
+      resetQuickPanel();
+      onNavigate && onNavigate('pipeline');
+    } catch (e) {
+      setQuickError(e.message || 'Failed to save to Pipeline deal');
     } finally {
       setQuickSaving(false);
     }
@@ -692,27 +727,49 @@ export default function OldGoldPage({ isActive = false, onNavigate }) {
                       </div>
                     )}
 
-                    {/* Save to contact row */}
-                    <div style={{ paddingTop: 14, borderTop: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-                      <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', flexShrink: 0 }}>Save to:</div>
-                      <select
-                        value={quickSaveContact}
-                        onChange={e => setQuickSaveContact(e.target.value)}
-                        style={{ fontSize: 12, padding: '4px 8px', borderRadius: 6, border: '1px solid var(--border)', flex: 1, minWidth: 160 }}
-                      >
-                        <option value="">— pick a contact —</option>
-                        {prospects.map(p => <option key={p.id} value={p.id}>{p.name}{p.company ? ` · ${p.company}` : ''}</option>)}
-                        <option value="__new__">+ Create new contact</option>
-                      </select>
-                      <button
-                        onClick={handleQuickSave}
-                        disabled={quickSaving || !quickSaveContact}
-                        style={{ fontSize: 12, fontWeight: 700, padding: '5px 16px', borderRadius: 6, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer', whiteSpace: 'nowrap' }}
-                      >{quickSaving ? 'Saving…' : 'Save & open contact'}</button>
-                      <button
-                        onClick={() => { setQuickResult(null); setQuickText(''); setShowQuickPanel(false); setQuickExtracted(null); setQuickCrossRefs(null); setQuickEmailHint(''); }}
-                        style={{ fontSize: 12, padding: '5px 12px', borderRadius: 6, border: '1px solid var(--border)', background: 'none', cursor: 'pointer', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}
-                      >Discard</button>
+                    {/* Save row */}
+                    <div style={{ paddingTop: 14, borderTop: '1px solid var(--border)' }}>
+                      {/* Old Gold contact save */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: quickCrossRefs?.pipeline?.length ? 10 : 0 }}>
+                        <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', flexShrink: 0 }}>Save to Old Gold:</div>
+                        <select
+                          value={quickSaveContact}
+                          onChange={e => setQuickSaveContact(e.target.value)}
+                          style={{ fontSize: 12, padding: '4px 8px', borderRadius: 6, border: '1px solid var(--border)', flex: 1, minWidth: 160 }}
+                        >
+                          <option value="">— pick a contact —</option>
+                          {prospects.map(p => <option key={p.id} value={p.id}>{p.name}{p.company ? ` · ${p.company}` : ''}</option>)}
+                          <option value="__new__">
+                            {quickExtracted?.contact_name ? `+ Create: ${quickExtracted.contact_name}` : '+ Create new contact'}
+                          </option>
+                        </select>
+                        <button
+                          onClick={handleQuickSave}
+                          disabled={quickSaving || !quickSaveContact}
+                          style={{ fontSize: 12, fontWeight: 700, padding: '5px 16px', borderRadius: 6, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                        >{quickSaving ? 'Saving…' : 'Save & open contact'}</button>
+                        <button
+                          onClick={resetQuickPanel}
+                          style={{ fontSize: 12, padding: '5px 12px', borderRadius: 6, border: '1px solid var(--border)', background: 'none', cursor: 'pointer', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}
+                        >Discard</button>
+                      </div>
+
+                      {/* Move to Pipeline deal — shown for each pipeline cross-ref match */}
+                      {quickCrossRefs?.pipeline?.map(deal => (
+                        <div key={deal.id} style={{ display: 'flex', alignItems: 'center', gap: 10, paddingTop: 10, borderTop: '1px solid var(--border-light, #f3f4f6)', flexWrap: 'wrap' }}>
+                          <div style={{ fontSize: 12, fontWeight: 600, color: '#92400e', flexShrink: 0 }}>⚡ Move to Pipeline:</div>
+                          <div style={{ flex: 1, fontSize: 12, color: 'var(--text-muted)' }}>
+                            <strong>{deal.company_name}</strong>
+                            {deal.stage && <span style={{ marginLeft: 6, fontSize: 11, color: 'var(--text-faint)' }}>({deal.stage})</span>}
+                            <span style={{ marginLeft: 6, fontSize: 11, color: 'var(--text-faint)' }}>— meeting + transcript saved to this deal card</span>
+                          </div>
+                          <button
+                            onClick={() => handleSaveToDeal(deal)}
+                            disabled={quickSaving}
+                            style={{ fontSize: 12, fontWeight: 700, padding: '5px 14px', borderRadius: 6, border: '1px solid #fbbf24', background: '#fffbeb', color: '#92400e', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                          >{quickSaving ? 'Moving…' : `Move to ${deal.company_name} →`}</button>
+                        </div>
+                      ))}
                     </div>
                     {quickError && <div style={{ fontSize: 12, color: '#ef4444', marginTop: 8 }}>{quickError}</div>}
                   </>
