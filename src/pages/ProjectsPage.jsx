@@ -3487,7 +3487,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                   style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '14px 18px', background: 'var(--surface)', border: 'none', cursor: 'pointer', textAlign: 'left' }}
                 >
                   <span style={{ fontSize: 14, fontWeight: 800, color: 'var(--text)', flex: 1 }}>
-                    📝 Meeting Log {meetings.length > 0 && <span style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-faint)', marginLeft: 6 }}>{meetings.length} meeting{meetings.length !== 1 ? 's' : ''}</span>}
+                    Meeting Log {meetings.length > 0 && <span style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-faint)', marginLeft: 6 }}>{meetings.length} meeting{meetings.length !== 1 ? 's' : ''}</span>}
                   </span>
                   <button
                     onClick={e => { e.stopPropagation(); setTranscriptDefaultMs(null); setShowTranscriptImporter(true); }}
@@ -5408,7 +5408,6 @@ function ProjectForecast({ tasks, milestones = [], teamMembers, activeProject, o
 
       {/* ── Collapsed header ── */}
       <div onClick={onToggle} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '13px 18px', cursor: 'pointer', userSelect: 'none' }}>
-        <span style={{ fontSize: 16 }}>💰</span>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontWeight: 700, fontSize: 14 }}>Project Forecast</div>
           <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 1 }}>{summary}</div>
@@ -5491,9 +5490,9 @@ function ProjectForecast({ tasks, milestones = [], teamMembers, activeProject, o
             <>
               {/* ── Tabs ── */}
               <div style={{ display: 'flex', gap: 4, padding: '12px 18px 0', borderBottom: '1px solid var(--border-light)' }}>
-                <Tab id="estimate"      label="📋 Estimate" />
-                <Tab id="phase"         label="📅 By Phase" />
-                <Tab id="profitability" label="📊 Profitability" disabled={!hasProfit} />
+                <Tab id="estimate"      label="Estimate" />
+                <Tab id="phase"         label="By Phase" />
+                <Tab id="profitability" label="Profitability" disabled={!hasProfit} />
               </div>
 
               {/* ── ESTIMATE TAB ── */}
