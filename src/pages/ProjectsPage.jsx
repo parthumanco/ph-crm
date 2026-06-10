@@ -364,6 +364,93 @@ function ProjectCard({ project, tasks, files, onClick, onUpload, onImport, uploa
   );
 }
 
+// ── MeetingCard ───────────────────────────────────────────────────────────────
+
+function MeetingCard({ mtg, tasks, isExpanded, onToggleExpanded, onEdit, onDelete, onActionItemClick, innerBg = 'var(--surface)' }) {
+  return (
+    <>
+      {/* Header row — always visible */}
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>{mtg.title}</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 2, flexWrap: 'wrap' }}>
+            {mtg.meeting_date && (
+              <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>
+                {new Date(mtg.meeting_date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'long', day: 'numeric', year: 'numeric' })}
+              </span>
+            )}
+            {mtg.meeting_time && <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>· {mtg.meeting_time}</span>}
+            {mtg.attendees?.length > 0 && <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>· {mtg.attendees.join(', ')}</span>}
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+          <button
+            onClick={onEdit}
+            style={{ fontSize: 10, padding: '3px 7px', borderRadius: 5, border: '1px solid var(--border)', background: 'none', color: 'var(--text-faint)', cursor: 'pointer' }}
+            title="Edit meeting"
+          >✏</button>
+          <button
+            onClick={onDelete}
+            style={{ fontSize: 10, padding: '3px 6px', borderRadius: 5, border: '1px solid var(--border)', background: 'none', color: 'var(--text-faint)', cursor: 'pointer' }}
+            title="Delete meeting"
+          >🗑</button>
+          {mtg.transcript && (
+            <span
+              onClick={onToggleExpanded}
+              style={{ fontSize: 11, color: 'var(--text-faint)', padding: '2px 4px', cursor: 'pointer' }}
+              title={isExpanded ? 'Hide transcript' : 'View transcript'}
+            >{isExpanded ? '▲' : '▼'}</span>
+          )}
+        </div>
+      </div>
+
+      {/* Always-visible: full summary + task pills */}
+      {mtg.summary && (
+        <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6, marginTop: 8 }}>
+          {mtg.summary}
+        </div>
+      )}
+      {mtg.action_items?.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginTop: 8 }}>
+          {mtg.action_items.map((ai, ai_i) => {
+            const alreadyTask = tasks.some(t => t.title?.toLowerCase().trim() === ai.title?.toLowerCase().trim());
+            return alreadyTask ? (
+              <span
+                key={ai_i}
+                title="Already added as a task"
+                style={{ fontSize: 11, padding: '2px 8px', borderRadius: 12, background: '#f0fdf4', border: '1px solid #86efac', color: '#15803d', cursor: 'default', display: 'inline-flex', alignItems: 'center', gap: 4 }}
+              >
+                <span style={{ fontSize: 10 }}>✓</span>
+                {ai.owner && <span style={{ fontWeight: 700, marginRight: 2 }}>{ai.owner}</span>}
+                {ai.title}
+              </span>
+            ) : (
+              <span
+                key={ai_i}
+                onClick={() => onActionItemClick(ai)}
+                title="Click to add as task"
+                style={{ fontSize: 11, padding: '2px 8px', borderRadius: 12, background: innerBg, border: '1px solid var(--border)', color: 'var(--text-muted)', cursor: 'pointer', transition: 'background .15s, border-color .15s' }}
+                onMouseEnter={e => { e.currentTarget.style.background = 'var(--accent-light, #ede9fe)'; e.currentTarget.style.borderColor = 'var(--accent)'; }}
+                onMouseLeave={e => { e.currentTarget.style.background = innerBg; e.currentTarget.style.borderColor = 'var(--border)'; }}
+              >
+                {ai.owner && <span style={{ fontWeight: 700, color: 'var(--accent)', marginRight: 4 }}>{ai.owner}</span>}
+                {ai.title}
+              </span>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Expanded: full transcript */}
+      {isExpanded && mtg.transcript && (
+        <div style={{ marginTop: 10, padding: '10px 12px', background: innerBg, border: '1px solid var(--border)', borderRadius: 7, fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.7, whiteSpace: 'pre-wrap', maxHeight: 320, overflowY: 'auto' }}>
+          {mtg.transcript}
+        </div>
+      )}
+    </>
+  );
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = [] }) {
@@ -3588,100 +3675,18 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                               <button className="btn btn-secondary btn-sm" onClick={() => setEditingMeeting(null)} style={{ borderRadius: 20 }}>Cancel</button>
                             </div>
                           </div>
-                        ) : (() => {
-                          const isExpanded = expandedMeetings.has(mtg.id);
-                          const toggleExpanded = () => setExpandedMeetings(prev => {
-                            const next = new Set(prev);
-                            next.has(mtg.id) ? next.delete(mtg.id) : next.add(mtg.id);
-                            return next;
-                          });
-                          return (
-                            <>
-                              {/* Header row — always visible */}
-                              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
-                                <div style={{ flex: 1, minWidth: 0 }}>
-                                  <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>{mtg.title}</div>
-                                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 2, flexWrap: 'wrap' }}>
-                                    {mtg.meeting_date && (
-                                      <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>
-                                        {new Date(mtg.meeting_date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'long', day: 'numeric', year: 'numeric' })}
-                                      </span>
-                                    )}
-                                    {mtg.meeting_time && (
-                                      <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>· {mtg.meeting_time}</span>
-                                    )}
-                                    {mtg.attendees?.length > 0 && (
-                                      <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>· {mtg.attendees.join(', ')}</span>
-                                    )}
-                                  </div>
-                                </div>
-                                <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
-                                  <button
-                                    onClick={() => { setEditingMeeting(mtg.id); setEditMeetingDraft({ title: mtg.title, meeting_date: mtg.meeting_date || '', meeting_time: mtg.meeting_time || '', attendees: mtg.attendees || [], summary: mtg.summary || '' }); }}
-                                    style={{ fontSize: 10, padding: '3px 7px', borderRadius: 5, border: '1px solid var(--border)', background: 'none', color: 'var(--text-faint)', cursor: 'pointer' }}
-                                    title="Edit meeting"
-                                  >✏</button>
-                                  <button
-                                    onClick={async () => { if (!window.confirm('Delete this meeting?')) return; await deleteProjectMeeting(mtg.id); setMeetings(prev => prev.filter(m => m.id !== mtg.id)); }}
-                                    style={{ fontSize: 10, padding: '3px 6px', borderRadius: 5, border: '1px solid var(--border)', background: 'none', color: 'var(--text-faint)', cursor: 'pointer' }}
-                                    title="Delete meeting"
-                                  >🗑</button>
-                                  {mtg.transcript && (
-                                    <span
-                                      onClick={toggleExpanded}
-                                      style={{ fontSize: 11, color: 'var(--text-faint)', padding: '2px 4px', cursor: 'pointer' }}
-                                      title={isExpanded ? 'Hide transcript' : 'View transcript'}
-                                    >{isExpanded ? '▲' : '▼'}</span>
-                                  )}
-                                </div>
-                              </div>
-
-                              {/* Always-visible: full summary + task pills */}
-                              {mtg.summary && (
-                                <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6, marginTop: 8 }}>
-                                  {mtg.summary}
-                                </div>
-                              )}
-                              {mtg.action_items?.length > 0 && (
-                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginTop: 8 }}>
-                                  {mtg.action_items.map((ai, ai_i) => {
-                                    const alreadyTask = tasks.some(t => t.title?.toLowerCase().trim() === ai.title?.toLowerCase().trim());
-                                    return alreadyTask ? (
-                                      <span
-                                        key={ai_i}
-                                        title="Already added as a task"
-                                        style={{ fontSize: 11, padding: '2px 8px', borderRadius: 12, background: '#f0fdf4', border: '1px solid #86efac', color: '#15803d', cursor: 'default', display: 'inline-flex', alignItems: 'center', gap: 4 }}
-                                      >
-                                        <span style={{ fontSize: 10 }}>✓</span>
-                                        {ai.owner && <span style={{ fontWeight: 700, marginRight: 2 }}>{ai.owner}</span>}
-                                        {ai.title}
-                                      </span>
-                                    ) : (
-                                      <span
-                                        key={ai_i}
-                                        onClick={() => { const base = mtg.meeting_date ? new Date(mtg.meeting_date + 'T12:00:00') : new Date(); base.setDate(base.getDate() + 7); setActionItemDraft({ title: ai.title || '', assigned_to: ai.owner || '', estimated_hours: ai.estimated_hours || '', milestone_id: milestones[0]?.id || null, due_date: base.toISOString().slice(0,10) }); }}
-                                        title="Click to add as task"
-                                        style={{ fontSize: 11, padding: '2px 8px', borderRadius: 12, background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text-muted)', cursor: 'pointer', transition: 'background .15s, border-color .15s' }}
-                                        onMouseEnter={e => { e.currentTarget.style.background = 'var(--accent-light, #ede9fe)'; e.currentTarget.style.borderColor = 'var(--accent)'; }}
-                                        onMouseLeave={e => { e.currentTarget.style.background = 'var(--surface)'; e.currentTarget.style.borderColor = 'var(--border)'; }}
-                                      >
-                                        {ai.owner && <span style={{ fontWeight: 700, color: 'var(--accent)', marginRight: 4 }}>{ai.owner}</span>}
-                                        {ai.title}
-                                      </span>
-                                    );
-                                  })}
-                                </div>
-                              )}
-
-                              {/* Expanded: full transcript */}
-                              {isExpanded && mtg.transcript && (
-                                <div style={{ marginTop: 10, padding: '10px 12px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 7, fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.7, whiteSpace: 'pre-wrap', maxHeight: 320, overflowY: 'auto' }}>
-                                  {mtg.transcript}
-                                </div>
-                              )}
-                            </>
-                          );
-                        })()}
+                        ) : (
+                          <MeetingCard
+                            mtg={mtg}
+                            tasks={tasks}
+                            isExpanded={expandedMeetings.has(mtg.id)}
+                            onToggleExpanded={() => setExpandedMeetings(prev => { const next = new Set(prev); next.has(mtg.id) ? next.delete(mtg.id) : next.add(mtg.id); return next; })}
+                            onEdit={() => { setEditingMeeting(mtg.id); setEditMeetingDraft({ title: mtg.title, meeting_date: mtg.meeting_date || '', meeting_time: mtg.meeting_time || '', attendees: mtg.attendees || [], summary: mtg.summary || '' }); }}
+                            onDelete={async () => { if (!window.confirm('Delete this meeting?')) return; await deleteProjectMeeting(mtg.id); setMeetings(prev => prev.filter(m => m.id !== mtg.id)); }}
+                            onActionItemClick={ai => { const base = mtg.meeting_date ? new Date(mtg.meeting_date + 'T12:00:00') : new Date(); base.setDate(base.getDate() + 7); setActionItemDraft({ title: ai.title || '', assigned_to: ai.owner || '', estimated_hours: ai.estimated_hours || '', milestone_id: milestones[0]?.id || null, due_date: base.toISOString().slice(0,10) }); }}
+                            innerBg="var(--surface)"
+                          />
+                        )}
                       </div>
                     ))}
                   </div>
@@ -3811,144 +3816,66 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
               <p style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 20, textAlign: 'center', padding: '12px 0' }}>No meetings logged yet.</p>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 20 }}>
-                {meetings.map(mtg => {
-                  const isExpanded = expandedMeetings.has(mtg.id);
-                  const toggleExpanded = () => setExpandedMeetings(prev => {
-                    const next = new Set(prev);
-                    next.has(mtg.id) ? next.delete(mtg.id) : next.add(mtg.id);
-                    return next;
-                  });
-                  return (
-                    <div key={mtg.id} style={{ padding: '12px 14px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8 }}>
-                      {editingMeeting === mtg.id ? (
-                        /* ── Inline edit form ── */
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {meetings.map(mtg => (
+                  <div key={mtg.id} style={{ padding: '12px 14px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8 }}>
+                    {editingMeeting === mtg.id ? (
+                      /* ── Inline edit form ── */
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        <input
+                          type="text"
+                          value={editMeetingDraft.title || ''}
+                          onChange={e => setEditMeetingDraft(d => ({ ...d, title: e.target.value }))}
+                          placeholder="Meeting title"
+                          style={{ fontSize: 13, fontWeight: 700, padding: '5px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)' }}
+                        />
+                        <div style={{ display: 'flex', gap: 8 }}>
+                          <input
+                            type="date"
+                            value={editMeetingDraft.meeting_date || ''}
+                            onChange={e => setEditMeetingDraft(d => ({ ...d, meeting_date: e.target.value }))}
+                            style={{ fontSize: 12, padding: '4px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', width: 160 }}
+                          />
                           <input
                             type="text"
-                            value={editMeetingDraft.title || ''}
-                            onChange={e => setEditMeetingDraft(d => ({ ...d, title: e.target.value }))}
-                            placeholder="Meeting title"
-                            style={{ fontSize: 13, fontWeight: 700, padding: '5px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)' }}
+                            value={editMeetingDraft.meeting_time || ''}
+                            onChange={e => setEditMeetingDraft(d => ({ ...d, meeting_time: e.target.value }))}
+                            placeholder="Time (e.g. 10:00 AM)"
+                            style={{ fontSize: 12, padding: '4px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', width: 140 }}
                           />
-                          <div style={{ display: 'flex', gap: 8 }}>
-                            <input
-                              type="date"
-                              value={editMeetingDraft.meeting_date || ''}
-                              onChange={e => setEditMeetingDraft(d => ({ ...d, meeting_date: e.target.value }))}
-                              style={{ fontSize: 12, padding: '4px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', width: 160 }}
-                            />
-                            <input
-                              type="text"
-                              value={editMeetingDraft.meeting_time || ''}
-                              onChange={e => setEditMeetingDraft(d => ({ ...d, meeting_time: e.target.value }))}
-                              placeholder="Time (e.g. 10:00 AM)"
-                              style={{ fontSize: 12, padding: '4px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', width: 140 }}
-                            />
-                          </div>
-                          <input
-                            type="text"
-                            value={Array.isArray(editMeetingDraft.attendees) ? editMeetingDraft.attendees.join(', ') : (editMeetingDraft.attendees || '')}
-                            onChange={e => setEditMeetingDraft(d => ({ ...d, attendees: e.target.value.split(',').map(s => s.trim()).filter(Boolean) }))}
-                            placeholder="Attendees (comma-separated)"
-                            style={{ fontSize: 12, padding: '4px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)' }}
-                          />
-                          <textarea
-                            value={editMeetingDraft.summary || ''}
-                            onChange={e => setEditMeetingDraft(d => ({ ...d, summary: e.target.value }))}
-                            placeholder="Summary / notes…"
-                            rows={3}
-                            style={{ fontSize: 12, padding: '6px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', lineHeight: 1.6, resize: 'vertical' }}
-                          />
-                          <div style={{ display: 'flex', gap: 6 }}>
-                            <button className="btn btn-primary btn-sm" onClick={handleSaveMeeting} disabled={savingMeeting} style={{ borderRadius: 20 }}>{savingMeeting ? 'Saving…' : 'Save'}</button>
-                            <button className="btn btn-secondary btn-sm" onClick={() => setEditingMeeting(null)} style={{ borderRadius: 20 }}>Cancel</button>
-                          </div>
                         </div>
-                      ) : (
-                        <>
-                          {/* Header row — always visible */}
-                          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
-                            <div style={{ flex: 1, minWidth: 0 }}>
-                              <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>{mtg.title}</div>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 2, flexWrap: 'wrap' }}>
-                                {mtg.meeting_date && (
-                                  <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>
-                                    {new Date(mtg.meeting_date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'long', day: 'numeric', year: 'numeric' })}
-                                  </span>
-                                )}
-                                {mtg.meeting_time && <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>· {mtg.meeting_time}</span>}
-                                {mtg.attendees?.length > 0 && <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>· {mtg.attendees.join(', ')}</span>}
-                              </div>
-                            </div>
-                            <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
-                              <button
-                                onClick={() => { setEditingMeeting(mtg.id); setEditMeetingDraft({ title: mtg.title, meeting_date: mtg.meeting_date || '', meeting_time: mtg.meeting_time || '', attendees: mtg.attendees || [], summary: mtg.summary || '' }); }}
-                                style={{ fontSize: 10, padding: '3px 7px', borderRadius: 5, border: '1px solid var(--border)', background: 'none', color: 'var(--text-faint)', cursor: 'pointer' }}
-                                title="Edit meeting"
-                              >✏</button>
-                              <button
-                                onClick={async () => { if (!window.confirm('Delete this meeting?')) return; await deleteProjectMeeting(mtg.id); setMeetings(prev => prev.filter(m => m.id !== mtg.id)); }}
-                                style={{ fontSize: 10, padding: '3px 6px', borderRadius: 5, border: '1px solid var(--border)', background: 'none', color: 'var(--text-faint)', cursor: 'pointer' }}
-                                title="Delete meeting"
-                              >🗑</button>
-                              {mtg.transcript && (
-                                <span
-                                  onClick={toggleExpanded}
-                                  style={{ fontSize: 11, color: 'var(--text-faint)', padding: '2px 4px', cursor: 'pointer' }}
-                                  title={isExpanded ? 'Hide transcript' : 'View transcript'}
-                                >{isExpanded ? '▲' : '▼'}</span>
-                              )}
-                            </div>
-                          </div>
-
-                          {/* Always-visible: full summary + task pills */}
-                          {mtg.summary && (
-                            <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6, marginTop: 8 }}>
-                              {mtg.summary}
-                            </div>
-                          )}
-                          {mtg.action_items?.length > 0 && (
-                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginTop: 8 }}>
-                              {mtg.action_items.map((ai, ai_i) => {
-                                const alreadyTask = tasks.some(t => t.title?.toLowerCase().trim() === ai.title?.toLowerCase().trim());
-                                return alreadyTask ? (
-                                  <span
-                                    key={ai_i}
-                                    title="Already added as a task"
-                                    style={{ fontSize: 11, padding: '2px 8px', borderRadius: 12, background: '#f0fdf4', border: '1px solid #86efac', color: '#15803d', cursor: 'default', display: 'inline-flex', alignItems: 'center', gap: 4 }}
-                                  >
-                                    <span style={{ fontSize: 10 }}>✓</span>
-                                    {ai.owner && <span style={{ fontWeight: 700, marginRight: 2 }}>{ai.owner}</span>}
-                                    {ai.title}
-                                  </span>
-                                ) : (
-                                  <span
-                                    key={ai_i}
-                                    onClick={() => { const base = mtg.meeting_date ? new Date(mtg.meeting_date + 'T12:00:00') : new Date(); base.setDate(base.getDate() + 7); setActionItemDraft({ title: ai.title || '', assigned_to: ai.owner || '', estimated_hours: ai.estimated_hours || '', milestone_id: milestones[0]?.id || null, due_date: base.toISOString().slice(0,10) }); }}
-                                    title="Click to add as task"
-                                    style={{ fontSize: 11, padding: '2px 8px', borderRadius: 12, background: 'var(--bg)', border: '1px solid var(--border)', color: 'var(--text-muted)', cursor: 'pointer', transition: 'background .15s, border-color .15s' }}
-                                    onMouseEnter={e => { e.currentTarget.style.background = 'var(--accent-light, #ede9fe)'; e.currentTarget.style.borderColor = 'var(--accent)'; }}
-                                    onMouseLeave={e => { e.currentTarget.style.background = 'var(--bg)'; e.currentTarget.style.borderColor = 'var(--border)'; }}
-                                  >
-                                    {ai.owner && <span style={{ fontWeight: 700, color: 'var(--accent)', marginRight: 4 }}>{ai.owner}</span>}
-                                    {ai.title}
-                                  </span>
-                                );
-                              })}
-                            </div>
-                          )}
-
-                          {/* Expanded: full transcript */}
-                          {isExpanded && mtg.transcript && (
-                            <div style={{ marginTop: 10, padding: '10px 12px', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 7, fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.7, whiteSpace: 'pre-wrap', maxHeight: 320, overflowY: 'auto' }}>
-                              {mtg.transcript}
-                            </div>
-                          )}
-                        </>
-                      )}
-                    </div>
-                  );
-                })}
+                        <input
+                          type="text"
+                          value={Array.isArray(editMeetingDraft.attendees) ? editMeetingDraft.attendees.join(', ') : (editMeetingDraft.attendees || '')}
+                          onChange={e => setEditMeetingDraft(d => ({ ...d, attendees: e.target.value.split(',').map(s => s.trim()).filter(Boolean) }))}
+                          placeholder="Attendees (comma-separated)"
+                          style={{ fontSize: 12, padding: '4px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)' }}
+                        />
+                        <textarea
+                          value={editMeetingDraft.summary || ''}
+                          onChange={e => setEditMeetingDraft(d => ({ ...d, summary: e.target.value }))}
+                          placeholder="Summary / notes…"
+                          rows={3}
+                          style={{ fontSize: 12, padding: '6px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', lineHeight: 1.6, resize: 'vertical' }}
+                        />
+                        <div style={{ display: 'flex', gap: 6 }}>
+                          <button className="btn btn-primary btn-sm" onClick={handleSaveMeeting} disabled={savingMeeting} style={{ borderRadius: 20 }}>{savingMeeting ? 'Saving…' : 'Save'}</button>
+                          <button className="btn btn-secondary btn-sm" onClick={() => setEditingMeeting(null)} style={{ borderRadius: 20 }}>Cancel</button>
+                        </div>
+                      </div>
+                    ) : (
+                      <MeetingCard
+                        mtg={mtg}
+                        tasks={tasks}
+                        isExpanded={expandedMeetings.has(mtg.id)}
+                        onToggleExpanded={() => setExpandedMeetings(prev => { const next = new Set(prev); next.has(mtg.id) ? next.delete(mtg.id) : next.add(mtg.id); return next; })}
+                        onEdit={() => { setEditingMeeting(mtg.id); setEditMeetingDraft({ title: mtg.title, meeting_date: mtg.meeting_date || '', meeting_time: mtg.meeting_time || '', attendees: mtg.attendees || [], summary: mtg.summary || '' }); }}
+                        onDelete={async () => { if (!window.confirm('Delete this meeting?')) return; await deleteProjectMeeting(mtg.id); setMeetings(prev => prev.filter(m => m.id !== mtg.id)); }}
+                        onActionItemClick={ai => { const base = mtg.meeting_date ? new Date(mtg.meeting_date + 'T12:00:00') : new Date(); base.setDate(base.getDate() + 7); setActionItemDraft({ title: ai.title || '', assigned_to: ai.owner || '', estimated_hours: ai.estimated_hours || '', milestone_id: milestones[0]?.id || null, due_date: base.toISOString().slice(0,10) }); }}
+                        innerBg="var(--bg)"
+                      />
+                    )}
+                  </div>
+                ))}
               </div>
             )}
 
