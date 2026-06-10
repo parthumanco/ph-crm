@@ -4372,6 +4372,49 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                   </div>
                 ))}
               </div>
+
+              {/* ── Discovered contacts from research / company intel ── */}
+              {(() => {
+                const addedNames = new Set(contacts.map(c => c.name?.trim().toLowerCase()));
+                const pool = new Map();
+                (projectCompany?.contacts || []).forEach(c => {
+                  if (c.name?.trim()) pool.set(c.name.trim().toLowerCase(), { name: c.name.trim(), title: c.title || '', email: c.email || '', linkedin: c.linkedin || '' });
+                });
+                (dealCompanyIntel?.contact_angles || []).forEach(c => {
+                  if (!c.name?.trim()) return;
+                  const key = c.name.trim().toLowerCase();
+                  const existing = pool.get(key) || {};
+                  pool.set(key, { ...existing, ...c, name: c.name.trim(), email: c.email || existing.email || '', linkedin: c.linkedin || existing.linkedin || '' });
+                });
+                const discovered = Array.from(pool.values()).filter(c => !addedNames.has(c.name.toLowerCase()));
+                if (discovered.length === 0) return null;
+                return (
+                  <div style={{ marginTop: 24 }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 10 }}>
+                      Discovered from research ({discovered.length})
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      {discovered.map((c, i) => (
+                        <div key={i} style={{ padding: '12px 14px', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 8, display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>{c.name}</div>
+                            {c.title && <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 1 }}>{c.title}</div>}
+                            {c.email && <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 2 }}>{c.email}</div>}
+                            {c.linkedin && <a href={c.linkedin} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: 'var(--accent)', marginTop: 2, display: 'inline-block' }}>LinkedIn ↗</a>}
+                          </div>
+                          <button
+                            onClick={async () => {
+                              const isFirst = contacts.length === 0;
+                              await saveProjectContacts([...contacts, { ...c, is_primary: isFirst }]);
+                            }}
+                            style={{ fontSize: 10, fontWeight: 700, padding: '3px 10px', borderRadius: 20, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-muted)', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}
+                          >+ Add</button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
           );
         })()}
