@@ -691,7 +691,36 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
                 </div>
                 <div>
                   <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 4 }}>Contact Name</label>
-                  <input type="text" value={deal.contact_name || ''} onChange={e => field('contact_name', e.target.value)} style={{ width: '100%', fontSize: 13 }} />
+                  {(() => {
+                    // Build options: mergedContacts + any freeform value not already in the list
+                    const options = [...mergedContacts];
+                    const currentName = deal.contact_name?.trim() || '';
+                    if (currentName && !options.find(c => c.name.toLowerCase() === currentName.toLowerCase())) {
+                      options.unshift({ name: currentName, email: deal.contact_email?.trim() || null, title: null });
+                    }
+                    if (options.length === 0) {
+                      // Fall back to plain text if no contacts exist yet
+                      return <input type="text" value={deal.contact_name || ''} onChange={e => field('contact_name', e.target.value)} style={{ width: '100%', fontSize: 13 }} />;
+                    }
+                    return (
+                      <select
+                        value={deal.contact_name || ''}
+                        onChange={e => {
+                          const selected = options.find(c => c.name === e.target.value);
+                          field('contact_name', e.target.value);
+                          if (selected?.email) field('contact_email', selected.email);
+                        }}
+                        style={{ width: '100%', fontSize: 13 }}
+                      >
+                        <option value="">— Select contact —</option>
+                        {options.map(c => (
+                          <option key={c.name} value={c.name}>
+                            {c.name}{c.title ? ` · ${c.title}` : ''}
+                          </option>
+                        ))}
+                      </select>
+                    );
+                  })()}
                 </div>
                 <div>
                   <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 4 }}>Contact Email</label>
