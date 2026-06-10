@@ -1,27 +1,24 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 
-// ── Tiny AI helper: extract summary + action items from a transcript ──────────
-async function processTranscriptWithAI(transcript, prospectName, companyName) {
-  try {
-    const { callClaude } = await import('../lib/anthropic.js').then(m => {
-      // callClaude is not exported, so we build our own minimal fetch
-      return { callClaude: null };
-    });
-    void callClaude; // not exported — use fetch directly
-  } catch {}
-
+// ── Tiny AI helper: extract summary + action items + contact info ─────────────
+async function processTranscriptWithAI(transcript) {
   const apiKey = import.meta.env.VITE_ANTHROPIC_API_KEY;
-  if (!apiKey) return { summary: '', action_items: [] };
+  if (!apiKey) return { summary: '', action_items: [], contact_name: '', company_name: '', contact_email: '' };
 
-  const prompt = `You are analyzing a meeting transcript between Peter (a consultant at Part Human) and ${prospectName}${companyName ? ` from ${companyName}` : ''}.
+  const prompt = `You are analyzing a meeting transcript involving Peter (a consultant at Part Human).
 
-Extract:
-1. A concise 2–3 sentence summary of the conversation
-2. All follow-up action items / next steps — include who owns each one and a suggested due date (YYYY-MM-DD, within 14 days if not specified)
+Extract the following and respond ONLY with valid JSON:
+1. The name of the OTHER person Peter met with (not Pete/Peter)
+2. Their company name
+3. Their email address IF explicitly mentioned in the transcript (null if not stated)
+4. A concise 2–3 sentence summary of the conversation
+5. All follow-up action items / next steps — include who owns each one and a suggested due date (YYYY-MM-DD, within 14 days if not specified)
 
-Respond ONLY with valid JSON in this exact shape:
 {
+  "contact_name": "First Last",
+  "company_name": "Company Name",
+  "contact_email": null,
   "summary": "...",
   "action_items": [
     { "title": "...", "owner": "Pete", "due_date": "YYYY-MM-DD" }
@@ -51,7 +48,23 @@ ${transcript.slice(0, 8000)}`;
     const match = text.match(/\{[\s\S]*\}/);
     if (match) return JSON.parse(match[0]);
   } catch {}
-  return { summary: '', action_items: [] };
+  return { summary: '', action_items: [], contact_name: '', company_name: '', contact_email: '' };
+}
+
+// ── Cross-reference contact against CRM data ──────────────────────────────────
+async function crossReferenceContact(contactName, companyName) {
+  const refs = { pipeline: [], intel: [] };
+  const term = (companyName || '').trim();
+  if (!term) return refs;
+
+  const [{ data: deals }, { data: companies }] = await Promise.all([
+    supabase.from('deals').select('id, company_name, contact_name, contact_email, stage').ilike('company_name', `%${term}%`).limit(5),
+    supabase.from('companies').select('id, name, contact_angles').ilike('name', `%${term}%`).limit(3),
+  ]);
+
+  refs.pipeline = deals || [];
+  refs.intel    = companies || [];
+  return refs;
 }
 
 const STATUS_OPTIONS = [
@@ -133,6 +146,9 @@ export default function OldGoldPage({ isActive = false }) {
   const [quickSaveContact, setQuickSaveContact] = useState('');  // prospect id or '__new__'
   const [quickSaving,    setQuickSaving]    = useState(false);
   const [showQuickPanel, setShowQuickPanel] = useState(false);
+  const [quickExtracted, setQuickExtracted] = useState(null);   // { contact_name, company_name, contact_email }
+  const [quickCrossRefs, setQuickCrossRefs] = useState(null);   // { pipeline: [], intel: [] }
+  const [quickEmailHint, setQuickEmailHint] = useState('');     // pre-filled email from cross-ref
 
   // Refs so async drop handler always sees current state (avoids stale closures)
   const showImportRef    = useRef(showImport);
@@ -181,9 +197,50 @@ export default function OldGoldPage({ isActive = false }) {
     setQuickAnalyzing(true);
     setQuickError('');
     setQuickResult(null);
+    setQuickExtracted(null);
+    setQuickCrossRefs(null);
+    setQuickEmailHint('');
     try {
-      const result = await processTranscriptWithAI(text, 'the contact', '');
+      const result = await processTranscriptWithAI(text);
       setQuickResult(result);
+
+      // Extract contact identity
+      const extracted = {
+        contact_name:  result.contact_name  || '',
+        company_name:  result.company_name  || '',
+        contact_email: result.contact_email || '',
+      };
+      setQuickExtracted(extracted);
+
+      // Auto-match against existing Old Gold prospects (in-memory)
+      if (extracted.contact_name || extracted.company_name) {
+        const nameLower    = extracted.contact_name.toLowerCase();
+        const companyLower = extracted.company_name.toLowerCase();
+        const match = prospects.find(p =>
+          (nameLower    && p.name?.toLowerCase().includes(nameLower)) ||
+          (companyLower && p.company?.toLowerCase().includes(companyLower))
+        );
+        if (match) setQuickSaveContact(match.id);
+      }
+
+      // Cross-reference against Pipeline + Intel
+      const refs = await crossReferenceContact(extracted.contact_name, extracted.company_name);
+      setQuickCrossRefs(refs);
+
+      // Pick best email hint: transcript > pipeline deal > intel contact_angles
+      let emailHint = extracted.contact_email || '';
+      if (!emailHint && refs.pipeline?.length) {
+        const deal = refs.pipeline.find(d => d.contact_email);
+        if (deal) emailHint = deal.contact_email;
+      }
+      if (!emailHint && refs.intel?.length) {
+        for (const co of refs.intel) {
+          const angle = (co.contact_angles || []).find(c => c.email);
+          if (angle) { emailHint = angle.email; break; }
+        }
+      }
+      if (emailHint) setQuickEmailHint(emailHint);
+
     } catch (e) {
       setQuickError(e.message || 'Analysis failed');
     } finally {
@@ -199,10 +256,21 @@ export default function OldGoldPage({ isActive = false }) {
       let prospect = prospects.find(p => p.id === prospectId);
 
       if (quickSaveContact === '__new__') {
-        const { data } = await supabase.from('old_gold_prospects').insert({ name: 'New Contact', status: 'warm' }).select().single();
+        const newProspect = {
+          name:    quickExtracted?.contact_name || 'New Contact',
+          company: quickExtracted?.company_name || '',
+          email:   quickEmailHint || quickExtracted?.contact_email || '',
+          status:  'warm',
+        };
+        const { data } = await supabase.from('old_gold_prospects').insert(newProspect).select().single();
         prospectId = data.id;
         prospect = data;
         setProspects(prev => [data, ...prev]);
+      } else if (quickEmailHint && prospect && !prospect.email) {
+        // Back-fill email onto existing prospect if they didn't have one
+        await supabase.from('old_gold_prospects').update({ email: quickEmailHint }).eq('id', prospectId);
+        prospect = { ...prospect, email: quickEmailHint };
+        setProspects(prev => prev.map(p => p.id === prospectId ? prospect : p));
       }
 
       const { data: mtg } = await supabase.from('old_gold_meetings').insert({
@@ -454,7 +522,7 @@ export default function OldGoldPage({ isActive = false }) {
             <div style={{ border: '1px solid var(--accent)', borderRadius: 10, background: 'var(--surface)', overflow: 'hidden' }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', background: '#fffbeb', borderBottom: '1px solid #fde68a' }}>
                 <div style={{ fontSize: 13, fontWeight: 800, color: '#92400e' }}>🪩 Quick transcript analysis</div>
-                <button onClick={() => { setShowQuickPanel(false); setQuickText(''); setQuickResult(null); setQuickError(''); }} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, color: '#92400e', padding: '0 2px' }}>✕</button>
+                <button onClick={() => { setShowQuickPanel(false); setQuickText(''); setQuickResult(null); setQuickError(''); setQuickExtracted(null); setQuickCrossRefs(null); setQuickEmailHint(''); setQuickSaveContact(''); }} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, color: '#92400e', padding: '0 2px' }}>✕</button>
               </div>
 
               <div style={{ padding: 16 }}>
@@ -470,7 +538,7 @@ export default function OldGoldPage({ isActive = false }) {
                     />
                     {quickError && <div style={{ fontSize: 12, color: '#ef4444', marginBottom: 8 }}>{quickError}</div>}
                     <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-                      <button onClick={() => { setShowQuickPanel(false); setQuickText(''); setQuickError(''); }} style={{ fontSize: 12, padding: '5px 14px', borderRadius: 6, border: '1px solid var(--border)', background: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}>Cancel</button>
+                      <button onClick={() => { setShowQuickPanel(false); setQuickText(''); setQuickError(''); setQuickExtracted(null); setQuickCrossRefs(null); setQuickEmailHint(''); setQuickSaveContact(''); }} style={{ fontSize: 12, padding: '5px 14px', borderRadius: 6, border: '1px solid var(--border)', background: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}>Cancel</button>
                       <button
                         onClick={() => handleQuickAnalyze(quickText)}
                         disabled={quickAnalyzing || !quickText.trim()}
@@ -481,6 +549,88 @@ export default function OldGoldPage({ isActive = false }) {
                 ) : (
                   /* Results */
                   <>
+                    {/* Detected contact header */}
+                    {quickExtracted && (quickExtracted.contact_name || quickExtracted.company_name) && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14, padding: '8px 12px', background: '#f0fdf4', border: '1px solid #86efac', borderRadius: 8 }}>
+                        <span style={{ fontSize: 15 }}>👤</span>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <span style={{ fontSize: 13, fontWeight: 700, color: '#15803d' }}>
+                            {quickExtracted.contact_name || 'Unknown contact'}
+                          </span>
+                          {quickExtracted.company_name && (
+                            <span style={{ fontSize: 12, color: '#166534', marginLeft: 6 }}>· {quickExtracted.company_name}</span>
+                          )}
+                          {quickEmailHint && (
+                            <span style={{ fontSize: 11, color: '#15803d', marginLeft: 8, opacity: 0.8 }}>{quickEmailHint}</span>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Cross-reference matches */}
+                    {quickCrossRefs && (quickCrossRefs.pipeline?.length > 0 || quickCrossRefs.intel?.length > 0) && (
+                      <div style={{ marginBottom: 14, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                        {quickCrossRefs.pipeline?.map(deal => {
+                          // Find a specific matching contact angle from intel for this deal
+                          const intelCo = quickCrossRefs.intel?.find(c => c.name?.toLowerCase().includes((quickExtracted?.company_name || '').toLowerCase()));
+                          const intelContact = (intelCo?.contact_angles || []).find(c =>
+                            c.name?.toLowerCase().includes((quickExtracted?.contact_name || '').toLowerCase())
+                          );
+                          const email = deal.contact_email || intelContact?.email || '';
+                          const linkedin = intelContact?.linkedin || '';
+                          return (
+                            <div key={deal.id} style={{ padding: '9px 12px', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 8, display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                              <span style={{ fontSize: 14, flexShrink: 0, marginTop: 1 }}>⚡</span>
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ fontSize: 12, fontWeight: 700, color: '#92400e' }}>
+                                  Found in Pipeline: {deal.company_name}
+                                  {deal.stage && <span style={{ fontWeight: 400, color: '#b45309', marginLeft: 6 }}>({deal.stage})</span>}
+                                </div>
+                                <div style={{ fontSize: 11, color: '#78350f', marginTop: 2, display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                                  {deal.contact_name && <span>Contact: <strong>{deal.contact_name}</strong></span>}
+                                  {email && <span>✉ {email}</span>}
+                                  {linkedin && <span>🔗 <a href={linkedin} target="_blank" rel="noreferrer" style={{ color: '#78350f' }}>LinkedIn</a></span>}
+                                </div>
+                              </div>
+                              {email && !quickEmailHint && (
+                                <button
+                                  onClick={() => setQuickEmailHint(email)}
+                                  style={{ fontSize: 10, padding: '3px 8px', borderRadius: 5, border: '1px solid #fbbf24', background: '#fef3c7', color: '#92400e', cursor: 'pointer', flexShrink: 0 }}
+                                >Use email</button>
+                              )}
+                            </div>
+                          );
+                        })}
+                        {/* Intel-only matches (company not in pipeline) */}
+                        {quickCrossRefs.intel?.filter(co =>
+                          !quickCrossRefs.pipeline?.some(d => d.company_name?.toLowerCase().includes(co.name?.toLowerCase()))
+                        ).map(co => {
+                          const angle = (co.contact_angles || []).find(c =>
+                            c.name?.toLowerCase().includes((quickExtracted?.contact_name || '').toLowerCase())
+                          ) || co.contact_angles?.[0];
+                          if (!angle?.email && !angle?.linkedin) return null;
+                          return (
+                            <div key={co.id} style={{ padding: '9px 12px', background: '#f5f3ff', border: '1px solid #c4b5fd', borderRadius: 8, display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                              <span style={{ fontSize: 14, flexShrink: 0, marginTop: 1 }}>🧠</span>
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ fontSize: 12, fontWeight: 700, color: '#5b21b6' }}>Found in Company Intel: {co.name}</div>
+                                <div style={{ fontSize: 11, color: '#6d28d9', marginTop: 2, display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                                  {angle.email && <span>✉ {angle.email}</span>}
+                                  {angle.linkedin && <span>🔗 <a href={angle.linkedin} target="_blank" rel="noreferrer" style={{ color: '#6d28d9' }}>LinkedIn</a></span>}
+                                </div>
+                              </div>
+                              {angle.email && !quickEmailHint && (
+                                <button
+                                  onClick={() => setQuickEmailHint(angle.email)}
+                                  style={{ fontSize: 10, padding: '3px 8px', borderRadius: 5, border: '1px solid #c4b5fd', background: '#ede9fe', color: '#5b21b6', cursor: 'pointer', flexShrink: 0 }}
+                                >Use email</button>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+
                     {quickResult.summary && (
                       <div style={{ marginBottom: 14 }}>
                         <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 5 }}>Summary</div>
@@ -520,7 +670,7 @@ export default function OldGoldPage({ isActive = false }) {
                         style={{ fontSize: 12, fontWeight: 700, padding: '5px 16px', borderRadius: 6, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer', whiteSpace: 'nowrap' }}
                       >{quickSaving ? 'Saving…' : 'Save & open contact'}</button>
                       <button
-                        onClick={() => { setQuickResult(null); setQuickText(''); setShowQuickPanel(false); }}
+                        onClick={() => { setQuickResult(null); setQuickText(''); setShowQuickPanel(false); setQuickExtracted(null); setQuickCrossRefs(null); setQuickEmailHint(''); }}
                         style={{ fontSize: 12, padding: '5px 12px', borderRadius: 6, border: '1px solid var(--border)', background: 'none', cursor: 'pointer', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}
                       >Discard</button>
                     </div>
