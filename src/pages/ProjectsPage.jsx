@@ -3012,6 +3012,14 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                                     style={{ fontSize: 12, padding: '4px 8px', width: 70 }}
                                   />
                                 </div>
+                                <button
+                                  onMouseDown={e => { e.preventDefault(); handleSaveTaskEdit(task); setEditingTask(null); }}
+                                  style={{ fontSize: 11, fontWeight: 700, padding: '4px 14px', borderRadius: 6, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer', whiteSpace: 'nowrap', alignSelf: 'flex-end' }}
+                                >Save</button>
+                                <button
+                                  onMouseDown={e => { e.preventDefault(); setEditingTask(null); }}
+                                  style={{ fontSize: 11, padding: '4px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'none', color: 'var(--text-muted)', cursor: 'pointer', alignSelf: 'flex-end' }}
+                                >Cancel</button>
                               </div>
                             ) : (
                               /* ── Normal view mode ────────────────────────── */
