@@ -2905,13 +2905,13 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                       {/* Tasks — column headers */}
                       {msTasks.some(t => !projectOwnerFilter || (t.assigned_to || ms.assigned_to || '') === projectOwnerFilter || (projectOwnerFilter === '__unassigned__' && !(t.assigned_to || ms.assigned_to))) && (
                         <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '5px 16px 5px 48px', borderTop: '1px solid var(--border-light)', background: 'var(--bg)' }}>
-                          <div style={{ flex: 1, fontSize: 9, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.06em' }}>Task</div>
+                            <div style={{ flex: 1, fontSize: 9, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.06em' }}>Task</div>
                           <div style={{ width: 110, fontSize: 9, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.06em', flexShrink: 0 }}>Assigned To</div>
                           <div style={{ width: 52, fontSize: 9, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.06em', flexShrink: 0 }}>Hrs</div>
-                          <div style={{ minWidth: 80, fontSize: 9, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.06em', flexShrink: 0 }}>Due Date</div>
-                          <div style={{ minWidth: 64, fontSize: 9, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.06em', flexShrink: 0 }}>Mentions</div>
+                          <div style={{ width: 86, fontSize: 9, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.06em', flexShrink: 0 }}>Due Date</div>
+                          <div style={{ width: 70, fontSize: 9, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.06em', flexShrink: 0 }}>Mentions</div>
                           <div style={{ width: 130, fontSize: 9, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.06em', flexShrink: 0 }}>Milestone</div>
-                          <div style={{ width: 90, fontSize: 9, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.06em', flexShrink: 0 }}>Actions</div>
+                          <div style={{ width: 96, fontSize: 9, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.06em', flexShrink: 0 }}>Actions</div>
                         </div>
                       )}
 
@@ -3077,7 +3077,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                                     setTasks(prev => prev.map(patch));
                                     setAllTasks(prev => ({ ...prev, [activeProject.id]: (prev[activeProject.id] || []).map(patch) }));
                                   }}
-                                  style={{ fontSize: 11, padding: '2px 4px', border: '1px solid var(--border)', borderRadius: 4, background: 'var(--surface)', color: task.assigned_to ? 'var(--text)' : 'var(--text-faint)', flexShrink: 0, maxWidth: 110 }}
+                                  style={{ fontSize: 11, padding: '2px 4px', border: '1px solid var(--border)', borderRadius: 4, background: 'var(--surface)', color: task.assigned_to ? 'var(--text)' : 'var(--text-faint)', flexShrink: 0, width: 110 }}
                                 >
                                   <option value="">Unassigned</option>
                                   {owners.map(o => <option key={o} value={o}>{o}</option>)}
@@ -3102,12 +3102,12 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                                   }}
                                   style={{ fontSize: 11, padding: '2px 5px', border: '1px solid var(--border)', borderRadius: 4, background: 'var(--surface)', width: 52, flexShrink: 0, color: 'var(--text)' }}
                                 />
-                                <span style={{ fontSize: 11, color: task.due_date ? 'var(--text-muted)' : 'var(--text-faint)', whiteSpace: 'nowrap', flexShrink: 0 }}>{task.due_date ? fmtDate(task.due_date) : '—'}</span>
+                                <span style={{ fontSize: 11, color: task.due_date ? 'var(--text-muted)' : 'var(--text-faint)', whiteSpace: 'nowrap', flexShrink: 0, width: 86 }}>{task.due_date ? fmtDate(task.due_date) : '—'}</span>
                                 {/* Mentions pill — colored when task appears in meeting notes */}
                                 <button
                                   onClick={() => setMentionsPanel(task)}
                                   style={{
-                                    flexShrink: 0, fontSize: 10, fontWeight: 700, padding: '3px 9px', borderRadius: 20, cursor: 'pointer', whiteSpace: 'nowrap', border: 'none',
+                                    flexShrink: 0, width: 70, fontSize: 10, fontWeight: 700, padding: '3px 0', borderRadius: 20, cursor: 'pointer', whiteSpace: 'nowrap', border: 'none', textAlign: 'center',
                                     background: taskMentionsMap[task.id] ? 'var(--accent)' : 'var(--border)',
                                     color: taskMentionsMap[task.id] ? '#fff' : 'var(--text-faint)',
                                   }}
@@ -3124,7 +3124,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                                     setTasks(prev => prev.map(patch));
                                     setAllTasks(prev => ({ ...prev, [activeProject.id]: (prev[activeProject.id] || []).map(patch) }));
                                   }}
-                                  style={{ fontSize: 10, padding: '2px 4px', border: '1px solid var(--border)', borderRadius: 4, background: 'var(--surface)', color: 'var(--text-muted)', flexShrink: 0, maxWidth: 130 }}
+                                  style={{ fontSize: 10, padding: '2px 4px', border: '1px solid var(--border)', borderRadius: 4, background: 'var(--surface)', color: 'var(--text-muted)', flexShrink: 0, width: 130 }}
                                   title="Move to milestone"
                                 >
                                   <option value="">— Unassigned —</option>
