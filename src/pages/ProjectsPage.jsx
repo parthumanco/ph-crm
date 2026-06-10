@@ -409,6 +409,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
   const [linkUrl, setLinkUrl]                     = useState('');
   const [linkName, setLinkName]                   = useState('');
   const [taskCompleteEmail, setTaskCompleteEmail] = useState(null); // { task, project }
+  const [meetingSummaryEmail, setMeetingSummaryEmail] = useState(null); // { meeting, savedTasks, project }
   const [sendingEmail, setSendingEmail]           = useState(false);
   const [emailSentFor, setEmailSentFor]           = useState(null); // task.id
   const [extraRecipients, setExtraRecipients]     = useState([]);   // [{ name, email }]
@@ -1575,7 +1576,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
       if (savedTasks.length) parts.push(`${savedTasks.length} task${savedTasks.length !== 1 ? 's' : ''} added`);
       if (skippedCount > 0) parts.push(`${skippedCount} exact duplicate${skippedCount !== 1 ? 's' : ''} skipped`);
       if (meetingMilestoneId && !milestones.find(m => m.id === meetingMilestoneId)) parts.push(`📋 New milestone created: "${meeting.title}"`);
-      if (parts.length) alert(parts.join(' · '));
+      if (savedTasks.length) setMeetingSummaryEmail({ meeting, savedTasks, project: activeProject, importNote: parts.join(' · ') });
       setTasks(prev => [...prev, ...savedTasks]);
       setAllTasks(prev => ({
         ...prev,
@@ -2711,7 +2712,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
         </div>
 
         {/* ── Project tabs ── */}
-        <div style={{ display: 'flex', gap: 0, borderBottom: '2px solid var(--border)', marginBottom: 20 }}>
+        <div style={{ position: 'sticky', top: 91, zIndex: 80, background: 'var(--bg)', display: 'flex', gap: 0, borderBottom: '2px solid var(--border)', marginBottom: 20 }}>
           {[
             { id: 'timeline', label: 'Tasks' },
             { id: 'activity', label: dealActivities.length > 0 ? `Activity (${dealActivities.length})` : 'Activity' },
@@ -3511,20 +3512,6 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
               </div>
             )}
 
-            {/* ── Project Estimate ──────────────────────────────────────── */}
-            {tasks.length > 0 && (
-              <ProjectForecast
-                tasks={tasks}
-                milestones={milestones}
-                teamMembers={teamMembers}
-                activeProject={activeProject}
-                onBudgetChange={val => { setActiveProject(p => ({ ...p, budget: val })); }}
-                onBudgetBlur={handleSaveProject}
-                open={showEstimate}
-                onToggle={() => setShowEstimate(o => !o)}
-              />
-            )}
-
             {/* ── Meetings log ──────────────────────────────────────── */}
             <div style={{ border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
                 {/* Header */}
@@ -3610,12 +3597,9 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                           });
                           return (
                             <>
-                              {/* Header row — always visible, click anywhere to expand */}
-                              <div
-                                onClick={toggleExpanded}
-                                style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer', marginBottom: isExpanded && mtg.summary ? 8 : 0 }}
-                              >
-                                <div style={{ flex: 1 }}>
+                              {/* Header row — always visible */}
+                              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                                <div style={{ flex: 1, minWidth: 0 }}>
                                   <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>{mtg.title}</div>
                                   <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 2, flexWrap: 'wrap' }}>
                                     {mtg.meeting_date && (
@@ -3630,14 +3614,8 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                                       <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>· {mtg.attendees.join(', ')}</span>
                                     )}
                                   </div>
-                                  {/* Collapsed preview */}
-                                  {!isExpanded && mtg.summary && (
-                                    <div style={{ fontSize: 12, color: 'var(--text-faint)', marginTop: 4, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
-                                      {mtg.summary}
-                                    </div>
-                                  )}
                                 </div>
-                                <div style={{ display: 'flex', gap: 6, flexShrink: 0 }} onClick={e => e.stopPropagation()}>
+                                <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
                                   <button
                                     onClick={() => { setEditingMeeting(mtg.id); setEditMeetingDraft({ title: mtg.title, meeting_date: mtg.meeting_date || '', meeting_time: mtg.meeting_time || '', attendees: mtg.attendees || [], summary: mtg.summary || '' }); }}
                                     style={{ fontSize: 10, padding: '3px 7px', borderRadius: 5, border: '1px solid var(--border)', background: 'none', color: 'var(--text-faint)', cursor: 'pointer' }}
@@ -3648,55 +3626,58 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                                     style={{ fontSize: 10, padding: '3px 6px', borderRadius: 5, border: '1px solid var(--border)', background: 'none', color: 'var(--text-faint)', cursor: 'pointer' }}
                                     title="Delete meeting"
                                   >🗑</button>
-                                  <span style={{ fontSize: 11, color: 'var(--text-faint)', padding: '2px 4px' }}>{isExpanded ? '▲' : '▼'}</span>
+                                  {mtg.transcript && (
+                                    <span
+                                      onClick={toggleExpanded}
+                                      style={{ fontSize: 11, color: 'var(--text-faint)', padding: '2px 4px', cursor: 'pointer' }}
+                                      title={isExpanded ? 'Hide transcript' : 'View transcript'}
+                                    >{isExpanded ? '▲' : '▼'}</span>
+                                  )}
                                 </div>
                               </div>
 
-                              {/* Expanded content */}
-                              {isExpanded && (
-                                <>
-                                  {mtg.summary && (
-                                    <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6, marginBottom: 8 }}>
-                                      {mtg.summary}
-                                    </div>
-                                  )}
-                                  {mtg.action_items?.length > 0 && (
-                                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: 8 }}>
-                                      {mtg.action_items.map((ai, ai_i) => {
-                                        const alreadyTask = tasks.some(t => t.title?.toLowerCase().trim() === ai.title?.toLowerCase().trim());
-                                        return alreadyTask ? (
-                                          <span
-                                            key={ai_i}
-                                            title="Already added as a task"
-                                            style={{ fontSize: 11, padding: '2px 8px', borderRadius: 12, background: '#f0fdf4', border: '1px solid #86efac', color: '#15803d', cursor: 'default', display: 'inline-flex', alignItems: 'center', gap: 4 }}
-                                          >
-                                            <span style={{ fontSize: 10 }}>✓</span>
-                                            {ai.owner && <span style={{ fontWeight: 700, marginRight: 2 }}>{ai.owner}</span>}
-                                            {ai.title}
-                                          </span>
-                                        ) : (
-                                          <span
-                                            key={ai_i}
-                                            onClick={() => { const base = mtg.meeting_date ? new Date(mtg.meeting_date + 'T12:00:00') : new Date(); base.setDate(base.getDate() + 7); setActionItemDraft({ title: ai.title || '', assigned_to: ai.owner || '', estimated_hours: ai.estimated_hours || '', milestone_id: milestones[0]?.id || null, due_date: base.toISOString().slice(0,10) }); }}
-                                            title="Click to add as task"
-                                            style={{ fontSize: 11, padding: '2px 8px', borderRadius: 12, background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text-muted)', cursor: 'pointer', transition: 'background .15s, border-color .15s' }}
-                                            onMouseEnter={e => { e.currentTarget.style.background = 'var(--accent-light, #ede9fe)'; e.currentTarget.style.borderColor = 'var(--accent)'; }}
-                                            onMouseLeave={e => { e.currentTarget.style.background = 'var(--surface)'; e.currentTarget.style.borderColor = 'var(--border)'; }}
-                                          >
-                                            {ai.owner && <span style={{ fontWeight: 700, color: 'var(--accent)', marginRight: 4 }}>{ai.owner}</span>}
-                                            {ai.title}
-                                          </span>
-                                        );
-                                      })}
-                                    </div>
-                                  )}
-                                  {/* Full transcript — always visible when expanded */}
-                                  {mtg.transcript && (
-                                    <div style={{ padding: '10px 12px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 7, fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.7, whiteSpace: 'pre-wrap', maxHeight: 320, overflowY: 'auto' }}>
-                                      {mtg.transcript}
-                                    </div>
-                                  )}
-                                </>
+                              {/* Always-visible: full summary + task pills */}
+                              {mtg.summary && (
+                                <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6, marginTop: 8 }}>
+                                  {mtg.summary}
+                                </div>
+                              )}
+                              {mtg.action_items?.length > 0 && (
+                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginTop: 8 }}>
+                                  {mtg.action_items.map((ai, ai_i) => {
+                                    const alreadyTask = tasks.some(t => t.title?.toLowerCase().trim() === ai.title?.toLowerCase().trim());
+                                    return alreadyTask ? (
+                                      <span
+                                        key={ai_i}
+                                        title="Already added as a task"
+                                        style={{ fontSize: 11, padding: '2px 8px', borderRadius: 12, background: '#f0fdf4', border: '1px solid #86efac', color: '#15803d', cursor: 'default', display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                                      >
+                                        <span style={{ fontSize: 10 }}>✓</span>
+                                        {ai.owner && <span style={{ fontWeight: 700, marginRight: 2 }}>{ai.owner}</span>}
+                                        {ai.title}
+                                      </span>
+                                    ) : (
+                                      <span
+                                        key={ai_i}
+                                        onClick={() => { const base = mtg.meeting_date ? new Date(mtg.meeting_date + 'T12:00:00') : new Date(); base.setDate(base.getDate() + 7); setActionItemDraft({ title: ai.title || '', assigned_to: ai.owner || '', estimated_hours: ai.estimated_hours || '', milestone_id: milestones[0]?.id || null, due_date: base.toISOString().slice(0,10) }); }}
+                                        title="Click to add as task"
+                                        style={{ fontSize: 11, padding: '2px 8px', borderRadius: 12, background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text-muted)', cursor: 'pointer', transition: 'background .15s, border-color .15s' }}
+                                        onMouseEnter={e => { e.currentTarget.style.background = 'var(--accent-light, #ede9fe)'; e.currentTarget.style.borderColor = 'var(--accent)'; }}
+                                        onMouseLeave={e => { e.currentTarget.style.background = 'var(--surface)'; e.currentTarget.style.borderColor = 'var(--border)'; }}
+                                      >
+                                        {ai.owner && <span style={{ fontWeight: 700, color: 'var(--accent)', marginRight: 4 }}>{ai.owner}</span>}
+                                        {ai.title}
+                                      </span>
+                                    );
+                                  })}
+                                </div>
+                              )}
+
+                              {/* Expanded: full transcript */}
+                              {isExpanded && mtg.transcript && (
+                                <div style={{ marginTop: 10, padding: '10px 12px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 7, fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.7, whiteSpace: 'pre-wrap', maxHeight: 320, overflowY: 'auto' }}>
+                                  {mtg.transcript}
+                                </div>
                               )}
                             </>
                           );
@@ -3716,6 +3697,20 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
             >
               + Add Milestone
             </button>
+
+            {/* ── Project Forecast — always at the bottom ──────────────────────────────────────── */}
+            {tasks.length > 0 && (
+              <ProjectForecast
+                tasks={tasks}
+                milestones={milestones}
+                teamMembers={teamMembers}
+                activeProject={activeProject}
+                onBudgetChange={val => { setActiveProject(p => ({ ...p, budget: val })); }}
+                onBudgetBlur={handleSaveProject}
+                open={showEstimate}
+                onToggle={() => setShowEstimate(o => !o)}
+              />
+            )}
           </div>
         </>)}
         </>)}
@@ -3871,12 +3866,9 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                         </div>
                       ) : (
                         <>
-                          {/* Header row — click to expand */}
-                          <div
-                            onClick={toggleExpanded}
-                            style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer', marginBottom: isExpanded && mtg.summary ? 8 : 0 }}
-                          >
-                            <div style={{ flex: 1 }}>
+                          {/* Header row — always visible */}
+                          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                            <div style={{ flex: 1, minWidth: 0 }}>
                               <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>{mtg.title}</div>
                               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 2, flexWrap: 'wrap' }}>
                                 {mtg.meeting_date && (
@@ -3887,14 +3879,8 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                                 {mtg.meeting_time && <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>· {mtg.meeting_time}</span>}
                                 {mtg.attendees?.length > 0 && <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>· {mtg.attendees.join(', ')}</span>}
                               </div>
-                              {/* 2-line collapsed preview */}
-                              {!isExpanded && mtg.summary && (
-                                <div style={{ fontSize: 12, color: 'var(--text-faint)', marginTop: 4, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
-                                  {mtg.summary}
-                                </div>
-                              )}
                             </div>
-                            <div style={{ display: 'flex', gap: 6, flexShrink: 0 }} onClick={e => e.stopPropagation()}>
+                            <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
                               <button
                                 onClick={() => { setEditingMeeting(mtg.id); setEditMeetingDraft({ title: mtg.title, meeting_date: mtg.meeting_date || '', meeting_time: mtg.meeting_time || '', attendees: mtg.attendees || [], summary: mtg.summary || '' }); }}
                                 style={{ fontSize: 10, padding: '3px 7px', borderRadius: 5, border: '1px solid var(--border)', background: 'none', color: 'var(--text-faint)', cursor: 'pointer' }}
@@ -3905,54 +3891,58 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                                 style={{ fontSize: 10, padding: '3px 6px', borderRadius: 5, border: '1px solid var(--border)', background: 'none', color: 'var(--text-faint)', cursor: 'pointer' }}
                                 title="Delete meeting"
                               >🗑</button>
-                              <span style={{ fontSize: 11, color: 'var(--text-faint)', padding: '2px 4px' }}>{isExpanded ? '▲' : '▼'}</span>
+                              {mtg.transcript && (
+                                <span
+                                  onClick={toggleExpanded}
+                                  style={{ fontSize: 11, color: 'var(--text-faint)', padding: '2px 4px', cursor: 'pointer' }}
+                                  title={isExpanded ? 'Hide transcript' : 'View transcript'}
+                                >{isExpanded ? '▲' : '▼'}</span>
+                              )}
                             </div>
                           </div>
 
-                          {/* Expanded content */}
-                          {isExpanded && (
-                            <>
-                              {mtg.summary && (
-                                <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6, marginBottom: 8 }}>
-                                  {mtg.summary}
-                                </div>
-                              )}
-                              {mtg.action_items?.length > 0 && (
-                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: 8 }}>
-                                  {mtg.action_items.map((ai, ai_i) => {
-                                    const alreadyTask = tasks.some(t => t.title?.toLowerCase().trim() === ai.title?.toLowerCase().trim());
-                                    return alreadyTask ? (
-                                      <span
-                                        key={ai_i}
-                                        title="Already added as a task"
-                                        style={{ fontSize: 11, padding: '2px 8px', borderRadius: 12, background: '#f0fdf4', border: '1px solid #86efac', color: '#15803d', cursor: 'default', display: 'inline-flex', alignItems: 'center', gap: 4 }}
-                                      >
-                                        <span style={{ fontSize: 10 }}>✓</span>
-                                        {ai.owner && <span style={{ fontWeight: 700, marginRight: 2 }}>{ai.owner}</span>}
-                                        {ai.title}
-                                      </span>
-                                    ) : (
-                                      <span
-                                        key={ai_i}
-                                        onClick={() => { const base = mtg.meeting_date ? new Date(mtg.meeting_date + 'T12:00:00') : new Date(); base.setDate(base.getDate() + 7); setActionItemDraft({ title: ai.title || '', assigned_to: ai.owner || '', estimated_hours: ai.estimated_hours || '', milestone_id: milestones[0]?.id || null, due_date: base.toISOString().slice(0,10) }); }}
-                                        title="Click to add as task"
-                                        style={{ fontSize: 11, padding: '2px 8px', borderRadius: 12, background: 'var(--bg)', border: '1px solid var(--border)', color: 'var(--text-muted)', cursor: 'pointer', transition: 'background .15s, border-color .15s' }}
-                                        onMouseEnter={e => { e.currentTarget.style.background = 'var(--accent-light, #ede9fe)'; e.currentTarget.style.borderColor = 'var(--accent)'; }}
-                                        onMouseLeave={e => { e.currentTarget.style.background = 'var(--bg)'; e.currentTarget.style.borderColor = 'var(--border)'; }}
-                                      >
-                                        {ai.owner && <span style={{ fontWeight: 700, color: 'var(--accent)', marginRight: 4 }}>{ai.owner}</span>}
-                                        {ai.title}
-                                      </span>
-                                    );
-                                  })}
-                                </div>
-                              )}
-                              {mtg.transcript && (
-                                <div style={{ padding: '10px 12px', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 7, fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.7, whiteSpace: 'pre-wrap', maxHeight: 320, overflowY: 'auto' }}>
-                                  {mtg.transcript}
-                                </div>
-                              )}
-                            </>
+                          {/* Always-visible: full summary + task pills */}
+                          {mtg.summary && (
+                            <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6, marginTop: 8 }}>
+                              {mtg.summary}
+                            </div>
+                          )}
+                          {mtg.action_items?.length > 0 && (
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginTop: 8 }}>
+                              {mtg.action_items.map((ai, ai_i) => {
+                                const alreadyTask = tasks.some(t => t.title?.toLowerCase().trim() === ai.title?.toLowerCase().trim());
+                                return alreadyTask ? (
+                                  <span
+                                    key={ai_i}
+                                    title="Already added as a task"
+                                    style={{ fontSize: 11, padding: '2px 8px', borderRadius: 12, background: '#f0fdf4', border: '1px solid #86efac', color: '#15803d', cursor: 'default', display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                                  >
+                                    <span style={{ fontSize: 10 }}>✓</span>
+                                    {ai.owner && <span style={{ fontWeight: 700, marginRight: 2 }}>{ai.owner}</span>}
+                                    {ai.title}
+                                  </span>
+                                ) : (
+                                  <span
+                                    key={ai_i}
+                                    onClick={() => { const base = mtg.meeting_date ? new Date(mtg.meeting_date + 'T12:00:00') : new Date(); base.setDate(base.getDate() + 7); setActionItemDraft({ title: ai.title || '', assigned_to: ai.owner || '', estimated_hours: ai.estimated_hours || '', milestone_id: milestones[0]?.id || null, due_date: base.toISOString().slice(0,10) }); }}
+                                    title="Click to add as task"
+                                    style={{ fontSize: 11, padding: '2px 8px', borderRadius: 12, background: 'var(--bg)', border: '1px solid var(--border)', color: 'var(--text-muted)', cursor: 'pointer', transition: 'background .15s, border-color .15s' }}
+                                    onMouseEnter={e => { e.currentTarget.style.background = 'var(--accent-light, #ede9fe)'; e.currentTarget.style.borderColor = 'var(--accent)'; }}
+                                    onMouseLeave={e => { e.currentTarget.style.background = 'var(--bg)'; e.currentTarget.style.borderColor = 'var(--border)'; }}
+                                  >
+                                    {ai.owner && <span style={{ fontWeight: 700, color: 'var(--accent)', marginRight: 4 }}>{ai.owner}</span>}
+                                    {ai.title}
+                                  </span>
+                                );
+                              })}
+                            </div>
+                          )}
+
+                          {/* Expanded: full transcript */}
+                          {isExpanded && mtg.transcript && (
+                            <div style={{ marginTop: 10, padding: '10px 12px', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 7, fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.7, whiteSpace: 'pre-wrap', maxHeight: 320, overflowY: 'auto' }}>
+                              {mtg.transcript}
+                            </div>
                           )}
                         </>
                       )}
@@ -4805,6 +4795,110 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                   }}
                   style={{ padding: '9px 20px', borderRadius: 8, border: 'none', background: 'var(--accent)', color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
                 >Open in Gmail ↗</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ── Meeting summary email modal ── */}
+      {meetingSummaryEmail && (() => {
+        const { meeting, savedTasks, project, importNote } = meetingSummaryEmail;
+        const primaryContact = (project.contacts || []).find(c => c.is_primary) || (project.contacts || [])[0];
+        const clientName     = (primaryContact?.name || project.client_name || project.contact_name || '').split(' ')[0] || 'there';
+        const toEmail        = primaryContact?.email || project.client_email || '';
+        const companyLabel   = project.client_name || project.name || '';
+        const portalUrl      = project.share_token ? `${window.location.origin}/portal/${project.share_token}` : null;
+        const subject        = `Meeting summary: ${meeting.title || 'our meeting'}`;
+        const taskLines      = savedTasks.map(t => `• ${t.title}`).join('\n');
+        const taskHtml       = savedTasks.map(t => `<li style="font-family:sans-serif;font-size:13px;margin:4px 0;color:#374151;">${t.title}</li>`).join('');
+        const intro          = `Thanks for the time today. Here's a quick summary of what we covered and the next steps we've lined up.`;
+        const body           = `Hi ${clientName},\n\n${intro}\n\nNEXT STEPS:\n${taskLines}\n\n${portalUrl ? `You can track progress in your project portal:\n${portalUrl}\n\n` : ''}Best,\nPart Human`;
+        const htmlBody       = [
+          `<p style="font-family:sans-serif;font-size:14px;">Hi ${clientName},</p>`,
+          `<p style="font-family:sans-serif;font-size:14px;">${intro}</p>`,
+          `<p style="font-family:sans-serif;font-size:13px;font-weight:700;color:#111;margin-bottom:4px;">NEXT STEPS</p>`,
+          `<ul style="margin:0 0 12px;padding-left:18px;">${taskHtml}</ul>`,
+          portalUrl ? `<p style="font-family:sans-serif;font-size:14px;">You can track progress in your project portal:</p><p><a href="${portalUrl}" style="display:inline-block;background:#fbbf24;color:#111;font-weight:800;font-size:13px;padding:6px 14px;border-radius:20px;text-decoration:none;font-family:sans-serif;">PH &times; ${companyLabel}</a></p>` : '',
+          `<p style="font-family:sans-serif;font-size:14px;">Best,<br>Part Human</p>`,
+        ].join('');
+        const gmailUrl = toEmail ? `https://mail.google.com/mail/?view=cm&to=${encodeURIComponent(toEmail)}&su=${encodeURIComponent(subject)}` : null;
+
+        return (
+          <div style={{ position: 'fixed', inset: 0, zIndex: 900, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.4)' }} onClick={() => setMeetingSummaryEmail(null)} />
+            <div style={{ position: 'relative', zIndex: 1, background: 'var(--bg)', borderRadius: 14, padding: '24px 24px 20px', width: 680, maxWidth: '95vw', boxShadow: '0 20px 60px rgba(0,0,0,0.22)' }}>
+
+              {/* Header */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 4 }}>
+                <div>
+                  <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--text)' }}>Send meeting summary?</div>
+                  <div style={{ fontSize: 12, color: 'var(--text-faint)', marginTop: 3 }}>{meeting.title || 'Meeting'} · {meeting.meeting_date || ''}</div>
+                </div>
+                <button onClick={() => setMeetingSummaryEmail(null)} style={{ background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: 'var(--text-muted)', padding: '2px 4px' }}>✕</button>
+              </div>
+
+              {/* Import note badge */}
+              {importNote && (
+                <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 20, padding: '3px 10px', fontSize: 11, color: 'var(--text-faint)', marginBottom: 14 }}>
+                  ✅ {importNote}
+                </div>
+              )}
+
+              {/* Fields */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <div>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 4 }}>To</div>
+                  <div style={{ fontSize: 13, padding: '8px 12px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 7, color: 'var(--text-muted)' }}>
+                    {primaryContact ? `${primaryContact.name}${primaryContact.email ? ` <${primaryContact.email}>` : ''}` : toEmail || <span style={{ color: 'var(--text-faint)', fontStyle: 'italic' }}>No contact email on file</span>}
+                  </div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 4 }}>Subject</div>
+                  <div style={{ fontSize: 13, padding: '8px 12px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 7, color: 'var(--text-muted)' }}>{subject}</div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 4 }}>Message</div>
+                  <div style={{ fontSize: 12, padding: '12px 14px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 7, color: 'var(--text-muted)', lineHeight: 1.7 }}>
+                    <div style={{ whiteSpace: 'pre-wrap' }}>{`Hi ${clientName},\n\n${intro}\n\nNEXT STEPS`}</div>
+                    <ul style={{ margin: '6px 0 10px', paddingLeft: 18 }}>
+                      {savedTasks.map((t, i) => (
+                        <li key={i} style={{ fontSize: 12, color: 'var(--text)', marginBottom: 3 }}>{t.title}</li>
+                      ))}
+                    </ul>
+                    {portalUrl ? (
+                      <>
+                        <div style={{ whiteSpace: 'pre-wrap', color: 'var(--text-muted)' }}>{'You can track progress in your project portal:'}</div>
+                        <a href={portalUrl} target="_blank" rel="noopener noreferrer" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: '#fbbf24', color: '#111', fontWeight: 800, fontSize: 12, padding: '5px 12px', borderRadius: 20, textDecoration: 'none', margin: '8px 0 10px', boxShadow: '0 1px 4px rgba(0,0,0,0.12)' }}>
+                          <span style={{ fontWeight: 900, fontSize: 13 }}>PH</span><span>×</span><span>{companyLabel}</span>
+                        </a>
+                        <br />
+                      </>
+                    ) : null}
+                    <div style={{ whiteSpace: 'pre-wrap', color: 'var(--text-muted)' }}>{`\nBest,\nPart Human`}</div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Footer */}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', marginTop: 16, gap: 10 }}>
+                <button
+                  onClick={() => setMeetingSummaryEmail(null)}
+                  style={{ padding: '9px 18px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-muted)', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}
+                >Skip</button>
+                {toEmail ? (
+                  <button
+                    onClick={async () => {
+                      try { await navigator.clipboard.write([new ClipboardItem({ 'text/html': new Blob([htmlBody], { type: 'text/html' }), 'text/plain': new Blob([body], { type: 'text/plain' }) })]); }
+                      catch { navigator.clipboard.writeText(body); }
+                      window.open(gmailUrl, '_blank');
+                      setMeetingSummaryEmail(null);
+                    }}
+                    style={{ padding: '9px 20px', borderRadius: 8, border: 'none', background: 'var(--accent)', color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
+                  >Open in Gmail ↗</button>
+                ) : (
+                  <div style={{ fontSize: 12, color: 'var(--text-faint)', fontStyle: 'italic' }}>Add an email to this project's primary contact to send</div>
+                )}
               </div>
             </div>
           </div>

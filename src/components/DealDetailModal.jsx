@@ -58,6 +58,8 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
   const [thesisMigrationError, setThesisMigrationError] = useState(null);
   const thesisLogEndRef                   = useRef(null);
   const intelFetchedRef                   = useRef(false); // prevents double-fetch on tab switch
+  const dealRef                            = useRef(deal);  // always-current deal for async callbacks
+  useEffect(() => { dealRef.current = deal; }, [deal]);
 
   // Notes state (for quick save from Meetings tab)
   const [savingNotes, setSavingNotes]     = useState(false);
@@ -103,8 +105,20 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
     if (!isNew && deal.company_name) {
       intelFetchedRef.current = true;
       fetchCompanyIntel(deal.company_name)
-        .then(intel => {
+        .then(async intel => {
           setCompanyIntel(intel);
+          // Sync deal.contact_name to the primary contact if they differ.
+          // Use dealRef.current so we always patch the latest deal state, not a stale closure.
+          const primary = (intel?.contact_angles || []).find(c => c.is_primary);
+          const currentDeal = dealRef.current;
+          if (primary?.name && primary.name.trim() !== currentDeal.contact_name?.trim()) {
+            try {
+              const patched = { ...currentDeal, contact_name: primary.name };
+              const synced = await upsertDeal(patched);
+              setDeal(synced || patched);
+              onSaved?.(synced || patched);
+            } catch (_) {}
+          }
           // If no next step yet, the background AI job from Active Outreach may still
           // be in flight — poll once after 4s to pick it up
           if (!intel?.thesis_next_step) {
@@ -324,6 +338,27 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
       alert('Error updating contact: ' + e.message);
     } finally {
       setSavingEdit(false);
+    }
+  };
+
+  const handleSetPrimary = async (targetContact) => {
+    if (!companyIntel?.id) return;
+    // Update is_primary on all contact_angles
+    const updatedAngles = (companyIntel.contact_angles || []).map(c => ({
+      ...c,
+      is_primary: c.name?.trim() === targetContact.name?.trim(),
+    }));
+    const { error } = await supabase.from('companies').update({ contact_angles: updatedAngles }).eq('id', companyIntel.id);
+    if (error) { alert('Error: ' + error.message); return; }
+    setCompanyIntel(prev => ({ ...prev, contact_angles: updatedAngles }));
+    // Also update the deal's contact_name so the Kanban card shows the right person
+    const updatedDeal = { ...deal, contact_name: targetContact.name };
+    try {
+      const saved = await upsertDeal(updatedDeal);
+      setDeal(saved || updatedDeal);
+      onSaved?.(saved || updatedDeal);
+    } catch (e) {
+      // Non-fatal — intel already updated
     }
   };
 
@@ -629,11 +664,16 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
                 {!isNew && <span style={{ fontSize: 11, color: 'var(--text-faint)', marginLeft: 4 }}>{daysSince(deal.stage_entered_at)}d in stage</span>}
               </div>
               <h3 style={{ fontSize: 18, fontWeight: 800, margin: '0 0 3px' }}>{deal.company_name || 'New Deal'}</h3>
-              {deal.contact_name && (
-                <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0 }}>
-                  {deal.contact_name}{deal.contact_email ? ` · ${deal.contact_email}` : ''}
-                </p>
-              )}
+              {(() => {
+                const primaryContact = mergedContacts.find(c => c.is_primary) || mergedContacts[0];
+                const displayName = primaryContact?.name || deal.contact_name;
+                const displayEmail = primaryContact?.email || deal.contact_email;
+                return displayName ? (
+                  <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0 }}>
+                    {displayName}{displayEmail ? ` · ${displayEmail}` : ''}
+                  </p>
+                ) : null;
+              })()}
             </div>
             <button style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: 'var(--text-muted)', padding: '0 4px', lineHeight: 1, flexShrink: 0 }} onClick={onClose}>✕</button>
           </div>
@@ -780,7 +820,7 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
                 </div>
               )}
 
-              <div style={{ display: 'flex', gap: 0, borderBottom: '2px solid var(--border)', marginBottom: 16, overflowX: 'auto' }}>
+              <div style={{ position: 'sticky', top: -20, zIndex: 10, display: 'flex', gap: 0, borderBottom: '2px solid var(--border)', overflowX: 'auto', background: 'var(--bg)', margin: '0 -24px 16px', padding: '0 24px' }}>
                 {[
                   { id: 'nextsteps',  label: openTasks.length > 0 ? `Next Steps (${openTasks.length})` : 'Next Steps' },
                   { id: 'activities', label: 'Activity' },
@@ -1833,6 +1873,12 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
                                         </a>
                                       )}
                                       <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center' }}>
+                                        {!c.is_primary && (
+                                          <button
+                                            onClick={e => { e.stopPropagation(); handleSetPrimary(c); }}
+                                            style={{ fontSize: 10, fontWeight: 700, color: '#6d28d9', background: '#ede9fe', border: '1px solid #c4b5fd', borderRadius: 4, padding: '2px 8px', cursor: 'pointer', fontFamily: 'inherit' }}
+                                          >★ Set as primary</button>
+                                        )}
                                         <button
                                           onClick={e => { e.stopPropagation(); setEditingContact(c.name); setEditDraft({}); }}
                                           style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-faint)', background: 'none', border: '1px solid var(--border)', borderRadius: 4, padding: '2px 8px', cursor: 'pointer', fontFamily: 'inherit' }}

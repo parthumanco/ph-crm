@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { parseMeetingWithAI, saveProjectMeeting, OWNERS } from '../lib/projects';
 
 const today = new Date().toISOString().slice(0, 10);
@@ -53,17 +53,20 @@ export default function TranscriptImporter({ projectId, dealId, milestones = [],
   const fileInputRef = useRef(null);
 
   const stripRtf = (rtf) => {
-    // Iteratively remove innermost {…} groups until none remain (handles nesting)
     let s = rtf;
-    let prev;
-    do { prev = s; s = s.replace(/\{[^{}]*\}/g, ''); } while (s !== prev);
-    return s
-      .replace(/\\[a-z]+[-\d]* ?/g, '')     // remove control words
-      .replace(/\\\n/g, '\n')               // line breaks
-      .replace(/\\\{|\\\}/g, '')            // escaped braces
-      .replace(/[{}\\]/g, '')               // remaining braces/backslashes
-      .replace(/\r\n|\r/g, '\n')
-      .trim();
+    // Remove non-text header groups (fonttbl, colortbl, stylesheet, pict, info)
+    // These never contain readable text — do one pass before anything else
+    s = s.replace(/\{\\(?:fonttbl|colortbl|stylesheet|pict|info)(?:[^{}]|\{[^{}]*\})*\}/g, '');
+    // Remove {\* ...} ignored destination groups
+    s = s.replace(/\{\\?\*(?:[^{}]|\{[^{}]*\})*\}/g, '');
+    // Remove hex char escapes like \'e9
+    s = s.replace(/\\'[0-9a-fA-F]{2}/g, ' ');
+    // Remove control words (\word or \word123) and lone control symbols
+    s = s.replace(/\\[a-zA-Z]+[-]?\d* ?/g, '');
+    s = s.replace(/\\[^a-zA-Z\r\n]/g, '');
+    // Strip remaining RTF delimiters — text content is now exposed
+    s = s.replace(/[{}]/g, '');
+    return s.replace(/\r\n|\r/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
   };
 
   const readFileAsText = (file) => new Promise((resolve, reject) => {
@@ -81,12 +84,52 @@ export default function TranscriptImporter({ projectId, dealId, milestones = [],
     reader.readAsText(file);
   });
 
+  // ── Document-level drag-and-drop (active while modal is mounted) ─────────────
+  useEffect(() => {
+    if (step === 'parsing' || step === 'saving') {
+      setDraggingOver(false); // clear any stuck overlay when drag is disabled
+      return;
+    }
+    const onDragOver = e => { e.preventDefault(); setDraggingOver(true); };
+    const onDragLeave = e => { if (!e.relatedTarget) setDraggingOver(false); };
+    const onDrop = async e => {
+      e.preventDefault();
+      setDraggingOver(false);
+      const file = e.dataTransfer?.files?.[0];
+      if (file) {
+        try {
+          const text = await readFileAsText(file);
+          setTranscript(text);
+          setError('');
+        } catch (err) {
+          setError(err.message);
+        }
+      } else {
+        // Text drag (e.g. dragging directly from Granola)
+        const text = e.dataTransfer?.getData('text/plain') || e.dataTransfer?.getData('text');
+        if (text) { setTranscript(text); setError(''); }
+      }
+    };
+    document.addEventListener('dragover', onDragOver);
+    document.addEventListener('dragleave', onDragLeave);
+    document.addEventListener('drop', onDrop);
+    return () => {
+      document.removeEventListener('dragover', onDragOver);
+      document.removeEventListener('dragleave', onDragLeave);
+      document.removeEventListener('drop', onDrop);
+    };
+  }, [step]);
+
   const handleFileDrop = async (e) => {
     e.preventDefault();
     e.stopPropagation();
     setDraggingOver(false);
     const file = e.dataTransfer?.files?.[0] || e.target?.files?.[0];
-    if (!file) return;
+    if (!file) {
+      const text = e.dataTransfer?.getData?.('text/plain') || e.dataTransfer?.getData?.('text');
+      if (text) { setTranscript(text); setError(''); }
+      return;
+    }
     try {
       const text = await readFileAsText(file);
       setTranscript(text);
@@ -233,12 +276,7 @@ export default function TranscriptImporter({ projectId, dealId, milestones = [],
           {/* ── Paste step ── */}
           {(step === 'paste' || step === 'parsing') && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-              <div
-                onDragOver={e => { e.preventDefault(); e.stopPropagation(); setDraggingOver(true); }}
-                onDragLeave={e => { e.preventDefault(); setDraggingOver(false); }}
-                onDrop={handleFileDrop}
-                style={{ position: 'relative' }}
-              >
+              <div style={{ position: 'relative' }}>
                 <textarea
                   value={transcript}
                   onChange={e => setTranscript(e.target.value)}
