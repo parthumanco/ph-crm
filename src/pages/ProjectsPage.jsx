@@ -2902,6 +2902,19 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                         </div>
                       ))}
 
+                      {/* Tasks — column headers */}
+                      {msTasks.some(t => !projectOwnerFilter || (t.assigned_to || ms.assigned_to || '') === projectOwnerFilter || (projectOwnerFilter === '__unassigned__' && !(t.assigned_to || ms.assigned_to))) && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '5px 16px 5px 48px', borderTop: '1px solid var(--border-light)', background: 'var(--bg)' }}>
+                          <div style={{ flex: 1, fontSize: 9, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.06em' }}>Task</div>
+                          <div style={{ width: 110, fontSize: 9, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.06em', flexShrink: 0 }}>Assigned To</div>
+                          <div style={{ width: 52, fontSize: 9, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.06em', flexShrink: 0 }}>Hrs</div>
+                          <div style={{ minWidth: 80, fontSize: 9, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.06em', flexShrink: 0 }}>Due Date</div>
+                          <div style={{ minWidth: 64, fontSize: 9, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.06em', flexShrink: 0 }}>Mentions</div>
+                          <div style={{ width: 130, fontSize: 9, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.06em', flexShrink: 0 }}>Milestone</div>
+                          <div style={{ width: 90, fontSize: 9, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.06em', flexShrink: 0 }}>Actions</div>
+                        </div>
+                      )}
+
                       {/* Tasks */}
                       {msTasks.filter(task => {
                         if (!projectOwnerFilter) return true;
