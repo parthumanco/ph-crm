@@ -109,7 +109,7 @@ function readFileText(file) {
   });
 }
 
-export default function OldGoldPage({ isActive = false }) {
+export default function OldGoldPage({ isActive = false, onNavigate }) {
   // ── State ─────────────────────────────────────────────────────────────────
   const [prospects,   setProspects]   = useState([]);
   const [meetings,    setMeetings]    = useState([]);   // for active prospect
@@ -117,6 +117,7 @@ export default function OldGoldPage({ isActive = false }) {
   const [active,      setActive]      = useState(null); // prospect object
   const [loading,     setLoading]     = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [allCompanies, setAllCompanies] = useState([]); // { name, source:'pipeline'|'intel', deal_id? }
 
   // Forms
   const [addingProspect, setAddingProspect] = useState(false);
@@ -262,7 +263,8 @@ export default function OldGoldPage({ isActive = false }) {
           email:   quickEmailHint || quickExtracted?.contact_email || '',
           status:  'warm',
         };
-        const { data } = await supabase.from('old_gold_prospects').insert(newProspect).select().single();
+        const { data, error } = await supabase.from('old_gold_prospects').insert(newProspect).select().single();
+        if (error) throw new Error(error.message);
         prospectId = data.id;
         prospect = data;
         setProspects(prev => [data, ...prev]);
@@ -273,7 +275,7 @@ export default function OldGoldPage({ isActive = false }) {
         setProspects(prev => prev.map(p => p.id === prospectId ? prospect : p));
       }
 
-      const { data: mtg } = await supabase.from('old_gold_meetings').insert({
+      const { data: mtg, error: mtgError } = await supabase.from('old_gold_meetings').insert({
         prospect_id:  prospectId,
         title:        `Meeting — ${fmtDate(new Date().toISOString().slice(0, 10))}`,
         meeting_date: new Date().toISOString().slice(0, 10),
@@ -281,6 +283,7 @@ export default function OldGoldPage({ isActive = false }) {
         summary:      quickResult.summary,
         action_items: quickResult.action_items || [],
       }).select().single();
+      if (mtgError) throw new Error(mtgError.message);
 
       if (quickResult.action_items?.length && mtg) {
         await supabase.from('old_gold_tasks').insert(
@@ -294,11 +297,15 @@ export default function OldGoldPage({ isActive = false }) {
         );
       }
 
-      // Jump to that contact
+      // Jump to that contact and clear all quick-panel state
       openProspect(prospect || { id: prospectId, name: 'New Contact', status: 'warm' });
       setQuickText('');
       setQuickResult(null);
       setShowQuickPanel(false);
+      setQuickExtracted(null);
+      setQuickCrossRefs(null);
+      setQuickEmailHint('');
+      setQuickSaveContact('');
     } catch (e) {
       setQuickError(e.message || 'Save failed');
     } finally {
@@ -329,6 +336,26 @@ export default function OldGoldPage({ isActive = false }) {
   }, []);
 
   useEffect(() => { loadProspects(); }, [loadProspects]);
+
+  // Load all known companies (Pipeline deals + Company Intel) for the link dropdown
+  useEffect(() => {
+    async function loadAllCompanies() {
+      const [{ data: companies }, { data: deals }] = await Promise.all([
+        supabase.from('companies').select('id, name').order('name'),
+        supabase.from('deals').select('id, company_name').not('company_name', 'is', null),
+      ]);
+      const map = new Map();
+      (companies || []).forEach(c => {
+        if (c.name) map.set(c.name.toLowerCase(), { name: c.name, source: 'intel', id: c.id });
+      });
+      (deals || []).forEach(d => {
+        if (d.company_name && !map.has(d.company_name.toLowerCase()))
+          map.set(d.company_name.toLowerCase(), { name: d.company_name, source: 'pipeline', id: d.id });
+      });
+      setAllCompanies(Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name)));
+    }
+    loadAllCompanies();
+  }, []);
 
   const openProspect = (p) => {
     setActive(p);
@@ -444,12 +471,25 @@ export default function OldGoldPage({ isActive = false }) {
   const ProspectForm = ({ onCancel }) => (
     <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: 20, marginBottom: 20 }}>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
-        {[['name','Name *','text'],['company','Company','text'],['title','Title','text'],['email','Email','email'],['linkedin','LinkedIn URL','url']].map(([field, label, type]) => (
+        {[['name','Name *','text'],['title','Title','text'],['email','Email','email'],['linkedin','LinkedIn URL','url']].map(([field, label, type]) => (
           <div key={field} style={field === 'name' ? { gridColumn: '1/-1' } : {}}>
             <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 3 }}>{label}</label>
             <input type={type} value={prospectDraft[field] || ''} onChange={e => setProspectDraft(d => ({ ...d, [field]: e.target.value }))} style={{ width: '100%', fontSize: 13 }} />
           </div>
         ))}
+        <div style={{ gridColumn: '1/-1' }}>
+          <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 3 }}>Company</label>
+          <input
+            list="og-company-datalist"
+            value={prospectDraft.company || ''}
+            onChange={e => setProspectDraft(d => ({ ...d, company: e.target.value }))}
+            placeholder="Type to search existing companies…"
+            style={{ width: '100%', fontSize: 13 }}
+          />
+          <datalist id="og-company-datalist">
+            {allCompanies.map(c => <option key={c.name} value={c.name} label={c.source === 'pipeline' ? '⚡ Pipeline' : '🧠 Company Intel'} />)}
+          </datalist>
+        </div>
         <div>
           <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 3 }}>Status</label>
           <select value={prospectDraft.status} onChange={e => setProspectDraft(d => ({ ...d, status: e.target.value }))} style={{ width: '100%', fontSize: 13 }}>
@@ -695,19 +735,43 @@ export default function OldGoldPage({ isActive = false }) {
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 14 }}>
             {prospects.map(p => {
               const sm = statusMeta(p.status);
+              const linkedCo = p.company ? allCompanies.find(c => c.name.toLowerCase() === p.company.toLowerCase()) : null;
               return (
                 <div
                   key={p.id}
                   onClick={() => openProspect(p)}
-                  style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, padding: '16px 18px', cursor: 'pointer', transition: 'box-shadow .15s, border-color .15s' }}
+                  style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, padding: '16px 18px', cursor: 'pointer', transition: 'box-shadow .15s, border-color .15s', position: 'relative' }}
                   onMouseEnter={e => { e.currentTarget.style.boxShadow = '0 4px 16px rgba(0,0,0,0.1)'; e.currentTarget.style.borderColor = 'var(--accent)'; }}
                   onMouseLeave={e => { e.currentTarget.style.boxShadow = ''; e.currentTarget.style.borderColor = 'var(--border)'; }}
                 >
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 }}>
                     <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--text)', lineHeight: 1.3 }}>{p.name}</div>
-                    <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 20, background: sm.bg, color: sm.color, flexShrink: 0, marginLeft: 8 }}>{sm.label}</span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0, marginLeft: 8 }}>
+                      <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 20, background: sm.bg, color: sm.color }}>{sm.label}</span>
+                      <button
+                        onClick={async e => {
+                          e.stopPropagation();
+                          if (!window.confirm(`Delete ${p.name}?`)) return;
+                          await supabase.from('old_gold_prospects').delete().eq('id', p.id);
+                          setProspects(prev => prev.filter(x => x.id !== p.id));
+                        }}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: 'var(--text-faint)', padding: '0 2px', lineHeight: 1 }}
+                        title="Delete contact"
+                      >✕</button>
+                    </div>
                   </div>
-                  {p.company && <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 2 }}>{p.company}</div>}
+                  {p.company && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+                      <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{p.company}</span>
+                      {linkedCo && (
+                        <button
+                          onClick={e => { e.stopPropagation(); onNavigate && onNavigate(linkedCo.source === 'pipeline' ? 'pipeline' : 'clients'); }}
+                          style={{ fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 10, border: `1px solid ${linkedCo.source === 'pipeline' ? '#fbbf24' : '#c4b5fd'}`, background: linkedCo.source === 'pipeline' ? '#fffbeb' : '#f5f3ff', color: linkedCo.source === 'pipeline' ? '#92400e' : '#5b21b6', cursor: 'pointer' }}
+                          title={`View in ${linkedCo.source === 'pipeline' ? 'Pipeline' : 'Company Intel'}`}
+                        >{linkedCo.source === 'pipeline' ? '⚡ Pipeline' : '🧠 Intel'} →</button>
+                      )}
+                    </div>
+                  )}
                   {p.title && <div style={{ fontSize: 11, color: 'var(--text-faint)' }}>{p.title}</div>}
                   {p.notes && <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 8, lineHeight: 1.5, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>{p.notes}</div>}
                 </div>
@@ -746,14 +810,30 @@ export default function OldGoldPage({ isActive = false }) {
               <ProspectForm onCancel={() => { setEditingProspect(false); setProspectDraft(BLANK_PROSPECT); }} />
             ) : (
               <>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
-                  <div>
-                    <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--text)' }}>{active.name}</div>
-                    {active.title && <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>{active.title}</div>}
-                    {active.company && <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{active.company}</div>}
-                  </div>
-                  <button onClick={() => { setEditingProspect(true); setProspectDraft({ name: active.name, company: active.company || '', title: active.title || '', email: active.email || '', linkedin: active.linkedin || '', notes: active.notes || '', status: active.status || 'warm' }); }} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: 'var(--text-faint)', padding: '2px 4px' }} title="Edit">✏️</button>
-                </div>
+                {(() => {
+                  const linkedCo = active.company ? allCompanies.find(c => c.name.toLowerCase() === active.company.toLowerCase()) : null;
+                  return (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
+                      <div>
+                        <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--text)' }}>{active.name}</div>
+                        {active.title && <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>{active.title}</div>}
+                        {active.company && (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 2 }}>
+                            <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{active.company}</span>
+                            {linkedCo && (
+                              <button
+                                onClick={() => onNavigate && onNavigate(linkedCo.source === 'pipeline' ? 'pipeline' : 'clients')}
+                                style={{ fontSize: 10, fontWeight: 700, padding: '1px 7px', borderRadius: 10, border: `1px solid ${linkedCo.source === 'pipeline' ? '#fbbf24' : '#c4b5fd'}`, background: linkedCo.source === 'pipeline' ? '#fffbeb' : '#f5f3ff', color: linkedCo.source === 'pipeline' ? '#92400e' : '#5b21b6', cursor: 'pointer' }}
+                                title={`View in ${linkedCo.source === 'pipeline' ? 'Pipeline' : 'Company Intel'}`}
+                              >{linkedCo.source === 'pipeline' ? '⚡ Pipeline' : '🧠 Intel'} →</button>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                      <button onClick={() => { setEditingProspect(true); setProspectDraft({ name: active.name, company: active.company || '', title: active.title || '', email: active.email || '', linkedin: active.linkedin || '', notes: active.notes || '', status: active.status || 'warm' }); }} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: 'var(--text-faint)', padding: '2px 4px' }} title="Edit">✏️</button>
+                    </div>
+                  );
+                })()}
                 {active.email && <a href={`mailto:${active.email}`} style={{ fontSize: 12, color: 'var(--accent)', display: 'block', marginBottom: 4 }}>{active.email}</a>}
                 {active.linkedin && <a href={active.linkedin} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: 'var(--accent)', display: 'block', marginBottom: 4 }}>LinkedIn ↗</a>}
                 {active.notes && <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.55, marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--border)' }}>{active.notes}</div>}
