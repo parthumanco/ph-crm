@@ -423,6 +423,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
   const [expandedRejections, setExpandedRejections] = useState(new Set());
   const [expandedCoC, setExpandedCoC]               = useState(new Set()); // manual expand after approval
   const [expandedTranscripts, setExpandedTranscripts] = useState(new Set()); // meeting ids with full transcript open in mentions panel
+  const [transcriptHighlight, setTranscriptHighlight] = useState({});       // { meetingId: searchTerm } for per-meeting highlight phrase
   const [generatingResponse, setGeneratingResponse] = useState(null); // taskId
   const [resendEmail, setResendEmail]             = useState(null);   // { task, project }
   const [meetings, setMeetings]                   = useState([]);     // project meetings log
@@ -5254,7 +5255,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
 
         return (
           <>
-            <div style={{ position: 'fixed', inset: 0, zIndex: 850, background: 'rgba(0,0,0,0.2)' }} onClick={() => { setMentionsPanel(null); setExpandedTranscripts(new Set()); }} />
+            <div style={{ position: 'fixed', inset: 0, zIndex: 850, background: 'rgba(0,0,0,0.2)' }} onClick={() => { setMentionsPanel(null); setExpandedTranscripts(new Set()); setTranscriptHighlight({}); }} />
             <div style={{ position: 'fixed', top: 0, right: 0, bottom: 0, zIndex: 860, width: 460, maxWidth: '92vw', background: 'var(--bg)', boxShadow: '-8px 0 40px rgba(0,0,0,0.18)', display: 'flex', flexDirection: 'column', borderLeft: '1px solid var(--border)' }}>
               {/* Header */}
               <div style={{ padding: '20px 24px 16px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
@@ -5263,7 +5264,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                     <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 4 }}>Meeting Mentions</div>
                     <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)', lineHeight: 1.4 }}>{mentionsPanel.title}</div>
                   </div>
-                  <button onClick={() => { setMentionsPanel(null); setExpandedTranscripts(new Set()); }} style={{ background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: 'var(--text-muted)', padding: '2px 4px', lineHeight: 1 }}>✕</button>
+                  <button onClick={() => { setMentionsPanel(null); setExpandedTranscripts(new Set()); setTranscriptHighlight({}); }} style={{ background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: 'var(--text-muted)', padding: '2px 4px', lineHeight: 1 }}>✕</button>
                 </div>
                 <div style={{ fontSize: 12, color: 'var(--text-faint)', marginTop: 8 }}>
                   {matchingMeetings.length === 0 ? 'No meetings mention this task yet.' : `Found in ${matchingMeetings.length} meeting${matchingMeetings.length !== 1 ? 's' : ''}`}
@@ -5288,15 +5289,25 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                       {/* Meeting header */}
                       <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 2 }}>{mtg.title}</div>
                       {dateStr && <div style={{ fontSize: 11, color: 'var(--text-faint)', marginBottom: 10 }}>{dateStr}{mtg.meeting_time ? ` · ${mtg.meeting_time}` : ''}{mtg.attendees?.length ? ` · ${mtg.attendees.join(', ')}` : ''}</div>}
-                      {/* Action item matches */}
+                      {/* Action item matches — click any to jump to it in the transcript */}
                       {matchingActionItems.length > 0 && (
                         <div style={{ marginBottom: 8 }}>
                           <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--accent)', textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 4 }}>Action Items</div>
                           {matchingActionItems.map((ai, i) => (
-                            <div key={i} style={{ fontSize: 12, color: 'var(--text)', padding: '4px 8px', borderRadius: 6, background: 'var(--accent-light, #ede9fe)', marginBottom: 3, display: 'flex', gap: 6 }}>
+                            <div
+                              key={i}
+                              onClick={() => {
+                                if (!mtg.transcript) return;
+                                setTranscriptHighlight(prev => ({ ...prev, [mtg.id]: ai.title }));
+                                setExpandedTranscripts(prev => { const n = new Set(prev); n.add(mtg.id); return n; });
+                              }}
+                              style={{ fontSize: 12, color: 'var(--text)', padding: '4px 8px', borderRadius: 6, background: 'var(--accent-light, #ede9fe)', marginBottom: 3, display: 'flex', gap: 6, cursor: mtg.transcript ? 'pointer' : 'default' }}
+                              title={mtg.transcript ? 'Click to jump to this point in the transcript' : ''}
+                            >
                               {ai.owner && <span style={{ fontWeight: 700, color: 'var(--accent)', flexShrink: 0 }}>{ai.owner}</span>}
-                              <span>{ai.title}</span>
-                              {ai.due_date && <span style={{ color: 'var(--text-faint)', marginLeft: 'auto', flexShrink: 0, fontSize: 10 }}>{ai.due_date}</span>}
+                              <span style={{ flex: 1 }}>{ai.title}</span>
+                              {ai.due_date && <span style={{ color: 'var(--text-faint)', flexShrink: 0, fontSize: 10 }}>{ai.due_date}</span>}
+                              {mtg.transcript && <span style={{ color: 'var(--accent)', flexShrink: 0, fontSize: 10, opacity: 0.7 }}>→ transcript</span>}
                             </div>
                           ))}
                         </div>
@@ -5308,46 +5319,63 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                           <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6, fontStyle: 'italic' }}>"{summarySnippet}"</div>
                         </div>
                       )}
-                      {/* Transcript — snippet or full expanded view */}
-                      {(transcriptSnippet || mtg.transcript?.toLowerCase().includes(taskTitle)) && (() => {
+                      {/* Transcript — show when available; expand on click or action item tap */}
+                      {mtg.transcript && (() => {
                         const isExpanded = expandedTranscripts.has(mtg.id);
-                        const transcript = mtg.transcript || '';
-                        // Split transcript around the match for highlighting
+                        const searchTerm = (transcriptHighlight[mtg.id] || taskTitle).toLowerCase();
+                        const transcript = mtg.transcript;
+
                         const renderHighlighted = (text) => {
                           const lower = text.toLowerCase();
-                          const idx = lower.indexOf(taskTitle);
+                          const idx = lower.indexOf(searchTerm);
                           if (idx === -1) return <span>{text}</span>;
                           return (
                             <>
                               <span>{text.slice(0, idx)}</span>
                               <mark
-                                ref={el => { if (el && isExpanded) el.scrollIntoView({ behavior: 'smooth', block: 'center' }); }}
-                                style={{ background: '#fef08a', color: '#713f12', borderRadius: 2, padding: '0 1px' }}
-                              >{text.slice(idx, idx + taskTitle.length)}</mark>
-                              <span>{text.slice(idx + taskTitle.length)}</span>
+                                ref={el => {
+                                  if (!el) return;
+                                  // Scroll within the overflow container, not the viewport
+                                  const container = el.closest('[data-transcript-scroll]');
+                                  if (container) {
+                                    const markOffset = el.offsetTop - container.offsetTop;
+                                    container.scrollTop = Math.max(0, markOffset - container.clientHeight / 2 + el.offsetHeight);
+                                  }
+                                }}
+                                style={{ background: '#fef08a', color: '#713f12', borderRadius: 2, padding: '0 2px', fontWeight: 700 }}
+                              >{text.slice(idx, idx + searchTerm.length)}</mark>
+                              <span>{text.slice(idx + searchTerm.length)}</span>
                             </>
                           );
                         };
+
                         return (
                           <div>
                             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
                               <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.05em' }}>Transcript</div>
                               <button
-                                onClick={() => setExpandedTranscripts(prev => {
-                                  const next = new Set(prev);
-                                  isExpanded ? next.delete(mtg.id) : next.add(mtg.id);
-                                  return next;
-                                })}
+                                onClick={() => {
+                                  if (isExpanded) {
+                                    setExpandedTranscripts(prev => { const n = new Set(prev); n.delete(mtg.id); return n; });
+                                  } else {
+                                    setTranscriptHighlight(prev => ({ ...prev, [mtg.id]: taskTitle }));
+                                    setExpandedTranscripts(prev => { const n = new Set(prev); n.add(mtg.id); return n; });
+                                  }
+                                }}
                                 style={{ fontSize: 10, fontWeight: 700, color: 'var(--accent)', background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px' }}
-                              >{isExpanded ? '↑ Collapse' : '↓ View full transcript'}</button>
+                              >{isExpanded ? '↑ Collapse' : '↓ View in transcript'}</button>
                             </div>
-                            {isExpanded ? (
-                              <div style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.75, fontFamily: 'monospace', background: 'var(--bg)', padding: '10px 12px', borderRadius: 6, whiteSpace: 'pre-wrap', maxHeight: 400, overflowY: 'auto' }}>
+                            {isExpanded && (
+                              <div
+                                data-transcript-scroll=""
+                                style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.75, fontFamily: 'monospace', background: 'var(--bg)', padding: '10px 12px', borderRadius: 6, whiteSpace: 'pre-wrap', maxHeight: 380, overflowY: 'auto', position: 'relative' }}
+                              >
                                 {renderHighlighted(transcript)}
                               </div>
-                            ) : (
+                            )}
+                            {!isExpanded && transcriptSnippet && (
                               <div
-                                onClick={() => setExpandedTranscripts(prev => { const next = new Set(prev); next.add(mtg.id); return next; })}
+                                onClick={() => { setTranscriptHighlight(prev => ({ ...prev, [mtg.id]: taskTitle })); setExpandedTranscripts(prev => { const n = new Set(prev); n.add(mtg.id); return n; }); }}
                                 style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.65, fontFamily: 'monospace', background: 'var(--bg)', padding: '8px 10px', borderRadius: 6, whiteSpace: 'pre-wrap', cursor: 'pointer' }}
                                 title="Click to view full transcript"
                               >{transcriptSnippet}</div>
