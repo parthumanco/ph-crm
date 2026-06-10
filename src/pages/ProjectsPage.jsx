@@ -1676,6 +1676,21 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
   const totalTasks     = Object.values(allTasks).flat();
   const doneTasks      = totalTasks.filter(t => t.completed).length;
 
+  // Pre-compute per-task mention presence once (not on every row render).
+  // Must be declared here — before any early returns — to satisfy Rules of Hooks.
+  const taskMentionsMap = useMemo(() => {
+    const map = {};
+    tasks.forEach(t => {
+      const tl = t.title?.toLowerCase() || '';
+      if (!tl) return;
+      map[t.id] = meetings.some(m =>
+        [m.title, m.summary, m.transcript, ...(m.action_items || []).map(ai => ai.title)]
+          .some(f => f?.toLowerCase().includes(tl))
+      );
+    });
+    return map;
+  }, [tasks, meetings]);
+
   // ═════════════════════════════════════════════════════════════════════════
   // ── ASSIGNED VIEW ────────────────────────────────────────────────────────
   // ═════════════════════════════════════════════════════════════════════════
@@ -2165,20 +2180,6 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
     return acc;
   }, {});
   const msForTasks = id => tasksByMs[id] || [];
-
-  // Pre-compute per-task mention presence once (not on every row render)
-  const taskMentionsMap = useMemo(() => {
-    const map = {};
-    tasks.forEach(t => {
-      const tl = t.title?.toLowerCase() || '';
-      if (!tl) return;
-      map[t.id] = meetings.some(m =>
-        [m.title, m.summary, m.transcript, ...(m.action_items || []).map(ai => ai.title)]
-          .some(f => f?.toLowerCase().includes(tl))
-      );
-    });
-    return map;
-  }, [tasks, meetings]);
 
   // ── Unassigned task row — same look/feel as milestone task rows ──────────
   const renderUnassignedTaskRow = (task) => {
