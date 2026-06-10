@@ -3089,9 +3089,34 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                                   }}
                                   style={{ fontSize: 11, padding: '2px 5px', border: '1px solid var(--border)', borderRadius: 4, background: 'var(--surface)', width: 52, flexShrink: 0, color: 'var(--text)' }}
                                 />
-                                {task.due_date && (
-                                  <span style={{ fontSize: 11, color: 'var(--text-faint)', whiteSpace: 'nowrap', flexShrink: 0 }}>{fmtDate(task.due_date)}</span>
-                                )}
+                                <span style={{ fontSize: 11, color: task.due_date ? 'var(--text-muted)' : 'var(--text-faint)', whiteSpace: 'nowrap', flexShrink: 0 }}>{task.due_date ? fmtDate(task.due_date) : '—'}</span>
+                                {/* Mentions pill — colored when task appears in meeting notes */}
+                                <button
+                                  onClick={() => setMentionsPanel(task)}
+                                  style={{
+                                    flexShrink: 0, fontSize: 10, fontWeight: 700, padding: '3px 9px', borderRadius: 20, cursor: 'pointer', whiteSpace: 'nowrap', border: 'none',
+                                    background: taskMentionsMap[task.id] ? 'var(--accent)' : 'var(--border)',
+                                    color: taskMentionsMap[task.id] ? '#fff' : 'var(--text-faint)',
+                                  }}
+                                  title="View meeting mentions"
+                                >Mentions</button>
+                                {/* Milestone selector — move task between milestones or unassign */}
+                                <select
+                                  value={task.milestone_id || ''}
+                                  onChange={async e => {
+                                    const newMsId = e.target.value || null;
+                                    const updated = { ...task, milestone_id: newMsId };
+                                    await upsertProjectTask(updated);
+                                    const patch = t => t.id === task.id ? updated : t;
+                                    setTasks(prev => prev.map(patch));
+                                    setAllTasks(prev => ({ ...prev, [activeProject.id]: (prev[activeProject.id] || []).map(patch) }));
+                                  }}
+                                  style={{ fontSize: 10, padding: '2px 4px', border: '1px solid var(--border)', borderRadius: 4, background: 'var(--surface)', color: 'var(--text-muted)', flexShrink: 0, maxWidth: 130 }}
+                                  title="Move to milestone"
+                                >
+                                  <option value="">— Unassigned —</option>
+                                  {milestones.map(m => <option key={m.id} value={m.id}>{m.title}</option>)}
+                                </select>
                                 {/* ── Task action buttons ── */}
                                 <div className="task-actions" style={{ display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 }}>
                                   {/* Edit / Assign */}
@@ -3104,10 +3129,8 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                                       <svg width="15" height="15" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="1" width="8" height="11" rx="1"/><path d="M5 1v3h5"/><path d="M4 7h4M4 9.5h3"/></svg>
                                     </button>
                                   )}
-                                  {/* Meeting mentions */}
-                                  <button onClick={() => setMentionsPanel(task)} title="View meeting mentions" style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: '4px 5px', borderRadius: 4, display: 'flex', alignItems: 'center', flexShrink: 0 }}>
-                                    <svg width="15" height="15" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M2 2h10a1 1 0 011 1v6a1 1 0 01-1 1H4l-3 3V3a1 1 0 011-1z"/></svg>
-                                  </button>
+                                  {/* Attach file */}
+                                  {/* Meeting mentions — now a pill above; keep icon as fallback if needed */}
                                   {/* Attach file */}
                                   <button onClick={e => { e.stopPropagation(); triggerFileUpload(activeProject.id, null, null, task.id); }} disabled={uploadingFor === task.id} title="Attach file" style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: '4px 5px', borderRadius: 4, display: 'flex', alignItems: 'center', flexShrink: 0 }}>
                                     {uploadingFor === task.id
