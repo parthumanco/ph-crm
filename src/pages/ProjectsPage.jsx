@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
 import { generateProjectSummary, generateRejectionResponse } from '../lib/anthropic';
 import {
@@ -592,6 +592,8 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
     setEditingMeeting(null);
     setEditMeetingDraft({});
     setExpandedMeetings(new Set());
+    setNearDupeWarning([]);
+    setPendingUpdates([]);
     setAddingNote(false);
     setNewNoteText('');
     setEditingNoteId(null);
@@ -1533,14 +1535,17 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
         return;
       }
       // Fuzzy check: flag any new tasks that are ≥50% word-overlap with an existing task
-      const nearDupes = uniqueTasks.filter(t => findSimilarTasks(t.title || '', tasks).length > 0);
+      // Single pass: compute similar matches once per task (avoids double findSimilarTasks call)
+      const nearDupeResults = uniqueTasks
+        .map(t => ({ t, similar: findSimilarTasks(t.title || '', tasks) }))
+        .filter(r => r.similar.length > 0);
       const { data: inserted, error } = await supabase
         .from('project_tasks')
         .insert(uniqueTasks)
         .select();
       if (error) throw error;
       const savedTasks = inserted || uniqueTasks;
-      if (nearDupes.length > 0) setNearDupeWarning(nearDupes.map(t => ({ newTitle: t.title, similar: findSimilarTasks(t.title || '', tasks).map(s => s.title) })));
+      if (nearDupeResults.length > 0) setNearDupeWarning(nearDupeResults.map(r => ({ newTitle: r.t.title, similar: r.similar.map(s => s.title) })));
       const parts = [];
       if (savedTasks.length) parts.push(`${savedTasks.length} task${savedTasks.length !== 1 ? 's' : ''} added`);
       if (skippedCount > 0) parts.push(`${skippedCount} exact duplicate${skippedCount !== 1 ? 's' : ''} skipped`);
@@ -2161,6 +2166,20 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
   }, {});
   const msForTasks = id => tasksByMs[id] || [];
 
+  // Pre-compute per-task mention presence once (not on every row render)
+  const taskMentionsMap = useMemo(() => {
+    const map = {};
+    tasks.forEach(t => {
+      const tl = t.title?.toLowerCase() || '';
+      if (!tl) return;
+      map[t.id] = meetings.some(m =>
+        [m.title, m.summary, m.transcript, ...(m.action_items || []).map(ai => ai.title)]
+          .some(f => f?.toLowerCase().includes(tl))
+      );
+    });
+    return map;
+  }, [tasks, meetings]);
+
   // ── Unassigned task row — same look/feel as milestone task rows ──────────
   const renderUnassignedTaskRow = (task) => {
     const pendingDelete  = confirmDeleteTask === task.id;
@@ -2279,24 +2298,16 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
               <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 2 }}>Due Date</div>
               <div style={{ fontSize: 11, color: task.due_date ? 'var(--text-muted)' : 'var(--text-faint)', whiteSpace: 'nowrap' }}>{task.due_date ? fmtDate(task.due_date) : '—'}</div>
             </div>
-            {/* Mentions pill — colored if mentions exist */}
-            {(() => {
-              const tl = task.title?.toLowerCase() || '';
-              const hasMentions = meetings.some(m =>
-                [m.title, m.summary, m.transcript, ...(m.action_items || []).map(ai => ai.title)].some(f => f?.toLowerCase().includes(tl))
-              );
-              return (
-                <button
-                  onClick={() => setMentionsPanel(task)}
-                  style={{
-                    flexShrink: 0, fontSize: 10, fontWeight: 700, padding: '3px 9px', borderRadius: 20, cursor: 'pointer', whiteSpace: 'nowrap', border: 'none',
-                    background: hasMentions ? 'var(--accent)' : 'var(--border)',
-                    color: hasMentions ? '#fff' : 'var(--text-faint)',
-                  }}
-                  title="View meeting mentions"
-                >Mentions</button>
-              );
-            })()}
+            {/* Mentions pill — colored if mentions exist (uses pre-computed map) */}
+            <button
+              onClick={() => setMentionsPanel(task)}
+              style={{
+                flexShrink: 0, fontSize: 10, fontWeight: 700, padding: '3px 9px', borderRadius: 20, cursor: 'pointer', whiteSpace: 'nowrap', border: 'none',
+                background: taskMentionsMap[task.id] ? 'var(--accent)' : 'var(--border)',
+                color: taskMentionsMap[task.id] ? '#fff' : 'var(--text-faint)',
+              }}
+              title="View meeting mentions"
+            >Mentions</button>
             {/* Action buttons */}
             <div className="task-actions" style={{ display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 }}>
               <button onClick={() => startEditTask(task)} title="Edit task" style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: '4px 5px', borderRadius: 4, display: 'flex', alignItems: 'center', flexShrink: 0 }}>

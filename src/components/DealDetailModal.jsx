@@ -1876,8 +1876,13 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
       <TranscriptImporter
         dealId={deal.id}
         owners={OWNERS}
+        existingTasks={tasks}
         initialTranscript={initialTranscript}
-        onImported={async ({ meeting, tasks }) => {
+        onImported={async ({ meeting, tasks: importedTasks, suggestedUpdates = [] }) => {
+          // suggestedUpdates are AI-proposed changes to existing tasks — logged for visibility
+          if (suggestedUpdates.length > 0) {
+            console.info('[DealDetailModal] AI suggested task updates:', suggestedUpdates);
+          }
           const importErrors = [];
 
           // Re-fetch from DB so the meeting list is always in sync
@@ -1891,9 +1896,9 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
           }
 
           // Save extracted tasks to the deal's Next Steps
-          if (tasks?.length) {
+          if (importedTasks?.length) {
             let tasksSaved = 0;
-            for (const task of tasks) {
+            for (const task of importedTasks) {
               if (!task.title?.trim()) continue;
               try {
                 await addTask({

@@ -53,9 +53,11 @@ export default function TranscriptImporter({ projectId, dealId, milestones = [],
   const fileInputRef = useRef(null);
 
   const stripRtf = (rtf) => {
-    // Remove RTF control words, groups, and binary data; extract plain text
-    return rtf
-      .replace(/\{[^{}]*\}/g, '')          // remove simple groups
+    // Iteratively remove innermost {…} groups until none remain (handles nesting)
+    let s = rtf;
+    let prev;
+    do { prev = s; s = s.replace(/\{[^{}]*\}/g, ''); } while (s !== prev);
+    return s
       .replace(/\\[a-z]+[-\d]* ?/g, '')     // remove control words
       .replace(/\\\n/g, '\n')               // line breaks
       .replace(/\\\{|\\\}/g, '')            // escaped braces
@@ -243,7 +245,7 @@ export default function TranscriptImporter({ projectId, dealId, milestones = [],
                   placeholder="Paste your Granola transcript or drag a .txt / .md file here…"
                   rows={14}
                   disabled={step === 'parsing'}
-                  style={{ width: '100%', resize: 'vertical', fontSize: 12, lineHeight: 1.6, fontFamily: 'inherit', padding: '10px 12px', borderRadius: 8, border: `1px solid ${draggingOver ? 'var(--accent)' : 'var(--border)'}`, background: draggingOver ? 'var(--surface)' : 'var(--surface)', color: 'var(--text)', outline: 'none', opacity: step === 'parsing' ? 0.6 : 1, boxSizing: 'border-box', transition: 'border-color .15s' }}
+                  style={{ width: '100%', resize: 'vertical', fontSize: 12, lineHeight: 1.6, fontFamily: 'inherit', padding: '10px 12px', borderRadius: 8, border: `1px solid ${draggingOver ? 'var(--accent)' : 'var(--border)'}`, background: draggingOver ? '#fffbeb' : 'var(--surface)', color: 'var(--text)', outline: 'none', opacity: step === 'parsing' ? 0.6 : 1, boxSizing: 'border-box', transition: 'border-color .15s' }}
                 />
                 {draggingOver && (
                   <div style={{ position: 'absolute', inset: 0, borderRadius: 8, border: '2px dashed var(--accent)', background: 'rgba(251,191,36,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none' }}>
