@@ -136,7 +136,7 @@ export default function App() {
           <DiscoverPage icp={icp} refreshKey={pageKeys.discover || 0} />
         </PageSlot>
         <PageSlot active={page === 'oldgold'}>
-          <OldGoldPage />
+          <OldGoldPage isActive={page === 'oldgold'} />
         </PageSlot>
         <PageSlot active={page === 'report'}>
           <WeeklyReportPage icp={icp} refreshKey={pageKeys.report || 0} />

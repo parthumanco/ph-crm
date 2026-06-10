@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 
 // ── Tiny AI helper: extract summary + action items from a transcript ──────────
@@ -71,7 +71,32 @@ const fmtDate = d => {
 
 const BLANK_PROSPECT = { name: '', company: '', title: '', email: '', linkedin: '', notes: '', status: 'warm' };
 
-export default function OldGoldPage() {
+// ── File helpers (outside component — no state deps) ──────────────────────────
+function stripRtf(rtf) {
+  let s = rtf;
+  s = s.replace(/\{\\(?:fonttbl|colortbl|stylesheet|pict|info)(?:[^{}]|\{[^{}]*\})*\}/g, '');
+  s = s.replace(/\{\\?\*(?:[^{}]|\{[^{}]*\})*\}/g, '');
+  s = s.replace(/\\'[0-9a-fA-F]{2}/g, ' ');
+  s = s.replace(/\\[a-zA-Z]+[-]?\d* ?/g, '');
+  s = s.replace(/\\[^a-zA-Z\r\n]/g, '');
+  s = s.replace(/[{}]/g, '');
+  return s.replace(/\r\n|\r/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+function readFileText(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = e => {
+      const text = e.target.result;
+      const isRtf = file.name.toLowerCase().endsWith('.rtf') || file.type.includes('rtf');
+      resolve(isRtf ? stripRtf(text) : text);
+    };
+    reader.onerror = () => reject(new Error('Could not read file'));
+    reader.readAsText(file);
+  });
+}
+
+export default function OldGoldPage({ isActive = false }) {
   // ── State ─────────────────────────────────────────────────────────────────
   const [prospects,   setProspects]   = useState([]);
   const [meetings,    setMeetings]    = useState([]);   // for active prospect
@@ -109,24 +134,46 @@ export default function OldGoldPage() {
   const [quickSaving,    setQuickSaving]    = useState(false);
   const [showQuickPanel, setShowQuickPanel] = useState(false);
 
-  // ── RTF strip helper ─────────────────────────────────────────────────────
-  const stripRtf = (rtf) => {
-    let s = rtf;
-    let prev;
-    do { prev = s; s = s.replace(/\{[^{}]*\}/g, ''); } while (s !== prev);
-    return s.replace(/\\[a-z]+[-\d]* ?/g, '').replace(/[{}\\]/g, '').replace(/\r\n|\r/g, '\n').trim();
-  };
+  // Refs so async drop handler always sees current state (avoids stale closures)
+  const showImportRef    = useRef(showImport);
+  const showQuickPanelRef = useRef(showQuickPanel);
+  useEffect(() => { showImportRef.current    = showImport;    }, [showImport]);
+  useEffect(() => { showQuickPanelRef.current = showQuickPanel; }, [showQuickPanel]);
 
-  const readFileText = (file) => new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = e => {
-      const text = e.target.result;
-      const isRtf = file.name.toLowerCase().endsWith('.rtf') || file.type.includes('rtf');
-      resolve(isRtf ? stripRtf(text) : text);
+  // ── Document-level drag/drop (same pattern as SignalWatchPage) ────────────
+  useEffect(() => {
+    if (!isActive) return;
+    const onDragOver  = e => { e.preventDefault(); setDropDragging(true); };
+    const onDragLeave = e => { if (!e.relatedTarget) setDropDragging(false); };
+    const onDrop = async e => {
+      e.preventDefault();
+      setDropDragging(false);
+      const file = e.dataTransfer?.files?.[0];
+      let text = '';
+      if (file) {
+        try { text = await readFileText(file); }
+        catch (err) { setQuickError(err.message); return; }
+      } else {
+        text = e.dataTransfer?.getData('text/plain') || e.dataTransfer?.getData('text') || '';
+      }
+      if (!text) return;
+      // Route to whichever textarea is currently visible
+      if (showImportRef.current) {
+        setImportTranscript(text);
+      } else {
+        setQuickText(text);
+        setShowQuickPanel(true);
+      }
     };
-    reader.onerror = () => reject(new Error('Could not read file'));
-    reader.readAsText(file);
-  });
+    document.addEventListener('dragover',  onDragOver);
+    document.addEventListener('dragleave', onDragLeave);
+    document.addEventListener('drop',      onDrop);
+    return () => {
+      document.removeEventListener('dragover',  onDragOver);
+      document.removeEventListener('dragleave', onDragLeave);
+      document.removeEventListener('drop',      onDrop);
+    };
+  }, [isActive]);
 
   // ── Quick-drop analysis ────────────────────────────────────────────────────
   const handleQuickAnalyze = async (text) => {
@@ -379,18 +426,6 @@ export default function OldGoldPage() {
           {!showQuickPanel ? (
             /* Collapsed: small drop target */
             <div
-              onDragOver={e => { e.preventDefault(); setDropDragging(true); }}
-              onDragLeave={() => setDropDragging(false)}
-              onDrop={async e => {
-                e.preventDefault();
-                setDropDragging(false);
-                const file = e.dataTransfer.files[0];
-                if (file) {
-                  const text = await readFileText(file);
-                  setQuickText(text);
-                }
-                setShowQuickPanel(true);
-              }}
               onClick={() => setShowQuickPanel(true)}
               style={{
                 border: `2px dashed ${dropDragging ? 'var(--accent)' : 'var(--border)'}`,
@@ -432,12 +467,6 @@ export default function OldGoldPage() {
                       onChange={e => setQuickText(e.target.value)}
                       placeholder="Paste your Granola transcript here, or drag a .rtf / .txt file onto this area…"
                       style={{ width: '100%', fontSize: 12, lineHeight: 1.6, fontFamily: 'monospace', marginBottom: 10, background: 'var(--bg)' }}
-                      onDragOver={e => e.preventDefault()}
-                      onDrop={async e => {
-                        e.preventDefault();
-                        const file = e.dataTransfer.files[0];
-                        if (file) setQuickText(await readFileText(file));
-                      }}
                     />
                     {quickError && <div style={{ fontSize: 12, color: '#ef4444', marginBottom: 8 }}>{quickError}</div>}
                     <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
@@ -723,24 +752,6 @@ export default function OldGoldPage() {
                   onChange={e => setImportTranscript(e.target.value)}
                   placeholder="Paste your Granola transcript here… AI will extract a summary and create follow-up tasks automatically."
                   style={{ width: '100%', fontSize: 12, lineHeight: 1.6, fontFamily: 'monospace', marginBottom: 10 }}
-                  onDragOver={e => e.preventDefault()}
-                  onDrop={async e => {
-                    e.preventDefault();
-                    const file = e.dataTransfer.files[0];
-                    if (!file) return;
-                    const reader = new FileReader();
-                    reader.onload = ev => {
-                      let text = ev.target.result;
-                      if (file.name.endsWith('.rtf')) {
-                        let s = text;
-                        let prev;
-                        do { prev = s; s = s.replace(/\{[^{}]*\}/g, ''); } while (s !== prev);
-                        text = s.replace(/\\[a-z]+[-\d]* ?/g, '').replace(/[{}\\]/g, '').replace(/\r\n|\r/g, '\n').trim();
-                      }
-                      setImportTranscript(text);
-                    };
-                    reader.readAsText(file);
-                  }}
                 />
                 {importError && <div style={{ fontSize: 12, color: '#ef4444', marginBottom: 8 }}>{importError}</div>}
                 <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
