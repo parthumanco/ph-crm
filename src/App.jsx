@@ -9,6 +9,7 @@ import DiscoverPage from './pages/DiscoverPage';
 import WeeklyReportPage from './pages/WeeklyReportPage';
 import ChatPage from './pages/ChatPage';
 import SettingsPage from './pages/SettingsPage';
+import OldGoldPage from './pages/OldGoldPage';
 import { loadIcp, DEFAULT_ICP, loadTeamMembers, DEFAULT_TEAM_MEMBERS } from './lib/settings';
 import { checkAndFireReminders } from './lib/reminders';
 
@@ -18,6 +19,7 @@ const NAV = [
   { divider: true },
   { id: 'deals',    label: 'Pipeline',            icon: '💵' },
   { id: 'pipeline', label: 'Active Outreach',     icon: '🔥' },
+  { id: 'oldgold',  label: 'Old Gold',            icon: '🪙' },
   { id: 'report',   label: 'Weekly Outreach',     icon: '📋' },
   { divider: true },
   { id: 'discover', label: 'Find New Companies',  icon: '🧭' },
@@ -32,6 +34,7 @@ const PAGE_TITLES = {
   clients:  { title: 'Clients',              sub: 'Active and archived client history, contacts & AI insights' },
   signals:  { title: 'Rate & Review',        sub: 'Company intelligence & outreach triggers' },
   pipeline: { title: 'Active Outreach',      sub: 'Active prospects & touch cadence' },
+  oldgold:  { title: 'Old Gold',             sub: "Pete's warm outreach — discovery conversations & next steps" },
   deals:    { title: 'Pipeline',             sub: 'CRM pipeline, activities & revenue tracking' },
   support:  { title: 'Support',              sub: 'Case management & client communication' },
   projects: { title: 'Projects',             sub: 'Timelines, milestones & deliverables' },
@@ -131,6 +134,9 @@ export default function App() {
         </PageSlot>
         <PageSlot active={page === 'discover'}>
           <DiscoverPage icp={icp} refreshKey={pageKeys.discover || 0} />
+        </PageSlot>
+        <PageSlot active={page === 'oldgold'}>
+          <OldGoldPage />
         </PageSlot>
         <PageSlot active={page === 'report'}>
           <WeeklyReportPage icp={icp} refreshKey={pageKeys.report || 0} />
