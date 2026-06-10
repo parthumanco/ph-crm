@@ -422,6 +422,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
   const [summaryGenerating, setSummaryGenerating] = useState(false);
   const [expandedRejections, setExpandedRejections] = useState(new Set());
   const [expandedCoC, setExpandedCoC]               = useState(new Set()); // manual expand after approval
+  const [expandedTranscripts, setExpandedTranscripts] = useState(new Set()); // meeting ids with full transcript open in mentions panel
   const [generatingResponse, setGeneratingResponse] = useState(null); // taskId
   const [resendEmail, setResendEmail]             = useState(null);   // { task, project }
   const [meetings, setMeetings]                   = useState([]);     // project meetings log
@@ -5253,7 +5254,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
 
         return (
           <>
-            <div style={{ position: 'fixed', inset: 0, zIndex: 850, background: 'rgba(0,0,0,0.2)' }} onClick={() => setMentionsPanel(null)} />
+            <div style={{ position: 'fixed', inset: 0, zIndex: 850, background: 'rgba(0,0,0,0.2)' }} onClick={() => { setMentionsPanel(null); setExpandedTranscripts(new Set()); }} />
             <div style={{ position: 'fixed', top: 0, right: 0, bottom: 0, zIndex: 860, width: 460, maxWidth: '92vw', background: 'var(--bg)', boxShadow: '-8px 0 40px rgba(0,0,0,0.18)', display: 'flex', flexDirection: 'column', borderLeft: '1px solid var(--border)' }}>
               {/* Header */}
               <div style={{ padding: '20px 24px 16px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
@@ -5262,7 +5263,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                     <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 4 }}>Meeting Mentions</div>
                     <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)', lineHeight: 1.4 }}>{mentionsPanel.title}</div>
                   </div>
-                  <button onClick={() => setMentionsPanel(null)} style={{ background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: 'var(--text-muted)', padding: '2px 4px', lineHeight: 1 }}>✕</button>
+                  <button onClick={() => { setMentionsPanel(null); setExpandedTranscripts(new Set()); }} style={{ background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: 'var(--text-muted)', padding: '2px 4px', lineHeight: 1 }}>✕</button>
                 </div>
                 <div style={{ fontSize: 12, color: 'var(--text-faint)', marginTop: 8 }}>
                   {matchingMeetings.length === 0 ? 'No meetings mention this task yet.' : `Found in ${matchingMeetings.length} meeting${matchingMeetings.length !== 1 ? 's' : ''}`}
@@ -5307,13 +5308,53 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                           <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6, fontStyle: 'italic' }}>"{summarySnippet}"</div>
                         </div>
                       )}
-                      {/* Transcript snippet */}
-                      {transcriptSnippet && (
-                        <div>
-                          <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 4 }}>Transcript</div>
-                          <div style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.65, fontFamily: 'monospace', background: 'var(--bg)', padding: '8px 10px', borderRadius: 6, whiteSpace: 'pre-wrap' }}>{transcriptSnippet}</div>
-                        </div>
-                      )}
+                      {/* Transcript — snippet or full expanded view */}
+                      {(transcriptSnippet || mtg.transcript?.toLowerCase().includes(taskTitle)) && (() => {
+                        const isExpanded = expandedTranscripts.has(mtg.id);
+                        const transcript = mtg.transcript || '';
+                        // Split transcript around the match for highlighting
+                        const renderHighlighted = (text) => {
+                          const lower = text.toLowerCase();
+                          const idx = lower.indexOf(taskTitle);
+                          if (idx === -1) return <span>{text}</span>;
+                          return (
+                            <>
+                              <span>{text.slice(0, idx)}</span>
+                              <mark
+                                ref={el => { if (el && isExpanded) el.scrollIntoView({ behavior: 'smooth', block: 'center' }); }}
+                                style={{ background: '#fef08a', color: '#713f12', borderRadius: 2, padding: '0 1px' }}
+                              >{text.slice(idx, idx + taskTitle.length)}</mark>
+                              <span>{text.slice(idx + taskTitle.length)}</span>
+                            </>
+                          );
+                        };
+                        return (
+                          <div>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                              <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.05em' }}>Transcript</div>
+                              <button
+                                onClick={() => setExpandedTranscripts(prev => {
+                                  const next = new Set(prev);
+                                  isExpanded ? next.delete(mtg.id) : next.add(mtg.id);
+                                  return next;
+                                })}
+                                style={{ fontSize: 10, fontWeight: 700, color: 'var(--accent)', background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px' }}
+                              >{isExpanded ? '↑ Collapse' : '↓ View full transcript'}</button>
+                            </div>
+                            {isExpanded ? (
+                              <div style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.75, fontFamily: 'monospace', background: 'var(--bg)', padding: '10px 12px', borderRadius: 6, whiteSpace: 'pre-wrap', maxHeight: 400, overflowY: 'auto' }}>
+                                {renderHighlighted(transcript)}
+                              </div>
+                            ) : (
+                              <div
+                                onClick={() => setExpandedTranscripts(prev => { const next = new Set(prev); next.add(mtg.id); return next; })}
+                                style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.65, fontFamily: 'monospace', background: 'var(--bg)', padding: '8px 10px', borderRadius: 6, whiteSpace: 'pre-wrap', cursor: 'pointer' }}
+                                title="Click to view full transcript"
+                              >{transcriptSnippet}</div>
+                            )}
+                          </div>
+                        );
+                      })()}
                     </div>
                   );
                 })}
