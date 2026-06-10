@@ -810,7 +810,10 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
 
   const handleSaveEditContact = async () => {
     if (editingContactIdx === null || !editContactDraft.name.trim()) return;
-    const updated = (activeProject.contacts || []).map((c, i) => i === editingContactIdx ? { ...editContactDraft } : c);
+    // Merge draft into existing contact — preserve fields not in the draft (is_primary, linkedin, etc.)
+    const updated = (activeProject.contacts || []).map((c, i) =>
+      i === editingContactIdx ? { ...c, ...editContactDraft } : c
+    );
     await saveProjectContacts(updated);
     // Also update in company record if we have one
     if (projectCompany) {
@@ -821,7 +824,27 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
       setProjectCompany(prev => ({ ...prev, contacts: companyContacts }));
     }
     setEditingContactIdx(null);
-    setEditContactDraft({ name: '', title: '', email: '' });
+    setEditContactDraft({ name: '', title: '', email: '', linkedin: '' });
+  };
+
+  const handleSetPrimary = async (idx) => {
+    const updated = (activeProject.contacts || []).map((c, i) => ({ ...c, is_primary: i === idx }));
+    await saveProjectContacts(updated);
+  };
+
+  const handleAddProjectContact = async () => {
+    if (!newContactDraft.name.trim()) return;
+    const isFirst = (activeProject.contacts || []).length === 0;
+    const contact = { ...newContactDraft, is_primary: isFirst };
+    await saveProjectContacts([...(activeProject.contacts || []), contact]);
+    // Also persist to company card if one is linked
+    if (projectCompany) {
+      const updatedCompanyContacts = [...(projectCompany.contacts || []), contact];
+      await supabase.from('companies').update({ contacts: updatedCompanyContacts }).eq('id', projectCompany.id);
+      setProjectCompany(prev => ({ ...prev, contacts: updatedCompanyContacts }));
+    }
+    setNewContactDraft({ name: '', title: '', email: '', linkedin: '' });
+    setAddingContact(false);
   };
 
   // ── AI summary from proposal ─────────────────────────────────────────────
@@ -1080,7 +1103,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
     if (task.milestone_id) await syncMilestoneStatus(task.milestone_id, updated);
     if (nowComplete) {
       // If no client portal or no contact email, auto-approve internally — no review needed
-      const primaryContact = (activeProject.contacts || [])[0];
+      const primaryContact = (activeProject.contacts || []).find(c => c.is_primary) || (activeProject.contacts || [])[0];
       const toEmail = primaryContact?.email || activeProject.client_email || '';
       if (!activeProject.share_token || !toEmail) {
         try {
@@ -2244,7 +2267,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                 const lastSentEvent = [...chain].reverse().find(e => e.type === 'sent' || e.type === 'revised_sent');
                 const isAwaiting = !task.approved_at && !task.rejected_at && !!lastSentEvent;
                 const isUnsent   = !task.approved_at && !task.rejected_at && !lastSentEvent;
-                const portalEmail = (activeProject.contacts || [])[0]?.email || activeProject.client_email || '';
+                const portalEmail = (activeProject.contacts || []).find(c => c.is_primary) || (activeProject.contacts || [])[0]?.email || activeProject.client_email || '';
                 const hasPortalEmail = !!(activeProject.share_token && portalEmail);
                 return (
                   <div style={{ fontSize: 10, marginTop: 2, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
@@ -3050,7 +3073,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                                     const lastEvent = [...chain].reverse().find(e => e.type === 'sent' || e.type === 'revised_sent');
                                     const isAwaiting = !task.approved_at && !task.rejected_at && !!lastEvent;
                                     const isUnsent   = !task.approved_at && !task.rejected_at && !lastEvent;
-                                    const portalEmail = (activeProject.contacts || [])[0]?.email || activeProject.client_email || '';
+                                    const portalEmail = (activeProject.contacts || []).find(c => c.is_primary) || (activeProject.contacts || [])[0]?.email || activeProject.client_email || '';
                                     const hasPortalEmail = !!(activeProject.share_token && portalEmail);
                                     return (
                                       <div style={{ fontSize: 10, marginTop: 2, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
@@ -4237,44 +4260,118 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
 
         {/* ── Contacts tab ── */}
         {projectTab === 'contacts' && (() => {
-          // Merge primary contact (stored on project) with company contact_angles,
-          // deduplicating by lowercase name — same logic as DealDetailModal.
-          const contactMap = new Map();
-          if (activeProject.contact_name?.trim()) {
-            const name = activeProject.contact_name.trim();
-            contactMap.set(name.toLowerCase(), { name, email: null, title: null, source: 'project', is_primary: true });
-          }
-          (dealCompanyIntel?.contact_angles || []).forEach(c => {
-            if (!c.name?.trim()) return;
-            const name = c.name.trim();
-            const key  = name.toLowerCase();
-            const existing = contactMap.get(key) || {};
-            contactMap.set(key, { ...existing, ...c, name, email: c.email || existing.email || null });
-          });
-          const mergedContacts = Array.from(contactMap.values());
-
+          const contacts = activeProject.contacts || [];
           return (
             <div>
-              {mergedContacts.length === 0 ? (
-                <p style={{ fontSize: 12, color: 'var(--text-faint)', textAlign: 'center', padding: '24px 0' }}>No contacts found. Build a research thesis on the linked deal to discover contacts.</p>
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                  {mergedContacts.map((c, i) => (
-                    <div key={i} style={{ padding: '14px 16px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10 }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                        <div>
-                          <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--text)' }}>{c.name}</div>
-                          {c.title && <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 1 }}>{c.title}</div>}
-                          {c.email && <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 2 }}>{c.email}</div>}
-                          {c.linkedin && <a href={c.linkedin} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: 'var(--accent)', marginTop: 2, display: 'block' }}>LinkedIn ↗</a>}
-                        </div>
-                        {c.is_primary && <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 10, background: '#dcfce7', color: '#166534' }}>Primary</span>}
-                      </div>
-                      {c.notes && <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 8, lineHeight: 1.5 }}>{c.notes}</div>}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+                <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em' }}>
+                  Contacts{contacts.length > 0 ? ` (${contacts.length})` : ''}
+                </span>
+                <button
+                  onClick={() => { setAddingContact(v => !v); setNewContactDraft({ name: '', title: '', email: '', linkedin: '' }); }}
+                  style={{ fontSize: 11, fontWeight: 700, padding: '4px 12px', borderRadius: 6, border: '1px solid var(--border)', background: addingContact ? 'var(--accent)' : 'var(--surface)', color: addingContact ? '#fff' : 'var(--text-muted)', cursor: 'pointer' }}
+                >{addingContact ? '✕ Cancel' : '+ Add Contact'}</button>
+              </div>
+
+              {/* Add contact form */}
+              {addingContact && (
+                <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: 14, marginBottom: 14 }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
+                    <div>
+                      <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 3 }}>Name *</label>
+                      <input type="text" value={newContactDraft.name} onChange={e => setNewContactDraft(d => ({ ...d, name: e.target.value }))} placeholder="Full name" style={{ width: '100%', fontSize: 12 }} />
                     </div>
-                  ))}
+                    <div>
+                      <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 3 }}>Title</label>
+                      <input type="text" value={newContactDraft.title} onChange={e => setNewContactDraft(d => ({ ...d, title: e.target.value }))} placeholder="Job title" style={{ width: '100%', fontSize: 12 }} />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 3 }}>Email</label>
+                      <input type="email" value={newContactDraft.email} onChange={e => setNewContactDraft(d => ({ ...d, email: e.target.value }))} placeholder="email@company.com" style={{ width: '100%', fontSize: 12 }} />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 3 }}>LinkedIn URL</label>
+                      <input type="url" value={newContactDraft.linkedin || ''} onChange={e => setNewContactDraft(d => ({ ...d, linkedin: e.target.value }))} placeholder="linkedin.com/in/…" style={{ width: '100%', fontSize: 12 }} />
+                    </div>
+                  </div>
+                  <button
+                    onClick={handleAddProjectContact}
+                    disabled={!newContactDraft.name.trim()}
+                    style={{ fontSize: 11, fontWeight: 700, padding: '5px 14px', borderRadius: 6, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer' }}
+                  >Add Contact</button>
                 </div>
               )}
+
+              {contacts.length === 0 && !addingContact && (
+                <p style={{ fontSize: 12, color: 'var(--text-faint)', textAlign: 'center', padding: '32px 0' }}>No contacts yet. Add one above or select from the contacts widget.</p>
+              )}
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {contacts.map((c, i) => (
+                  <div key={i} style={{ background: 'var(--surface)', border: `1px solid ${editingContactIdx === i ? 'var(--accent)' : c.is_primary ? '#bbf7d0' : 'var(--border)'}`, borderRadius: 10, overflow: 'hidden' }}>
+                    {editingContactIdx === i ? (
+                      /* ── Inline edit form ── */
+                      <div style={{ padding: '14px 16px' }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 10 }}>
+                          <div>
+                            <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 3 }}>Name *</label>
+                            <input autoFocus type="text" value={editContactDraft.name} onChange={e => setEditContactDraft(d => ({ ...d, name: e.target.value }))} style={{ width: '100%', fontSize: 12 }} />
+                          </div>
+                          <div>
+                            <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 3 }}>Title</label>
+                            <input type="text" value={editContactDraft.title} onChange={e => setEditContactDraft(d => ({ ...d, title: e.target.value }))} style={{ width: '100%', fontSize: 12 }} />
+                          </div>
+                          <div>
+                            <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 3 }}>Email</label>
+                            <input type="email" value={editContactDraft.email} onChange={e => setEditContactDraft(d => ({ ...d, email: e.target.value }))} style={{ width: '100%', fontSize: 12 }} />
+                          </div>
+                          <div>
+                            <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 3 }}>LinkedIn URL</label>
+                            <input type="url" value={editContactDraft.linkedin || ''} onChange={e => setEditContactDraft(d => ({ ...d, linkedin: e.target.value }))} style={{ width: '100%', fontSize: 12 }} />
+                          </div>
+                        </div>
+                        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                          <button onClick={() => { setEditingContactIdx(null); setEditContactDraft({ name: '', title: '', email: '', linkedin: '' }); }} style={{ fontSize: 11, padding: '4px 12px', borderRadius: 6, border: '1px solid var(--border)', background: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}>Cancel</button>
+                          <button onClick={handleSaveEditContact} disabled={!editContactDraft.name.trim()} style={{ fontSize: 11, fontWeight: 700, padding: '4px 14px', borderRadius: 6, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer' }}>Save</button>
+                        </div>
+                      </div>
+                    ) : (
+                      /* ── Display mode ── */
+                      <div style={{ padding: '14px 16px', display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 2 }}>
+                            <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--text)' }}>{c.name}</span>
+                            {c.is_primary && (
+                              <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 10, background: '#dcfce7', color: '#166534' }}>Primary</span>
+                            )}
+                          </div>
+                          {c.title && <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{c.title}</div>}
+                          {c.email && <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 2 }}>{c.email}</div>}
+                          {c.linkedin && <a href={c.linkedin} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: 'var(--accent)', marginTop: 3, display: 'inline-block' }}>LinkedIn ↗</a>}
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                          {!c.is_primary && (
+                            <button
+                              onClick={() => handleSetPrimary(i)}
+                              style={{ fontSize: 10, fontWeight: 700, padding: '3px 10px', borderRadius: 20, border: '1px solid #bbf7d0', background: '#f0fdf4', color: '#166534', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                            >Set as Primary</button>
+                          )}
+                          <button
+                            onClick={() => { setEditingContactIdx(i); setEditContactDraft({ name: c.name || '', title: c.title || '', email: c.email || '', linkedin: c.linkedin || '' }); }}
+                            style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 13, padding: '3px 5px', borderRadius: 4 }}
+                            title="Edit contact"
+                          >✏️</button>
+                          <button
+                            onClick={() => handleRemoveProjectContact(i)}
+                            style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 14, padding: '3px 5px', borderRadius: 4 }}
+                            title="Remove contact"
+                          >✕</button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
             </div>
           );
         })()}
@@ -4525,7 +4622,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
       {/* Task complete — notify client email draft */}
       {taskCompleteEmail && (() => {
         const { task, project } = taskCompleteEmail;
-        const primaryContact = (project.contacts || [])[0];
+        const primaryContact = (project.contacts || []).find(c => c.is_primary) || (project.contacts || [])[0];
         const clientName   = primaryContact?.name || project.client_name || project.contact_name || 'there';
         const toEmail      = primaryContact?.email || project.client_email || '';
         const portalUrl    = project.share_token ? `${window.location.origin}/portal/${project.share_token}?task=${task.id}` : null;
@@ -4672,7 +4769,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
       {/* Resend revised update modal */}
       {resendEmail && (() => {
         const { task, project } = resendEmail;
-        const primaryContact    = (project?.contacts || [])[0];
+        const primaryContact    = (project?.contacts || []).find(c => c.is_primary) || (project?.contacts || [])[0];
         const clientName        = primaryContact?.name || project?.client_name || 'there';
         const toEmail           = primaryContact?.email || project?.client_email || '';
         const companyLabel      = project?.client_name || project?.name || '';
