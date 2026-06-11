@@ -1509,7 +1509,7 @@ CRITICAL: Return ONLY valid JSON — no markdown fences, no explanation, no prea
 
   const data = await withTimeout(
     callClaude({
-      model: 'claude-sonnet-4-5-20251101',
+      model: 'claude-sonnet-4-6',
       max_tokens: 4000,
       system,
       messages: [{
@@ -1521,13 +1521,16 @@ CRITICAL: Return ONLY valid JSON — no markdown fences, no explanation, no prea
   );
 
   const raw = (data.content || []).find(b => b.type === 'text')?.text || '';
-  // Strip any markdown fences if model added them despite instructions
-  const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
-  try {
-    return JSON.parse(cleaned);
-  } catch (e) {
-    throw new Error(`Document generation returned invalid JSON: ${cleaned.slice(0, 200)}`);
+  // Strip markdown fences, then try to extract the first { ... } block
+  const stripped = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+  // Attempt direct parse first
+  try { return JSON.parse(stripped); } catch (_) {}
+  // Fall back to extracting first JSON object from the response
+  const match = stripped.match(/\{[\s\S]*\}/);
+  if (match) {
+    try { return JSON.parse(match[0]); } catch (_) {}
   }
+  throw new Error(`Document generation returned invalid JSON: ${stripped.slice(0, 200)}`);
 }
 
 export async function generateRejectionResponse(taskTitle, projectName, rejectionNotes) {
