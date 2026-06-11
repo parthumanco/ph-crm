@@ -528,7 +528,8 @@ export default function PipelinePage({ icp = {}, refreshKey = 0, onNavigate }) {
                                 title="Return to Watch List — all touch history is preserved"
                                 onClick={async () => {
                                   if (!window.confirm(`Return ${company?.name || 'this company'} to Watch List? All touch history will be preserved.`)) return;
-                                  await supabase.from('pipeline_entries').update({ status: 'watch_list', updated_at: new Date().toISOString() }).eq('id', entry.id);
+                                  const { error } = await supabase.from('pipeline_entries').update({ status: 'watch_list', updated_at: new Date().toISOString() }).eq('id', entry.id);
+                                  if (error) { alert('DB error: ' + error.message); return; }
                                   setEntries(es => es.filter(e => e.id !== entry.id));
                                 }}
                               >← Watch List</button>
