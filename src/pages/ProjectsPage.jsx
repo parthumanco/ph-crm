@@ -2802,7 +2802,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
         <div style={{ position: 'sticky', top: 91, zIndex: 80, background: 'var(--bg)', display: 'flex', gap: 0, borderBottom: '2px solid var(--border)', marginBottom: 20 }}>
           {[
             { id: 'timeline', label: 'Tasks' },
-            { id: 'activity', label: dealActivities.length > 0 ? `Activity (${dealActivities.length})` : 'Activity' },
+            { id: 'activity', label: meetings.length > 0 ? `Meetings (${meetings.length})` : 'Meetings' },
             { id: 'files', label: projectFiles.length > 0 ? `Files (${projectFiles.length})` : 'Files' },
             { id: 'contacts', label: 'Contacts' },
             { id: 'research', label: 'Research' },

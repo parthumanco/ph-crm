@@ -123,7 +123,7 @@ function KanbanColumn({ stage, deals, onCardClick, onDrop, isDragOver, onDragOve
   );
 }
 
-export default function DealsPage({ refreshKey = 0 }) {
+export default function DealsPage({ refreshKey = 0, targetDealId = null, onTargetDealConsumed }) {
   const [deals, setDeals]           = useState([]);
   const [loading, setLoading]       = useState(true);
   const [selectedDeal, setSelectedDeal] = useState(null);
@@ -154,6 +154,20 @@ export default function DealsPage({ refreshKey = 0 }) {
   }, [refreshKey]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Deep-link: open a specific deal card when targetDealId is set — fire once per id
+  const consumedDealIdRef = useRef(null);
+  useEffect(() => {
+    if (!targetDealId || !deals.length) return;
+    if (consumedDealIdRef.current === targetDealId) return; // already handled
+    const deal = deals.find(d => d.id === targetDealId);
+    if (deal) {
+      consumedDealIdRef.current = targetDealId;
+      setShowNewDeal(false);
+      setSelectedDeal(deal);
+      onTargetDealConsumed?.();
+    }
+  }, [targetDealId, deals]);
 
   const byStage = id => deals.filter(d => d.stage === id);
 
@@ -214,7 +228,10 @@ export default function DealsPage({ refreshKey = 0 }) {
         client_name: deal.company_name || '',
         status:      'active',
         start_date:  today,
+        source_deal_id: deal.id,
       });
+      // Migrate any deal meetings into the new project's Meetings tab
+      if (deal.id) await migrateDealMeetingsToProject(deal.id, proj.id);
       setWonToast(proj.name || deal.company_name);
       setTimeout(() => setWonToast(null), 5000);
     } catch (e) {

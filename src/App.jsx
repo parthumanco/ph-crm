@@ -53,11 +53,19 @@ function PageSlot({ active, children }) {
   );
 }
 
+const VALID_PAGES = new Set(['clients','projects','deals','pipeline','report','oldgold','discover','signals','chat','settings','support']);
+
+function pageFromHash() {
+  const h = window.location.hash.replace('#', '');
+  return VALID_PAGES.has(h) ? h : null;
+}
+
 export default function App() {
-  const [page, setPage]               = useState(() => localStorage.getItem('ph_current_page') || 'projects');
+  const [page, setPage]               = useState(() => pageFromHash() || localStorage.getItem('ph_current_page') || 'projects');
   const [pageKeys, setPageKeys]       = useState({});
   const [icp, setIcp]                 = useState(DEFAULT_ICP);
   const [teamMembers, setTeamMembers] = useState(DEFAULT_TEAM_MEMBERS);
+  const [targetDealId, setTargetDealId] = useState(null); // deep-link into a specific deal card
   const projectsGoHome                = useRef(null); // ProjectsPage registers its goHome fn here
 
   useEffect(() => {
@@ -66,12 +74,34 @@ export default function App() {
     checkAndFireReminders(); // fire any due/overdue task reminders on load
   }, []);
 
+  // Sync initial hash if missing
+  useEffect(() => {
+    if (!window.location.hash) window.location.replace('#' + page);
+  }, []);
+
+  // Browser back/forward
+  useEffect(() => {
+    const onPop = () => {
+      const p = pageFromHash();
+      if (p) {
+        setPageKeys(prev => ({ ...prev, [p]: (prev[p] || 0) + 1 }));
+        setPage(p);
+        localStorage.setItem('ph_current_page', p);
+      }
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
+
   // Increment the refresh key for a page every time the user navigates to it,
   // so each page's load useEffect re-runs on every tab switch.
-  function handleSetPage(newPage) {
+  // Optional second arg: dealId to deep-link into a specific deal card on DealsPage.
+  function handleSetPage(newPage, dealId = null) {
     setPageKeys(prev => ({ ...prev, [newPage]: (prev[newPage] || 0) + 1 }));
     setPage(newPage);
+    if (dealId) setTargetDealId(dealId);
     localStorage.setItem('ph_current_page', newPage);
+    window.history.pushState({ page: newPage }, '', '#' + newPage);
   }
 
   const pt = PAGE_TITLES[page] || {};
@@ -124,7 +154,7 @@ export default function App() {
           <PipelinePage icp={icp} refreshKey={pageKeys.pipeline || 0} onNavigate={handleSetPage} />
         </PageSlot>
         <PageSlot active={page === 'deals'}>
-          <DealsPage refreshKey={pageKeys.deals || 0} />
+          <DealsPage refreshKey={pageKeys.deals || 0} targetDealId={targetDealId} onTargetDealConsumed={() => setTargetDealId(null)} />
         </PageSlot>
         <PageSlot active={page === 'support'}>
           <SupportPage teamMembers={teamMembers} />
