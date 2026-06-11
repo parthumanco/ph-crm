@@ -63,10 +63,29 @@ export async function fetchAllCompaniesForPicker() {
   return companies.sort((a, b) => a.name.localeCompare(b.name));
 }
 
+// ── Contacts for a company (from companies + clients tables) ─────────────────
+
+export async function fetchContactsForCompany(companyName) {
+  const [compRes, clientRes] = await Promise.all([
+    supabase.from('companies').select('contacts').ilike('name', companyName).maybeSingle(),
+    supabase.from('clients').select('contacts').ilike('name', companyName).maybeSingle(),
+  ]);
+  const contacts = [];
+  const seen = new Set();
+  for (const c of [...(compRes.data?.contacts || []), ...(clientRes.data?.contacts || [])]) {
+    const key = (c.name || '').toLowerCase().trim();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    contacts.push(c);
+  }
+  return contacts;
+}
+
 // ── Context gatherer — everything we know about a company ────────────────────
 
-export async function gatherCompanyContext(companyName) {
+export async function gatherCompanyContext(companyName, contactName = null) {
   const lines = [`COMPANY: ${companyName}`];
+  if (contactName) lines.push(`PRIMARY CONTACT: ${contactName}`);
 
   // 1. Company intel (thesis, summary, scores)
   const { data: company } = await supabase
