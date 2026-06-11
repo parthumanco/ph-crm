@@ -459,16 +459,6 @@ export default function PipelinePage({ icp = {}, refreshKey = 0, onNavigate }) {
                             >
                               {creatingDeal[entry.id] ? '…' : 'Move to Pipeline'}
                             </button>
-                            <button
-                              className="btn btn-secondary btn-xs"
-                              style={{ borderRadius: 20, whiteSpace: 'nowrap', padding: '4px 12px', color: 'var(--text-muted)', fontSize: 11 }}
-                              title="Return to Watch List — all touch history is preserved"
-                              onClick={async () => {
-                                if (!window.confirm(`Return ${company?.name || 'this company'} to Watch List? All touch history will be preserved.`)) return;
-                                await supabase.from('pipeline_entries').update({ status: 'watch_list', updated_at: new Date().toISOString() }).eq('id', entry.id);
-                                setEntries(es => es.filter(e => e.id !== entry.id));
-                              }}
-                            >← Watch List</button>
                           </div>
                         </td>
                       </tr>
@@ -530,6 +520,18 @@ export default function PipelinePage({ icp = {}, refreshKey = 0, onNavigate }) {
                                   </div>
                                 )}
                               </div>
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 12 }}>
+                              <button
+                                className="btn btn-secondary btn-xs"
+                                style={{ borderRadius: 20, padding: '3px 12px', fontSize: 11, color: 'var(--text-muted)' }}
+                                title="Return to Watch List — all touch history is preserved"
+                                onClick={async () => {
+                                  if (!window.confirm(`Return ${company?.name || 'this company'} to Watch List? All touch history will be preserved.`)) return;
+                                  await supabase.from('pipeline_entries').update({ status: 'watch_list', updated_at: new Date().toISOString() }).eq('id', entry.id);
+                                  setEntries(es => es.filter(e => e.id !== entry.id));
+                                }}
+                              >← Watch List</button>
                             </div>
                           </td>
                         </tr>
