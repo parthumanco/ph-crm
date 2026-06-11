@@ -1836,12 +1836,30 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
                     </p>
                   ) : (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                      {allDealFiles.map(f => (
-                        <a
+                      {allDealFiles.map(f => {
+                        const openFile = async () => {
+                          if (f._source === 'document') {
+                            // Supabase serves HTML as raw text — fetch and re-open via blob URL
+                            try {
+                              const res = await fetch(f.url);
+                              const html = await res.text();
+                              const blob = new Blob([html], { type: 'text/html' });
+                              const blobUrl = URL.createObjectURL(blob);
+                              const win = window.open(blobUrl, '_blank');
+                              // Revoke after the window has had time to load
+                              setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
+                              if (!win) window.location.href = blobUrl; // fallback if popup blocked
+                            } catch {
+                              window.open(f.url, '_blank');
+                            }
+                          } else {
+                            window.open(f.url, '_blank');
+                          }
+                        };
+                        return (
+                        <div
                           key={`${f._source}-${f.id}`}
-                          href={f.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
+                          onClick={openFile}
                           style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 7, cursor: 'pointer', textDecoration: 'none', color: 'inherit' }}
                           onMouseEnter={e => e.currentTarget.style.background = 'var(--bg)'}
                           onMouseLeave={e => e.currentTarget.style.background = 'var(--surface)'}
@@ -1872,18 +1890,19 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
                           </div>
                           {f._source === 'deal' && (
                             <button
-                              onClick={e => { e.preventDefault(); e.stopPropagation(); handleDealFileDelete(f.id, f.storage_path); }}
+                              onClick={e => { e.stopPropagation(); handleDealFileDelete(f.id, f.storage_path); }}
                               style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 15, flexShrink: 0, padding: '0 2px' }}
                             >×</button>
                           )}
                           {f._source === 'task' && (
                             <button
-                              onClick={e => { e.preventDefault(); e.stopPropagation(); handleTaskFileDelete(f.task_id, f.id, f.storage_path); }}
+                              onClick={e => { e.stopPropagation(); handleTaskFileDelete(f.task_id, f.id, f.storage_path); }}
                               style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 15, flexShrink: 0, padding: '0 2px' }}
                             >×</button>
                           )}
-                        </a>
-                      ))}
+                        </div>
+                        );
+                      })}
                     </div>
                   )}
                 </div>
