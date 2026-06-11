@@ -1837,15 +1837,17 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
                   ) : (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                       {allDealFiles.map(f => (
-                        <div
+                        <a
                           key={`${f._source}-${f.id}`}
-                          onClick={() => window.open(f.url, '_blank')}
-                          style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 7, cursor: 'pointer' }}
+                          href={f.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 7, cursor: 'pointer', textDecoration: 'none', color: 'inherit' }}
                           onMouseEnter={e => e.currentTarget.style.background = 'var(--bg)'}
                           onMouseLeave={e => e.currentTarget.style.background = 'var(--surface)'}
                         >
                           <span style={{ fontSize: 18, flexShrink: 0 }}>
-                            {/pdf/i.test(f.mime_type) ? '📄' : /image/i.test(f.mime_type) ? '🖼' : /word|doc/i.test(f.mime_type) ? '📝' : /sheet|excel|csv/i.test(f.mime_type) ? '📊' : /html/i.test(f.mime_type) ? '📄' : '📎'}
+                            {/pdf/i.test(f.mime_type) ? '📄' : /image/i.test(f.mime_type) ? '🖼' : /word|doc/i.test(f.mime_type) ? '📝' : /sheet|excel|csv/i.test(f.mime_type) ? '📊' : '📎'}
                           </span>
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -1870,20 +1872,17 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
                           </div>
                           {f._source === 'deal' && (
                             <button
-                              onClick={() => handleDealFileDelete(f.id, f.storage_path)}
+                              onClick={e => { e.preventDefault(); e.stopPropagation(); handleDealFileDelete(f.id, f.storage_path); }}
                               style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 15, flexShrink: 0, padding: '0 2px' }}
                             >×</button>
                           )}
                           {f._source === 'task' && (
                             <button
-                              onClick={() => handleTaskFileDelete(f.task_id, f.id, f.storage_path)}
+                              onClick={e => { e.preventDefault(); e.stopPropagation(); handleTaskFileDelete(f.task_id, f.id, f.storage_path); }}
                               style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 15, flexShrink: 0, padding: '0 2px' }}
                             >×</button>
                           )}
-                          {f._source === 'document' && (
-                            <span style={{ fontSize: 11, color: '#f97316', flexShrink: 0, padding: '0 4px' }} title="Managed from Documents page">↗</span>
-                          )}
-                        </div>
+                        </a>
                       ))}
                     </div>
                   )}
