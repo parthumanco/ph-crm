@@ -173,6 +173,18 @@ export async function updateCompanyContact(companyId, contactName, patch) {
   return updated;
 }
 
+// Set exactly one contact as primary, clearing the flag on all others.
+export async function setPrimaryContact(companyId, primaryName) {
+  const { data: row } = await supabase.from('companies').select('contact_angles').eq('id', companyId).single();
+  const updated = (row?.contact_angles || []).map(c => ({
+    ...c,
+    is_primary: c.name?.trim().toLowerCase() === primaryName?.trim().toLowerCase(),
+  }));
+  const { error } = await supabase.from('companies').update({ contact_angles: updated }).eq('id', companyId);
+  if (error) throw new Error(error.message);
+  return updated;
+}
+
 export async function removeCompanyResearchItem(companyId, itemId) {
   const { data: row } = await supabase.from('companies').select('research_items').eq('id', companyId).single();
   const updated = (row?.research_items || []).filter(i => i.id !== itemId);

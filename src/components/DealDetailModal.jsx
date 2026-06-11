@@ -7,7 +7,7 @@ import {
   STAGES, ACTIVITY_TYPES, OWNERS, stageColor, stageLabel, fmt$, daysSince,
 } from '../lib/deals';
 import { fetchDealMeetings, deleteProjectMeeting } from '../lib/projects';
-import { fetchCompanyIntel, runBuildThesis, findOrCreateCompany, addCompanyResearchItem, removeCompanyResearchItem, addCompanyContact, updateCompanyContact, deleteCompanyContact } from '../lib/clients';
+import { fetchCompanyIntel, runBuildThesis, findOrCreateCompany, addCompanyResearchItem, removeCompanyResearchItem, addCompanyContact, updateCompanyContact, deleteCompanyContact, setPrimaryContact } from '../lib/clients';
 import { loadIcp } from '../lib/settings';
 import { requestAndSave, clearReminder, hasReminder } from '../lib/reminders';
 import TranscriptImporter from './TranscriptImporter';
@@ -343,21 +343,20 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
 
   const handleSetPrimary = async (targetContact) => {
     if (!companyIntel?.id) return;
-    // Update is_primary on all contact_angles
-    const updatedAngles = (companyIntel.contact_angles || []).map(c => ({
-      ...c,
-      is_primary: c.name?.trim() === targetContact.name?.trim(),
-    }));
-    const { error } = await supabase.from('companies').update({ contact_angles: updatedAngles }).eq('id', companyIntel.id);
-    if (error) { alert('Error: ' + error.message); return; }
-    setCompanyIntel(prev => ({ ...prev, contact_angles: updatedAngles }));
-    // Also update the deal's contact_name so the Kanban card shows the right person
-    const updatedDeal = { ...deal, contact_name: targetContact.name };
     try {
-      const saved = await upsertDeal(updatedDeal);
-      setDeal(saved || updatedDeal);
-      onSaved?.(saved || updatedDeal);
+      const updatedAngles = await setPrimaryContact(companyIntel.id, targetContact.name);
+      setCompanyIntel(prev => ({ ...prev, contact_angles: updatedAngles }));
     } catch (e) {
+      alert('Error updating primary contact: ' + e.message);
+      return;
+    }
+    // Also update the deal's contact_name so the Kanban card shows the right person
+    const patched = { ...dealRef.current, contact_name: targetContact.name };
+    try {
+      const saved = await upsertDeal(patched);
+      setDeal(saved || patched);
+      onSaved?.(saved || patched);
+    } catch (_) {
       // Non-fatal — intel already updated
     }
   };
