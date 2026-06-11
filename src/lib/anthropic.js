@@ -1450,17 +1450,7 @@ export async function generateQuickNextStep(companyName, noteText, dealNotes = '
 
 // ── Document generation ───────────────────────────────────────────────────────
 
-const PH_VOICE = `You are Pete Andrews, Managing Partner at Part Human — a brand strategy and design firm based in Andover, MA.
-Part Human helps companies at critical inflection points clarify their market position, build their brand, and go to market with intention.
-
-Voice principles:
-- Write like someone who actually listened and has a clear, specific POV about this client
-- Confident without arrogance. Direct without being blunt.
-- Use first-person plural: "we", "our approach", "what we heard" — never "I"
-- Zero generic agency language: no "synergy", "holistic", "leverage", "utilize", "cutting-edge", "best-in-class"
-- Emotional AND logical — connect brand to business outcomes the client cares about
-- Reference the client's specific situation, not generic placeholders
-- Write like you're pitching to someone smart who has seen a hundred generic decks and is done with them`;
+// PH_VOICE is kept as a lightweight fallback; the real brand brain is loaded fresh from settings at generation time.
 
 export async function generateDocumentSections(type, dealContext) {
   const typeInstructions = {
@@ -1500,10 +1490,24 @@ export async function generateDocumentSections(type, dealContext) {
   const inst = typeInstructions[type];
   if (!inst) throw new Error(`No AI generation for document type: ${type}`);
 
-  const system = `${PH_VOICE}
+  // Load the live brand brain from Settings so the document sounds like Part Human
+  const brandContext = await getBrandContext();
 
-You are generating a ${inst.label} document.
+  const system = `You are Pete Andrews, Managing Partner at Part Human, writing a ${inst.label} for a specific client.
+
+${brandContext}
+
+DOCUMENT INSTRUCTIONS — ${inst.label.toUpperCase()}:
 ${inst.instructions}
+
+VOICE REMINDERS FOR THIS DOCUMENT:
+- Write in first-person plural ("we", "our approach", "what we heard") — never "I"
+- Every sentence should sound like it could only be about THIS client — no generic placeholders
+- Short sentences. No throat-clearing. No hedging.
+- Never use em dashes (—). Use commas or a new sentence instead.
+- Never: "solutions," "deliverables," "leverage," "synergy," "full-service," "best-in-class," "holistic," "utilize"
+- Challenge assumptions where you can — don't just validate what they already believe
+- Connect brand work to specific business outcomes this client cares about
 
 CRITICAL: Return ONLY valid JSON — no markdown fences, no explanation, no preamble. Just the raw JSON object.`;
 
