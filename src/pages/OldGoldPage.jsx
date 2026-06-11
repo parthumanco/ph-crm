@@ -202,6 +202,7 @@ export default function OldGoldPage({ isActive = false, onNavigate }) {
     setQuickExtracted(null);
     setQuickCrossRefs(null);
     setQuickEmailHint('');
+    setQuickSaveContact(''); // always reset so auto-fill runs fresh
     try {
       const result = await processTranscriptWithAI(text);
       setQuickResult(result);
@@ -224,8 +225,8 @@ export default function OldGoldPage({ isActive = false, onNavigate }) {
         );
         if (match) {
           setQuickSaveContact(match.id);
-        } else if (extracted.contact_name) {
-          // Pre-select "create new" so the button is immediately active
+        } else {
+          // Pre-select "create new" — button is immediately active
           setQuickSaveContact('__new__');
         }
       }
@@ -597,7 +598,14 @@ export default function OldGoldPage({ isActive = false, onNavigate }) {
             <div style={{ border: '1px solid var(--accent)', borderRadius: 10, background: 'var(--surface)', overflow: 'hidden' }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', background: '#fffbeb', borderBottom: '1px solid #fde68a' }}>
                 <div style={{ fontSize: 13, fontWeight: 800, color: '#92400e' }}>🪩 Quick transcript analysis</div>
-                <button onClick={() => { setShowQuickPanel(false); setQuickText(''); setQuickResult(null); setQuickError(''); setQuickExtracted(null); setQuickCrossRefs(null); setQuickEmailHint(''); setQuickSaveContact(''); }} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, color: '#92400e', padding: '0 2px' }}>✕</button>
+                <button
+                  onClick={() => {
+                    if (quickResult && !window.confirm('Close without saving? Your transcript analysis will be lost.')) return;
+                    resetQuickPanel();
+                  }}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, color: '#92400e', padding: '0 2px' }}
+                  title="Close"
+                >✕</button>
               </div>
 
               <div style={{ padding: 16 }}>
@@ -624,82 +632,89 @@ export default function OldGoldPage({ isActive = false, onNavigate }) {
                 ) : (
                   /* Results */
                   <>
-                    {/* Detected contact header */}
-                    {quickExtracted && (quickExtracted.contact_name || quickExtracted.company_name) && (
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14, padding: '8px 12px', background: '#f0fdf4', border: '1px solid #86efac', borderRadius: 8 }}>
-                        <span style={{ fontSize: 15 }}>👤</span>
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <span style={{ fontSize: 13, fontWeight: 700, color: '#15803d' }}>
+                    {/* ── SAVE ACTION — top of results, always visible ── */}
+                    <div style={{ marginBottom: 16, padding: '12px 14px', background: 'var(--bg)', border: '2px solid var(--accent)', borderRadius: 10 }}>
+                      {/* Detected contact */}
+                      {quickExtracted && (quickExtracted.contact_name || quickExtracted.company_name) && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+                          <span style={{ fontSize: 14 }}>👤</span>
+                          <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>
                             {quickExtracted.contact_name || 'Unknown contact'}
                           </span>
                           {quickExtracted.company_name && (
-                            <span style={{ fontSize: 12, color: '#166534', marginLeft: 6 }}>· {quickExtracted.company_name}</span>
+                            <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>· {quickExtracted.company_name}</span>
                           )}
                           {quickEmailHint && (
-                            <span style={{ fontSize: 11, color: '#15803d', marginLeft: 8, opacity: 0.8 }}>{quickEmailHint}</span>
+                            <span style={{ fontSize: 11, color: 'var(--text-faint)', marginLeft: 4 }}>{quickEmailHint}</span>
                           )}
                         </div>
-                      </div>
-                    )}
+                      )}
 
-                    {/* Cross-reference matches */}
+                      {/* Old Gold save */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                        <select
+                          value={quickSaveContact}
+                          onChange={e => setQuickSaveContact(e.target.value)}
+                          style={{ fontSize: 12, padding: '6px 10px', borderRadius: 6, border: '1px solid var(--border)', flex: 1, minWidth: 180 }}
+                        >
+                          <option value="">— pick a contact —</option>
+                          {prospects.map(p => <option key={p.id} value={p.id}>{p.name}{p.company ? ` · ${p.company}` : ''}</option>)}
+                          <option value="__new__">
+                            {quickExtracted?.contact_name ? `✦ Create contact: ${quickExtracted.contact_name}` : '✦ Create new contact'}
+                          </option>
+                        </select>
+                        <button
+                          onClick={handleQuickSave}
+                          disabled={quickSaving || !quickSaveContact}
+                          style={{ fontSize: 13, fontWeight: 800, padding: '7px 20px', borderRadius: 7, border: 'none', background: quickSaveContact ? 'var(--accent)' : '#d1d5db', color: '#fff', cursor: quickSaveContact ? 'pointer' : 'not-allowed', whiteSpace: 'nowrap', flexShrink: 0 }}
+                        >{quickSaving ? 'Saving…' : '💾 Save to Old Gold'}</button>
+                      </div>
+
+                      {/* Move to Pipeline — one row per matched deal */}
+                      {quickCrossRefs?.pipeline?.map(deal => (
+                        <div key={deal.id} style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--border)', flexWrap: 'wrap' }}>
+                          <span style={{ fontSize: 11, color: '#92400e', flex: 1 }}>
+                            ⚡ <strong>{deal.company_name}</strong> is already in Pipeline{deal.stage ? ` (${deal.stage})` : ''}
+                          </span>
+                          <button
+                            onClick={() => handleSaveToDeal(deal)}
+                            disabled={quickSaving}
+                            style={{ fontSize: 12, fontWeight: 700, padding: '5px 14px', borderRadius: 6, border: '1px solid #fbbf24', background: '#fffbeb', color: '#92400e', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}
+                          >{quickSaving ? 'Moving…' : `Move conversation there →`}</button>
+                        </div>
+                      ))}
+
+                      {quickError && <div style={{ fontSize: 12, color: '#ef4444', marginTop: 8, fontWeight: 600 }}>{quickError}</div>}
+                    </div>
+
+                    {/* Cross-reference info (secondary — email/LinkedIn hints) */}
                     {quickCrossRefs && (quickCrossRefs.pipeline?.length > 0 || quickCrossRefs.intel?.length > 0) && (
                       <div style={{ marginBottom: 14, display: 'flex', flexDirection: 'column', gap: 6 }}>
                         {quickCrossRefs.pipeline?.map(deal => {
-                          // Find a specific matching contact angle from intel for this deal
                           const intelCo = quickCrossRefs.intel?.find(c => c.name?.toLowerCase().includes((quickExtracted?.company_name || '').toLowerCase()));
-                          const intelContact = (intelCo?.contact_angles || []).find(c =>
-                            c.name?.toLowerCase().includes((quickExtracted?.contact_name || '').toLowerCase())
-                          );
+                          const intelContact = (intelCo?.contact_angles || []).find(c => c.name?.toLowerCase().includes((quickExtracted?.contact_name || '').toLowerCase()));
                           const email = deal.contact_email || intelContact?.email || '';
                           const linkedin = intelContact?.linkedin || '';
+                          if (!email && !linkedin) return null;
                           return (
-                            <div key={deal.id} style={{ padding: '9px 12px', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 8, display: 'flex', alignItems: 'flex-start', gap: 10 }}>
-                              <span style={{ fontSize: 14, flexShrink: 0, marginTop: 1 }}>⚡</span>
-                              <div style={{ flex: 1, minWidth: 0 }}>
-                                <div style={{ fontSize: 12, fontWeight: 700, color: '#92400e' }}>
-                                  Found in Pipeline: {deal.company_name}
-                                  {deal.stage && <span style={{ fontWeight: 400, color: '#b45309', marginLeft: 6 }}>({deal.stage})</span>}
-                                </div>
-                                <div style={{ fontSize: 11, color: '#78350f', marginTop: 2, display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-                                  {deal.contact_name && <span>Contact: <strong>{deal.contact_name}</strong></span>}
-                                  {email && <span>✉ {email}</span>}
-                                  {linkedin && <span>🔗 <a href={linkedin} target="_blank" rel="noreferrer" style={{ color: '#78350f' }}>LinkedIn</a></span>}
-                                </div>
-                              </div>
-                              {email && !quickEmailHint && (
-                                <button
-                                  onClick={() => setQuickEmailHint(email)}
-                                  style={{ fontSize: 10, padding: '3px 8px', borderRadius: 5, border: '1px solid #fbbf24', background: '#fef3c7', color: '#92400e', cursor: 'pointer', flexShrink: 0 }}
-                                >Use email</button>
-                              )}
+                            <div key={deal.id} style={{ padding: '8px 12px', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 8, fontSize: 11, color: '#78350f', display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+                              <span style={{ fontWeight: 700 }}>From {deal.company_name}:</span>
+                              {deal.contact_name && <span>{deal.contact_name}</span>}
+                              {email && <span>✉ {email}</span>}
+                              {linkedin && <a href={linkedin} target="_blank" rel="noreferrer" style={{ color: '#78350f' }}>🔗 LinkedIn</a>}
+                              {email && !quickEmailHint && <button onClick={() => setQuickEmailHint(email)} style={{ fontSize: 10, padding: '2px 7px', borderRadius: 5, border: '1px solid #fbbf24', background: '#fef3c7', color: '#92400e', cursor: 'pointer' }}>Use email</button>}
                             </div>
                           );
                         })}
-                        {/* Intel-only matches (company not in pipeline) */}
-                        {quickCrossRefs.intel?.filter(co =>
-                          !quickCrossRefs.pipeline?.some(d => d.company_name?.toLowerCase().includes(co.name?.toLowerCase()))
-                        ).map(co => {
-                          const angle = (co.contact_angles || []).find(c =>
-                            c.name?.toLowerCase().includes((quickExtracted?.contact_name || '').toLowerCase())
-                          ) || co.contact_angles?.[0];
+                        {quickCrossRefs.intel?.filter(co => !quickCrossRefs.pipeline?.some(d => d.company_name?.toLowerCase().includes(co.name?.toLowerCase()))).map(co => {
+                          const angle = (co.contact_angles || []).find(c => c.name?.toLowerCase().includes((quickExtracted?.contact_name || '').toLowerCase())) || co.contact_angles?.[0];
                           if (!angle?.email && !angle?.linkedin) return null;
                           return (
-                            <div key={co.id} style={{ padding: '9px 12px', background: '#f5f3ff', border: '1px solid #c4b5fd', borderRadius: 8, display: 'flex', alignItems: 'flex-start', gap: 10 }}>
-                              <span style={{ fontSize: 14, flexShrink: 0, marginTop: 1 }}>🧠</span>
-                              <div style={{ flex: 1, minWidth: 0 }}>
-                                <div style={{ fontSize: 12, fontWeight: 700, color: '#5b21b6' }}>Found in Company Intel: {co.name}</div>
-                                <div style={{ fontSize: 11, color: '#6d28d9', marginTop: 2, display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-                                  {angle.email && <span>✉ {angle.email}</span>}
-                                  {angle.linkedin && <span>🔗 <a href={angle.linkedin} target="_blank" rel="noreferrer" style={{ color: '#6d28d9' }}>LinkedIn</a></span>}
-                                </div>
-                              </div>
-                              {angle.email && !quickEmailHint && (
-                                <button
-                                  onClick={() => setQuickEmailHint(angle.email)}
-                                  style={{ fontSize: 10, padding: '3px 8px', borderRadius: 5, border: '1px solid #c4b5fd', background: '#ede9fe', color: '#5b21b6', cursor: 'pointer', flexShrink: 0 }}
-                                >Use email</button>
-                              )}
+                            <div key={co.id} style={{ padding: '8px 12px', background: '#f5f3ff', border: '1px solid #c4b5fd', borderRadius: 8, fontSize: 11, color: '#6d28d9', display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+                              <span style={{ fontWeight: 700 }}>🧠 {co.name}:</span>
+                              {angle.email && <span>✉ {angle.email}</span>}
+                              {angle.linkedin && <a href={angle.linkedin} target="_blank" rel="noreferrer" style={{ color: '#6d28d9' }}>🔗 LinkedIn</a>}
+                              {angle.email && !quickEmailHint && <button onClick={() => setQuickEmailHint(angle.email)} style={{ fontSize: 10, padding: '2px 7px', borderRadius: 5, border: '1px solid #c4b5fd', background: '#ede9fe', color: '#5b21b6', cursor: 'pointer' }}>Use email</button>}
                             </div>
                           );
                         })}
@@ -713,7 +728,7 @@ export default function OldGoldPage({ isActive = false, onNavigate }) {
                       </div>
                     )}
                     {quickResult.action_items?.length > 0 && (
-                      <div style={{ marginBottom: 16 }}>
+                      <div style={{ marginBottom: 8 }}>
                         <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--accent)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 6 }}>Action Items</div>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                           {quickResult.action_items.map((ai, i) => (
@@ -726,52 +741,6 @@ export default function OldGoldPage({ isActive = false, onNavigate }) {
                         </div>
                       </div>
                     )}
-
-                    {/* Save row */}
-                    <div style={{ paddingTop: 14, borderTop: '1px solid var(--border)' }}>
-                      {/* Old Gold contact save */}
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: quickCrossRefs?.pipeline?.length ? 10 : 0 }}>
-                        <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', flexShrink: 0 }}>Save to Old Gold:</div>
-                        <select
-                          value={quickSaveContact}
-                          onChange={e => setQuickSaveContact(e.target.value)}
-                          style={{ fontSize: 12, padding: '4px 8px', borderRadius: 6, border: '1px solid var(--border)', flex: 1, minWidth: 160 }}
-                        >
-                          <option value="">— pick a contact —</option>
-                          {prospects.map(p => <option key={p.id} value={p.id}>{p.name}{p.company ? ` · ${p.company}` : ''}</option>)}
-                          <option value="__new__">
-                            {quickExtracted?.contact_name ? `+ Create: ${quickExtracted.contact_name}` : '+ Create new contact'}
-                          </option>
-                        </select>
-                        <button
-                          onClick={handleQuickSave}
-                          disabled={quickSaving || !quickSaveContact}
-                          style={{ fontSize: 12, fontWeight: 700, padding: '5px 16px', borderRadius: 6, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer', whiteSpace: 'nowrap' }}
-                        >{quickSaving ? 'Saving…' : 'Save & open contact'}</button>
-                        <button
-                          onClick={resetQuickPanel}
-                          style={{ fontSize: 12, padding: '5px 12px', borderRadius: 6, border: '1px solid var(--border)', background: 'none', cursor: 'pointer', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}
-                        >Discard</button>
-                      </div>
-
-                      {/* Move to Pipeline deal — shown for each pipeline cross-ref match */}
-                      {quickCrossRefs?.pipeline?.map(deal => (
-                        <div key={deal.id} style={{ display: 'flex', alignItems: 'center', gap: 10, paddingTop: 10, borderTop: '1px solid var(--border-light, #f3f4f6)', flexWrap: 'wrap' }}>
-                          <div style={{ fontSize: 12, fontWeight: 600, color: '#92400e', flexShrink: 0 }}>⚡ Move to Pipeline:</div>
-                          <div style={{ flex: 1, fontSize: 12, color: 'var(--text-muted)' }}>
-                            <strong>{deal.company_name}</strong>
-                            {deal.stage && <span style={{ marginLeft: 6, fontSize: 11, color: 'var(--text-faint)' }}>({deal.stage})</span>}
-                            <span style={{ marginLeft: 6, fontSize: 11, color: 'var(--text-faint)' }}>— meeting + transcript saved to this deal card</span>
-                          </div>
-                          <button
-                            onClick={() => handleSaveToDeal(deal)}
-                            disabled={quickSaving}
-                            style={{ fontSize: 12, fontWeight: 700, padding: '5px 14px', borderRadius: 6, border: '1px solid #fbbf24', background: '#fffbeb', color: '#92400e', cursor: 'pointer', whiteSpace: 'nowrap' }}
-                          >{quickSaving ? 'Moving…' : `Move to ${deal.company_name} →`}</button>
-                        </div>
-                      ))}
-                    </div>
-                    {quickError && <div style={{ fontSize: 12, color: '#ef4444', marginTop: 8 }}>{quickError}</div>}
                   </>
                 )}
               </div>
