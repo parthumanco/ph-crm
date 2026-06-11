@@ -7,15 +7,19 @@ async function processTranscriptWithAI(transcript) {
   const apiKey = import.meta.env.VITE_ANTHROPIC_API_KEY;
   if (!apiKey) return { summary: '', action_items: [], contact_name: '', company_name: '', contact_email: '' };
 
-  const prompt = `You are analyzing a meeting transcript involving Peter (a consultant at Part Human).
+  const prompt = `You are analyzing a meeting transcript involving Peter Andrews (a consultant at Part Human, a creative/marketing agency).
+
+IMPORTANT: Extract information about THIS specific meeting only — the one actively being recorded/transcribed. Do NOT use dates, names, or content from past meetings that are merely referenced or discussed within this transcript.
+
+Your job is to identify the PRIMARY PROSPECT — the external client or potential client that Peter is having a business development conversation with RIGHT NOW in this transcript. This is NOT Peter/Pete himself, and NOT other Part Human team members. If multiple external people are present, pick the one who is the decision-maker or the person this meeting is primarily about.
 
 Extract the following and respond ONLY with valid JSON:
-1. The name of the OTHER person Peter met with (not Pete/Peter)
-2. Their company name
+1. The PRIMARY PROSPECT'S full name (the person Peter is speaking with in THIS meeting — not Pete/Peter, not Part Human staff, not people merely mentioned in passing)
+2. Their company name (the prospect's company, not Part Human)
 3. Their email address IF explicitly mentioned in the transcript (null if not stated)
-4. The date the meeting took place (YYYY-MM-DD) — look for explicit dates, "today", "this morning", timestamps in the transcript header, or contextual clues. null if not determinable.
-5. A concise 2–3 sentence summary of the conversation
-6. All follow-up action items / next steps — include who owns each one and a suggested due date (YYYY-MM-DD, within 14 days if not specified)
+4. The date THIS meeting took place (YYYY-MM-DD) — look for timestamps in the transcript header, "today", "this morning", or explicit date references to when this call is happening. If the transcript mentions a past meeting date (e.g. "we spoke in December"), do NOT use that — only use the date of THIS recording. null if not determinable.
+5. A concise 2–3 sentence summary of THIS conversation — what was discussed, the prospect's situation, and the business opportunity
+6. All follow-up action items / next steps from THIS meeting — include who owns each one (use "Pete" for Peter/Part Human items, the prospect's first name for their items) and a suggested due date (YYYY-MM-DD, within 14 days if not specified)
 
 {
   "contact_name": "First Last",
@@ -156,8 +160,10 @@ export default function OldGoldPage({ isActive = false, onNavigate }) {
   const [quickResult,    setQuickResult]    = useState(() => { try { return JSON.parse(localStorage.getItem('og_quick_panel') || 'null')?.quickResult || null; } catch { return null; } });
   const [quickSaved,     setQuickSaved]     = useState(() => { try { const s = JSON.parse(localStorage.getItem('og_quick_panel') || 'null')?.quickSaved; return s ? { ...s, savedAt: new Date(s.savedAt) } : null; } catch { return null; } });
   const [quickMinimized, setQuickMinimized] = useState(() => { try { return !!JSON.parse(localStorage.getItem('og_quick_panel') || 'null')?.quickSaved; } catch { return false; } });
+  const [allMeetings,    setAllMeetings]    = useState([]);   // all old_gold_meetings, newest first
+  const [expandedMtgIds, setExpandedMtgIds] = useState(new Set());
 
-  // Persist quick-panel state so it survives page refresh
+  // Persist active panel state
   useEffect(() => {
     if (quickSaved) {
       localStorage.setItem('og_quick_panel', JSON.stringify({ quickSaved, quickResult, quickExtracted, quickCrossRefs, quickEmailHint }));
@@ -169,8 +175,12 @@ export default function OldGoldPage({ isActive = false, onNavigate }) {
   // Refs so async drop handler always sees current state (avoids stale closures)
   const showImportRef    = useRef(showImport);
   const showQuickPanelRef = useRef(showQuickPanel);
+  const quickSavedRef     = useRef(quickSaved);
+  const quickResultRef    = useRef(quickResult);
   useEffect(() => { showImportRef.current    = showImport;    }, [showImport]);
   useEffect(() => { showQuickPanelRef.current = showQuickPanel; }, [showQuickPanel]);
+  useEffect(() => { quickSavedRef.current     = quickSaved;    }, [quickSaved]);
+  useEffect(() => { quickResultRef.current    = quickResult;   }, [quickResult]);
 
   // ── Document-level drag/drop (same pattern as SignalWatchPage) ────────────
   useEffect(() => {
@@ -193,6 +203,11 @@ export default function OldGoldPage({ isActive = false, onNavigate }) {
       if (showImportRef.current) {
         setImportTranscript(text);
       } else {
+        // If there's already a saved transcript, clear panel state (DB records stay) before starting new one
+        if (quickSavedRef.current) {
+          setQuickResult(null); setQuickExtracted(null); setQuickCrossRefs(null);
+          setQuickEmailHint(''); setQuickSaved(null); setQuickMinimized(false); setQuickError('');
+        }
         setQuickText(text);
         setShowQuickPanel(true);
       }
@@ -248,12 +263,26 @@ export default function OldGoldPage({ isActive = false, onNavigate }) {
       if (emailHint) setQuickEmailHint(emailHint);
 
       // 4. Auto-save to Old Gold immediately
-      const nameLower    = extracted.contact_name.toLowerCase();
-      const companyLower = extracted.company_name.toLowerCase();
-      const existingMatch = prospects.find(p =>
-        (nameLower    && p.name?.toLowerCase().includes(nameLower)) ||
-        (companyLower && p.company?.toLowerCase().includes(companyLower))
-      );
+      const nameLower    = extracted.contact_name.toLowerCase().trim();
+      const companyLower = extracted.company_name.toLowerCase().trim();
+
+      // Fuzzy name helper: compare first 4 chars of first word (handles Vicki/Vickie, etc.)
+      const firstName4 = s => (s.trim().split(/\s+/)[0] || '').slice(0, 4);
+      const lastName   = s => (s.trim().split(/\s+/).pop() || '');
+
+      const existingMatch = prospects.find(p => {
+        const pName = (p.name || '').toLowerCase().trim();
+        const pCo   = (p.company || '').toLowerCase().trim();
+        // Fuzzy first-name (4-char prefix) + exact last-name
+        const fuzzyName = nameLower && lastName(nameLower) && lastName(pName) &&
+          firstName4(nameLower) === firstName4(pName) && lastName(nameLower) === lastName(pName);
+        // Substring name match (legacy)
+        const subName = nameLower && (pName.includes(nameLower) || nameLower.includes(pName));
+        // Bidirectional company match
+        const subCo = companyLower && companyLower.length > 2 &&
+          (pCo.includes(companyLower) || companyLower.includes(pCo));
+        return fuzzyName || subName || subCo;
+      });
 
       let prospectId, savedProspect;
       if (existingMatch) {
@@ -284,7 +313,7 @@ export default function OldGoldPage({ isActive = false, onNavigate }) {
       if (mtgErr) throw new Error(mtgErr.message);
 
       if (result.action_items?.length && mtg) {
-        await supabase.from('old_gold_tasks').insert(
+        const { error: taskErr } = await supabase.from('old_gold_tasks').insert(
           result.action_items.map(ai => ({
             prospect_id: prospectId,
             meeting_id:  mtg.id,
@@ -293,13 +322,17 @@ export default function OldGoldPage({ isActive = false, onNavigate }) {
             notes:       ai.owner ? `Owner: ${ai.owner}` : '',
           }))
         );
+        if (taskErr) console.error('Task insert failed:', taskErr.message);
       }
 
       // Pick "our" name from action item owners (AI usually puts Pete/Peter there)
-      const ourName = result.action_items?.find(ai => ai.owner)?.owner || 'Pete';
+      // ourName should always be Pete/Peter — look for Peter/Pete specifically, don't accidentally use the contact's name
+      const ourName = result.action_items?.find(ai => /^pete/i.test(ai.owner || ''))?.owner || 'Pete';
       // Use the meeting date from the transcript if the AI extracted one, otherwise now
       const meetingDate = result.meeting_date ? new Date(result.meeting_date + 'T12:00:00') : new Date();
       setQuickSaved({ prospect: savedProspect, meetingId: mtg?.id || null, savedAt: meetingDate, ourName });
+      // Prepend to home list immediately
+      if (mtg) setAllMeetings(prev => [{ ...mtg, old_gold_prospects: savedProspect }, ...prev]);
 
     } catch (e) {
       setQuickError(e.message || 'Analysis failed');
@@ -357,16 +390,44 @@ export default function OldGoldPage({ isActive = false, onNavigate }) {
 
   const loadDetail = useCallback(async (prospect) => {
     setDetailLoading(true);
-    const [{ data: mtgs }, { data: tsks }] = await Promise.all([
-      supabase.from('old_gold_meetings').select('*').eq('prospect_id', prospect.id).order('meeting_date', { ascending: false }),
-      supabase.from('old_gold_tasks').select('*').eq('prospect_id', prospect.id).order('created_at', { ascending: true }),
-    ]);
+    // Load meetings first so we can also query tasks by meeting_id (more reliable than prospect_id alone)
+    const { data: mtgs } = await supabase
+      .from('old_gold_meetings')
+      .select('*')
+      .eq('prospect_id', prospect.id)
+      .order('meeting_date', { ascending: false });
     setMeetings(mtgs || []);
-    setTasks(tsks || []);
+
+    const meetingIds = (mtgs || []).map(m => m.id);
+    // Query tasks both ways and merge (handles tables created before prospect_id was standard)
+    const queries = [
+      supabase.from('old_gold_tasks').select('*').eq('prospect_id', prospect.id),
+    ];
+    if (meetingIds.length) {
+      queries.push(supabase.from('old_gold_tasks').select('*').in('meeting_id', meetingIds));
+    }
+    const results = await Promise.all(queries);
+    const seen = new Set();
+    const merged = results
+      .flatMap(r => r.data || [])
+      .filter(t => { if (seen.has(t.id)) return false; seen.add(t.id); return true; })
+      .sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+    setTasks(merged);
     setDetailLoading(false);
   }, []);
 
   useEffect(() => { loadProspects(); }, [loadProspects]);
+
+  // Load all meetings newest → oldest for the home page list
+  const loadAllMeetings = useCallback(async () => {
+    const { data } = await supabase
+      .from('old_gold_meetings')
+      .select('*, old_gold_prospects(id, name, company, status)')
+      .order('meeting_date', { ascending: false })
+      .order('created_at', { ascending: false });
+    setAllMeetings(data || []);
+  }, []);
+  useEffect(() => { loadAllMeetings(); }, [loadAllMeetings]);
 
   // Load all known companies (Pipeline deals + Company Intel) for the link dropdown
   useEffect(() => {
@@ -560,6 +621,96 @@ export default function OldGoldPage({ isActive = false, onNavigate }) {
 
         {addingProspect && <ProspectForm onCancel={() => setAddingProspect(false)} />}
 
+        {/* ── All saved meetings, newest → oldest ── */}
+        {allMeetings.filter(mtg => !quickSaved || mtg.id !== quickSaved.meetingId).map(mtg => {
+          const p = mtg.old_gold_prospects;
+          const sm = p ? statusMeta(p.status) : null;
+          const linkedCo = p?.company ? allCompanies.find(c => c.name.toLowerCase() === p.company.toLowerCase()) : null;
+          const expanded = expandedMtgIds.has(mtg.id);
+          return (
+          <div key={mtg.id} style={{ marginBottom: 8, border: '1px solid var(--accent)', borderRadius: 10, background: 'var(--surface)', overflow: 'hidden' }}>
+            {/* Header — always visible, click to expand */}
+            <div
+              onClick={() => setExpandedMtgIds(prev => { const s = new Set(prev); s.has(mtg.id) ? s.delete(mtg.id) : s.add(mtg.id); return s; })}
+              style={{ display: 'flex', alignItems: 'center', padding: '10px 16px', background: '#fffbeb', borderBottom: expanded ? '1px solid #fde68a' : 'none', cursor: 'pointer', gap: 10, userSelect: 'none' }}
+            >
+              <span style={{ fontSize: 13, fontWeight: 700, color: '#92400e', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {p?.name || 'Unknown'}
+                {p?.company ? ` — ${p.company}` : ''}
+                {mtg.meeting_date ? `, ${new Date(mtg.meeting_date + 'T12:00:00').toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: '2-digit' })}` : ''}
+                {mtg.meeting_time ? `, ${mtg.meeting_time}` : ''}
+              </span>
+              <span style={{ fontSize: 11, color: '#92400e', flexShrink: 0 }}>{expanded ? '▲' : '▼'}</span>
+            </div>
+
+            {/* Action items always visible as pills when collapsed */}
+            {!expanded && mtg.action_items?.length > 0 && (
+              <div style={{ padding: '6px 16px 10px', display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+                {mtg.action_items.map((ai, i) => (
+                  <span key={i} style={{ fontSize: 11, padding: '2px 9px', borderRadius: 20, background: '#ede9fe', color: '#5b21b6' }}>
+                    {ai.owner && <strong style={{ marginRight: 4 }}>{ai.owner}</strong>}{ai.title}
+                    {ai.due_date && <span style={{ marginLeft: 5, opacity: 0.6 }}>{ai.due_date}</span>}
+                  </span>
+                ))}
+              </div>
+            )}
+
+            {expanded && (
+              <div style={{ padding: 16 }}>
+                {/* Inline contact card */}
+                {p && (
+                  <div style={{ marginBottom: 14, padding: '10px 14px', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 10, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--text)' }}>{p.name}</div>
+                      {p.company && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 2 }}>
+                          <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{p.company}</span>
+                          {linkedCo && (
+                            <button onClick={e => { e.stopPropagation(); onNavigate && onNavigate(linkedCo.source === 'pipeline' ? 'deals' : 'clients', linkedCo.source === 'pipeline' ? linkedCo.id : null); }}
+                              style={{ fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 10, border: `1px solid ${linkedCo.source === 'pipeline' ? '#fbbf24' : '#c4b5fd'}`, background: linkedCo.source === 'pipeline' ? '#fffbeb' : '#f5f3ff', color: linkedCo.source === 'pipeline' ? '#92400e' : '#5b21b6', cursor: 'pointer' }}>
+                              {linkedCo.source === 'pipeline' ? '⚡ Pipeline →' : '🧠 Intel →'}
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                    {sm && <span style={{ fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 20, background: sm.bg, color: sm.color }}>{sm.label}</span>}
+                    <button onClick={e => { e.stopPropagation(); openProspect(p); }}
+                      style={{ fontSize: 11, fontWeight: 700, padding: '3px 12px', borderRadius: 20, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-muted)', cursor: 'pointer', whiteSpace: 'nowrap' }}>See All Conversations</button>
+                  </div>
+                )}
+                {mtg.summary && (
+                  <div style={{ marginBottom: 14 }}>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 5 }}>Summary</div>
+                    <div style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.6 }}>{mtg.summary}</div>
+                  </div>
+                )}
+                {mtg.action_items?.length > 0 && (
+                  <div>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--accent)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 6 }}>Action Items</div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                      {mtg.action_items.map((ai, i) => (
+                        <div key={i} style={{ fontSize: 12, padding: '5px 9px', borderRadius: 6, background: '#ede9fe', display: 'flex', gap: 8, alignItems: 'baseline' }}>
+                          {ai.owner && <span style={{ fontWeight: 700, color: '#6d28d9', flexShrink: 0 }}>{ai.owner}</span>}
+                          <span style={{ flex: 1 }}>{ai.title}</span>
+                          {ai.due_date && <span style={{ fontSize: 10, color: '#7c3aed', flexShrink: 0 }}>{ai.due_date}</span>}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 12 }}>
+                  <button
+                    onClick={e => { e.stopPropagation(); if (window.confirm('Delete this meeting record?')) { supabase.from('old_gold_tasks').delete().eq('meeting_id', mtg.id).then(() => supabase.from('old_gold_meetings').delete().eq('id', mtg.id)); setAllMeetings(prev => prev.filter(m => m.id !== mtg.id)); }}}
+                    style={{ fontSize: 10, padding: '2px 8px', borderRadius: 20, border: '1px solid #fca5a5', background: 'transparent', color: '#b91c1c', cursor: 'pointer' }}
+                  >Delete transcript</button>
+                </div>
+              </div>
+            )}
+          </div>
+          );
+        })}
+
         {/* ── Quick transcript drop zone ── */}
         <div style={{ marginBottom: 24 }}>
           {!showQuickPanel ? (
@@ -681,8 +832,8 @@ export default function OldGoldPage({ isActive = false, onNavigate }) {
                           <span style={{ fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 20, background: sm.bg, color: sm.color }}>{sm.label}</span>
                           <button
                             onClick={() => { openProspect(p); setQuickMinimized(true); }}
-                            style={{ fontSize: 12, fontWeight: 700, padding: '4px 12px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', cursor: 'pointer', whiteSpace: 'nowrap' }}
-                          >Open →</button>
+                            style={{ fontSize: 11, fontWeight: 700, padding: '3px 12px', borderRadius: 20, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-muted)', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                          >See All Conversations</button>
 
                           {/* Move to Pipeline option */}
                           {quickCrossRefs?.pipeline?.map(deal => (
@@ -736,6 +887,35 @@ export default function OldGoldPage({ isActive = false, onNavigate }) {
           )}
         </div>
 
+        {/* ── New transcript drop zone — shown after a transcript is already saved ── */}
+        {quickSaved && (
+          <div
+            onClick={() => {
+              if (quickSaved) setSavedStack(prev => [{ saved: quickSaved, result: quickResult }, ...prev]);
+              setQuickResult(null); setQuickExtracted(null); setQuickCrossRefs(null);
+              setQuickEmailHint(''); setQuickSaved(null); setQuickMinimized(false); setQuickError('');
+              setShowQuickPanel(true);
+            }}
+            style={{
+              marginBottom: 24,
+              border: `2px dashed ${dropDragging ? 'var(--accent)' : 'var(--border)'}`,
+              borderRadius: 10,
+              padding: '10px 16px',
+              background: dropDragging ? '#fffbeb' : 'transparent',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 10,
+              transition: 'all .15s',
+            }}
+          >
+            <span style={{ fontSize: 16 }}>🪩</span>
+            <span style={{ fontSize: 12, color: dropDragging ? 'var(--accent)' : 'var(--text-muted)', fontWeight: 600 }}>
+              {dropDragging ? 'Drop to analyze' : '+ Analyze another transcript'}
+            </span>
+          </div>
+        )}
+
         {loading ? (
           <div className="empty-state"><div className="spinner" /></div>
         ) : prospects.length === 0 && !addingProspect ? (
@@ -747,7 +927,12 @@ export default function OldGoldPage({ isActive = false, onNavigate }) {
           </div>
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 14 }}>
-            {prospects.filter(p => !quickSaved || p.id !== quickSaved.prospect.id).map(p => {
+            {prospects.filter(p => {
+                // Hide contacts already shown in the meeting list or active panel
+                const inMeetingList = allMeetings.some(m => m.prospect_id === p.id);
+                const inActivePanel = quickSaved?.prospect?.id === p.id;
+                return !inMeetingList && !inActivePanel;
+              }).map(p => {
               const sm = statusMeta(p.status);
               const linkedCo = p.company ? allCompanies.find(c => c.name.toLowerCase() === p.company.toLowerCase()) : null;
               return (
@@ -762,16 +947,6 @@ export default function OldGoldPage({ isActive = false, onNavigate }) {
                     <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--text)', lineHeight: 1.3 }}>{p.name}</div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0, marginLeft: 8 }}>
                       <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 20, background: sm.bg, color: sm.color }}>{sm.label}</span>
-                      <button
-                        onClick={async e => {
-                          e.stopPropagation();
-                          if (!window.confirm(`Delete ${p.name}?`)) return;
-                          await supabase.from('old_gold_prospects').delete().eq('id', p.id);
-                          setProspects(prev => prev.filter(x => x.id !== p.id));
-                        }}
-                        style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: 'var(--text-faint)', padding: '0 2px', lineHeight: 1 }}
-                        title="Delete contact"
-                      >✕</button>
                     </div>
                   </div>
                   {p.company && (
@@ -788,6 +963,9 @@ export default function OldGoldPage({ isActive = false, onNavigate }) {
                   )}
                   {p.title && <div style={{ fontSize: 11, color: 'var(--text-faint)' }}>{p.title}</div>}
                   {p.notes && <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 8, lineHeight: 1.5, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>{p.notes}</div>}
+                  <div style={{ marginTop: 12, display: 'flex', justifyContent: 'flex-end' }}>
+                    <span style={{ fontSize: 11, fontWeight: 700, padding: '3px 12px', borderRadius: 20, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-muted)' }}>See All Conversations</span>
+                  </div>
                 </div>
               );
             })}
