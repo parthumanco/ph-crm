@@ -23,7 +23,7 @@ const NAV = [
   { id: 'oldgold',  label: 'Old Gold',            icon: '🪙' },
   { divider: true },
   { id: 'discover', label: 'Find New Companies',  icon: '🧭' },
-  { id: 'signals',  label: 'Rate & Review',       icon: '🌡️' },
+  { id: 'signals',  label: 'Watch List',           icon: '🌡️' },
   { id: 'chat',     label: 'Little Stevie',       icon: '💬' },
   { divider: true },
   { id: 'settings', label: 'Settings',            icon: '⚙️'  },
@@ -32,7 +32,7 @@ const NAV = [
 
 const PAGE_TITLES = {
   clients:  { title: 'Clients',              sub: 'Active and archived client history, contacts & AI insights' },
-  signals:  { title: 'Rate & Review',        sub: 'Company intelligence & outreach triggers' },
+  signals:  { title: 'Watch List',            sub: 'Company intelligence & outreach triggers' },
   pipeline: { title: 'Active Outreach',      sub: 'Active prospects & touch cadence' },
   oldgold:  { title: 'Old Gold',             sub: "Pete's warm outreach — discovery conversations & next steps" },
   deals:    { title: 'Pipeline',             sub: 'CRM pipeline, activities & revenue tracking' },

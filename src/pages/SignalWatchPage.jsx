@@ -145,6 +145,7 @@ export default function SignalWatchPage({ onNavigate, icp, refreshKey = 0, isAct
   const [sortBy, setSortBy]           = useState('icp');
   const [addingToPipeline, setAddingToPipeline] = useState({});
   const [addedToPipeline, setAddedToPipeline]   = useState({});
+  const [watchListEntries, setWatchListEntries] = useState({}); // company_id → pipeline_entry_id for watch_list status
   const [loading, setLoading]         = useState(true);
   const [importing, setImporting]     = useState(false);
   const [autoResume, setAutoResume]   = useState(false);
@@ -209,13 +210,19 @@ export default function SignalWatchPage({ onNavigate, icp, refreshKey = 0, isAct
           from += PAGE;
         }
         if (allData.length) {
-          const { data: pipelineEntries } = await supabase.from('pipeline_entries').select('company_id').neq('status', 'won');
+          const [{ data: pipelineEntries }, { data: watchEntries }] = await Promise.all([
+            supabase.from('pipeline_entries').select('company_id').neq('status', 'won').neq('status', 'watch_list'),
+            supabase.from('pipeline_entries').select('id, company_id').eq('status', 'watch_list'),
+          ]);
           const inPipeline = new Set((pipelineEntries || []).map(e => e.company_id));
           const loaded = allData.map(c => ({ ...c, _key: c.id }));
           setCompanies(loaded);
           const alreadyAdded = {};
           loaded.forEach(c => { if (inPipeline.has(c.id)) alreadyAdded[c.id] = true; });
           setAddedToPipeline(alreadyAdded);
+          const wlMap = {};
+          (watchEntries || []).forEach(e => { wlMap[e.company_id] = e.id; });
+          setWatchListEntries(wlMap);
           if (localStorage.getItem('ph_scan_active')) setAutoResume(true);
         }
         const lastScan = await loadLastWeeklyScan();
@@ -832,6 +839,16 @@ export default function SignalWatchPage({ onNavigate, icp, refreshKey = 0, isAct
       setAddingToPipeline(s => ({ ...s, [company.id]: false }));
     }
   }, []);
+
+  // ── Resume outreach (move back from watch_list → active) ────────────────────
+
+  const resumeOutreach = useCallback(async (company) => {
+    const entryId = watchListEntries[company.id];
+    if (!entryId) return;
+    await supabase.from('pipeline_entries').update({ status: 'active', updated_at: new Date().toISOString() }).eq('id', entryId);
+    setWatchListEntries(prev => { const n = { ...prev }; delete n[company.id]; return n; });
+    setAddedToPipeline(s => ({ ...s, [company.id]: true }));
+  }, [watchListEntries]);
 
   // ── Delete company ───────────────────────────────────────────────────────────
 
@@ -1616,8 +1633,10 @@ export default function SignalWatchPage({ onNavigate, icp, refreshKey = 0, isAct
                     weeklyScanRunning={weeklyScanRunning}
                     isAddingToPipeline={addingToPipeline[key]}
                     isAddedToPipeline={addedToPipeline[company.id]}
+                    isOnWatchList={!!watchListEntries[company.id]}
                     onScan={() => scanOne(company)}
                     onAddToPipeline={() => addToPipeline(company)}
+                    onResumeOutreach={() => resumeOutreach(company)}
                     onNavigatePipeline={() => onNavigate('pipeline')}
                     onDelete={() => deleteCompany(company)}
                     forceExpanded={expandedCards[key]}
@@ -1681,7 +1700,7 @@ function AddContactForm({ companyId, existingContacts, onSaved }) {
   );
 }
 
-function CompanyCard({ company, distMiles, status, isScanning, scanningAll, weeklyScanRunning, isAddingToPipeline, isAddedToPipeline, onScan, onAddToPipeline, onNavigatePipeline, onDelete, forceExpanded, onExpandedChange, cardRef, onUpdateContacts, onUpdateEngagement }) {
+function CompanyCard({ company, distMiles, status, isScanning, scanningAll, weeklyScanRunning, isAddingToPipeline, isAddedToPipeline, isOnWatchList, onScan, onAddToPipeline, onResumeOutreach, onNavigatePipeline, onDelete, forceExpanded, onExpandedChange, cardRef, onUpdateContacts, onUpdateEngagement }) {
   const [expanded, setExpanded] = useState(false);
   const [editingIdx, setEditingIdx] = useState(null);
   const [editForm, setEditForm] = useState({});
@@ -1792,7 +1811,7 @@ function CompanyCard({ company, distMiles, status, isScanning, scanningAll, week
   ${contacts.length > 0 ? `<div class="section-label">Contacts</div>${contactRows}` : ''}
 
   <div class="footer">
-    <span>Part Human CRM · Rate &amp; Review</span>
+    <span>Part Human CRM · Watch List</span>
     <span>Scanned ${company.scan_date ? new Date(company.scan_date).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : '—'} · Exported ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}</span>
   </div>
 
@@ -1898,6 +1917,8 @@ function CompanyCard({ company, distMiles, status, isScanning, scanningAll, week
           {hasResult && (
             isAddedToPipeline ? (
               <button className="btn btn-ghost btn-sm" style={{ borderRadius: 20 }} onClick={e => { e.stopPropagation(); onNavigatePipeline(); }}>In Prospects →</button>
+            ) : isOnWatchList ? (
+              <button className="btn btn-secondary btn-sm" style={{ borderRadius: 20, color: 'var(--accent)', borderColor: 'var(--accent)' }} onClick={e => { e.stopPropagation(); onResumeOutreach(); }}>↩ Resume Outreach</button>
             ) : (
               <button className="btn btn-green btn-sm" style={{ borderRadius: 20 }} onClick={e => { e.stopPropagation(); onAddToPipeline(); }} disabled={isAddingToPipeline}>
                 {isAddingToPipeline ? <><span className="spinner" /> Adding…</> : '+ Add to Prospects'}

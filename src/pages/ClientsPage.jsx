@@ -391,7 +391,7 @@ export default function ClientsPage({ onNavigate, refreshKey, icp }) {
                     <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--text-faint)' }}>
                       <div style={{ fontSize: 24, marginBottom: 8 }}>🔍</div>
                       <div style={{ fontSize: 13, marginBottom: 16 }}>No intelligence data yet for {detail.client.name}.</div>
-                      <p style={{ fontSize: 12, color: 'var(--text-faint)', maxWidth: 320, margin: '0 auto' }}>This client doesn't have a matching entry in Rate & Review. Add them there first to enable deep scanning.</p>
+                      <p style={{ fontSize: 12, color: 'var(--text-faint)', maxWidth: 320, margin: '0 auto' }}>This client doesn't have a matching entry in Watch List. Add them there first to enable deep scanning.</p>
                     </div>
                   ) : (
                     <>
