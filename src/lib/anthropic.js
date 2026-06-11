@@ -447,7 +447,7 @@ function extractJsonBlock(data, type = 'object') {
 
 function buildClientContext(clientDetail) {
   const lines = [];
-  const { projects = [], meetings = [], activities = [], items = [] } = clientDetail;
+  const { projects = [], meetings = [], activities = [], items = [], files = [] } = clientDetail;
   if (projects.length) {
     lines.push('PROJECTS:');
     projects.forEach(p => lines.push(`  - ${p.name} (${p.archived_at ? 'archived' : p.status})${p.description ? ': ' + p.description : ''}`));
@@ -468,6 +468,13 @@ function buildClientContext(clientDetail) {
     items.forEach(it => {
       if (it.type === 'note') lines.push(`  - Note: ${it.body || it.title}`);
       else lines.push(`  - Link: ${it.title}${it.url ? ' (' + it.url + ')' : ''}${it.body ? ' — ' + it.body : ''}`);
+    });
+  }
+  if (files.length) {
+    lines.push('SHARED DOCUMENTS (files attached to this deal):');
+    files.forEach(f => {
+      const ctx = f.task_title ? ` — sent with task: "${f.task_title}"` : '';
+      lines.push(`  - "${f.name}"${ctx}`);
     });
   }
   return lines.join('\n');

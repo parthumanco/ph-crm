@@ -4,6 +4,8 @@ import {
   upsertDeal, deleteDeal,
   fetchActivities, addActivity, deleteActivity,
   fetchTasks, addTask, completeTask, deleteTask,
+  uploadDealTaskFile, fetchDealTaskFiles, deleteDealTaskFile, markDealTaskSent,
+  uploadDealFile, fetchDealFiles, deleteDealFile,
   STAGES, ACTIVITY_TYPES, OWNERS, stageColor, stageLabel, fmt$, daysSince,
 } from '../lib/deals';
 import { fetchDealMeetings, deleteProjectMeeting } from '../lib/projects';
@@ -56,6 +58,8 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
   const [thesisLog, setThesisLog]         = useState([]);
   const [thesisError, setThesisError]     = useState(null);
   const [thesisMigrationError, setThesisMigrationError] = useState(null);
+  const [autoRefreshing, setAutoRefreshing] = useState(false); // silent background thesis refresh
+  const autoRefreshingRef = useRef(false); // sync ref so rapid callers see the in-flight flag immediately
   const thesisLogEndRef                   = useRef(null);
   const intelFetchedRef                   = useRef(false); // prevents double-fetch on tab switch
   const dealRef                            = useRef(deal);  // always-current deal for async callbacks
@@ -83,6 +87,19 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
   const [composeDraft, setComposeDraft] = useState({ subject: '', body: '' });
   const [loggingEmail, setLoggingEmail] = useState(false);
 
+  // Task COC state
+  const [taskFiles, setTaskFiles]           = useState({}); // taskId → [file, ...]
+  const [expandedTaskId, setExpandedTaskId] = useState(null);
+  const [composeTaskId, setComposeTaskId]   = useState(null); // task being composed for
+  const [uploadingTaskId, setUploadingTaskId] = useState(null);
+  const [notifyPromptTaskId, setNotifyPromptTaskId] = useState(null); // task awaiting notify confirm
+  const [notifyCompleteAfterSend, setNotifyCompleteAfterSend] = useState(false);
+
+  // Deal-level files (Files tab)
+  const [dealFiles, setDealFiles]             = useState([]);
+  const [filesTabDrop, setFilesTabDrop]       = useState(false);
+  const [uploadingDealFile, setUploadingDealFile] = useState(false);
+
   // AI email draft state
   const [draftingEmail, setDraftingEmail] = useState(false);
   const [emailDraftError, setEmailDraftError] = useState(null);
@@ -95,8 +112,18 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
   useEffect(() => {
     if (!isNew) {
       fetchActivities(initialDeal.id).then(setActivities).catch(console.error);
-      fetchTasks(initialDeal.id).then(setTasks).catch(console.error);
+      fetchTasks(initialDeal.id).then(async ts => {
+        setTasks(ts);
+        if (ts.length) {
+          const ids = ts.map(t => t.id);
+          const files = await fetchDealTaskFiles(ids).catch(() => []);
+          const fileMap = {};
+          files.forEach(f => { if (!fileMap[f.task_id]) fileMap[f.task_id] = []; fileMap[f.task_id].push(f); });
+          setTaskFiles(fileMap);
+        }
+      }).catch(console.error);
       fetchDealMeetings(initialDeal.id).then(setMeetings).catch(console.error);
+      fetchDealFiles(initialDeal.id).then(setDealFiles).catch(console.error);
     }
   }, [initialDeal.id, isNew]);
 
@@ -286,6 +313,69 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
     setTasks(ts => ts.filter(t => t.id !== id));
   };
 
+  const handleTaskFileUpload = async (taskId, file) => {
+    setUploadingTaskId(taskId);
+    try {
+      const saved = await uploadDealTaskFile(taskId, file);
+      const updatedTaskFiles = { ...taskFiles, [taskId]: [...(taskFiles[taskId] || []), saved] };
+      setTaskFiles(updatedTaskFiles);
+      // Build fresh merged list so the thesis refresh sees the new file immediately
+      const freshFiles = [
+        ...Object.entries(updatedTaskFiles).flatMap(([tid, fls]) => {
+          const task = tasks.find(t => t.id === tid);
+          return fls.map(f => ({ ...f, _source: 'task', task_title: task?.title || null }));
+        }),
+        ...dealFiles.map(f => ({ ...f, _source: 'deal', task_title: null })),
+      ].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+      silentRefreshThesis(undefined, undefined, freshFiles);
+    } catch (e) {
+      alert('Upload failed: ' + e.message);
+    } finally {
+      setUploadingTaskId(null);
+    }
+  };
+
+  const handleDealFileUpload = async (file) => {
+    if (!deal.id || !file) return;
+    setUploadingDealFile(true);
+    try {
+      const saved = await uploadDealFile(deal.id, file);
+      const newDealFiles = [saved, ...dealFiles];
+      setDealFiles(newDealFiles);
+      // Build fresh merged list so the thesis refresh sees the new file immediately
+      const freshFiles = [
+        ...Object.entries(taskFiles).flatMap(([tid, fls]) => {
+          const task = tasks.find(t => t.id === tid);
+          return fls.map(f => ({ ...f, _source: 'task', task_title: task?.title || null }));
+        }),
+        ...newDealFiles.map(f => ({ ...f, _source: 'deal', task_title: null })),
+      ].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+      silentRefreshThesis(undefined, undefined, freshFiles);
+    } catch (e) {
+      alert('Upload failed: ' + e.message);
+    } finally {
+      setUploadingDealFile(false);
+    }
+  };
+
+  const handleDealFileDelete = async (fileId, storagePath) => {
+    try {
+      await deleteDealFile(fileId, storagePath);
+      setDealFiles(prev => prev.filter(f => f.id !== fileId));
+    } catch (e) {
+      alert('Delete failed: ' + e.message);
+    }
+  };
+
+  const handleTaskFileDelete = async (taskId, fileId, storagePath) => {
+    try {
+      await deleteDealTaskFile(fileId, storagePath);
+      setTaskFiles(prev => ({ ...prev, [taskId]: (prev[taskId] || []).filter(f => f.id !== fileId) }));
+    } catch (e) {
+      alert('Delete failed: ' + e.message);
+    }
+  };
+
   const saveNotes = async () => {
     if (!deal.id) return;
     setSavingNotes(true);
@@ -445,11 +535,36 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
         });
         const updated = await fetchActivities(deal.id);
         setActivities(updated);
+        // Email sent = new outreach context → refresh AI next steps in background
+        silentRefreshThesis(undefined, updated);
       } catch (e) {
         console.error('Failed to log email activity:', e.message);
       } finally {
         setLoggingEmail(false);
       }
+    }
+    // Mark task as sent / complete if this compose was triggered from a task
+    if (composeTaskId) {
+      try {
+        const updated = await markDealTaskSent(composeTaskId);
+        setTasks(ts => ts.map(t => t.id === composeTaskId ? { ...t, review_chain: updated } : t));
+      } catch (e) {
+        console.error('Failed to mark task sent:', e.message);
+      }
+      // If triggered from "notify client" checkbox flow → mark task complete
+      if (notifyCompleteAfterSend) {
+        try {
+          await completeTask(composeTaskId, true);
+          setTasks(ts => ts.map(t => t.id === composeTaskId
+            ? { ...t, completed: true, completed_at: new Date().toISOString() }
+            : t));
+        } catch (e) {
+          console.error('Failed to complete task after send:', e.message);
+        }
+        setNotifyCompleteAfterSend(false);
+        setNotifyPromptTaskId(null);
+      }
+      setComposeTaskId(null);
     }
     setComposeEmail(null);
   };
@@ -466,6 +581,8 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
       if (imported.length > 0) {
         const updated = await fetchDealMeetings(deal.id);
         setMeetings(updated);
+        // New meetings = new context → refresh AI next steps in background
+        silentRefreshThesis(updated);
       }
       setGranolaResult({
         count: imported.length,
@@ -590,6 +707,7 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
         activities,
         meetings,
         notes: deal.notes ? [{ body: deal.notes, type: 'note' }] : [],
+        files: allDealFiles,
       };
 
       const result = await runBuildThesis(
@@ -637,6 +755,57 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
       setBuildingThesis(false);
     }
   };
+
+  // Silent background thesis refresh — triggered automatically after new info arrives
+  // (file attached, email sent, meeting added). Skips if a manual build is already running.
+  // Pass updatedX args when the caller just mutated that data — state won't have flushed yet.
+  const silentRefreshThesis = async (updatedMeetings, updatedActivities, updatedFiles) => {
+    // Use a ref for the in-flight guard so rapid successive callers see it immediately,
+    // avoiding the stale-closure problem with useState.
+    if (buildingThesis || autoRefreshingRef.current || !deal.company_name) return;
+    const intel = companyIntel;
+    if (!intel?.id) return;
+    autoRefreshingRef.current = true;
+    setAutoRefreshing(true);
+    try {
+      const [icp, company] = await Promise.all([
+        loadIcp(),
+        findOrCreateCompany(deal.company_name),
+      ]);
+      const dealDetail = {
+        activities: updatedActivities || activities,
+        meetings:   updatedMeetings   || meetings,
+        notes: deal.notes ? [{ body: deal.notes, type: 'note' }] : [],
+        // Prefer caller-supplied file list (post-upload) over the render-time snapshot
+        files: updatedFiles || allDealFiles,
+      };
+      const result = await runBuildThesis(
+        company.id, company, icp, dealDetail,
+        () => {}, // silent — no phase callbacks
+        null,
+      );
+      const { _thesisSaveError, ...cleanResult } = result;
+      if (!_thesisSaveError) {
+        setCompanyIntel(prev => ({ ...prev, ...cleanResult }));
+      }
+    } catch (e) {
+      console.warn('[Auto-refresh] Thesis refresh failed:', e.message);
+    } finally {
+      autoRefreshingRef.current = false;
+      setAutoRefreshing(false);
+    }
+  };
+
+  // Merged file list for thesis context and Files tab display
+  const allDealFiles = [
+    // Task-attached files: flatten taskFiles map, annotate with task title
+    ...Object.entries(taskFiles).flatMap(([taskId, files]) => {
+      const task = tasks.find(t => t.id === taskId);
+      return files.map(f => ({ ...f, _source: 'task', task_title: task?.title || null }));
+    }),
+    // Deal-level files (Files tab uploads)
+    ...dealFiles.map(f => ({ ...f, _source: 'deal', task_title: null })),
+  ].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
   const openTasks = tasks.filter(t => !t.completed);
   const overdueTasks = openTasks.filter(t => t.due_date && new Date(t.due_date) < new Date());
@@ -704,6 +873,17 @@ ${deal.website ? `<div style="font-size:12px;color:#9ca3af;margin-bottom:6px;">$
 ${primaryContact ? `<div class="contact"><strong>${esc(primaryContact.name)}</strong>${primaryContact.email ? ` · <a href="mailto:${esc(primaryContact.email)}">${esc(primaryContact.email)}</a>` : ''}</div>` : ''}
 ${deal.notes ? `<p class="summary" style="margin-top:10px;font-size:12px;color:#6b7280;">${esc(deal.notes)}</p>` : ''}
 
+<!-- ── NEXT STEPS ── -->
+<h2>Next Steps</h2>
+${intel.thesis_next_step ? `<div class="next-action"><div class="section-label" style="color:#15803d;margin-bottom:3px;">AI Recommended</div>${esc(intel.thesis_next_step)}</div>` : ''}
+${openTasks.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No open tasks.</p>' : `<div class="block">${openTasks.map(t => `
+  <div class="task">
+    <span>☐</span>
+    <span style="flex:1;">${esc(t.title)}</span>
+    ${t.assigned_to ? `<span class="badge badge-purple" style="font-size:10px;">${esc(t.assigned_to)}</span>` : ''}
+    ${t.due_date ? `<span class="task-due">${fmtDate(t.due_date)}</span>` : ''}
+  </div>`).join('')}</div>`}
+
 <!-- ── RESEARCH ── -->
 <h2>Research</h2>
 ${intel.icp_score || intel.overall_score ? `
@@ -745,17 +925,6 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
     <div style="flex:1;"><span class="activity-date">${fmtDate(a.activity_date)}</span>${a.assigned_to ? ` · <strong>${esc(a.assigned_to)}</strong>` : ''}${toName ? ` → ${esc(toName)}` : ''}<br>${esc(body)}</div>
   </div>`;
 }).join('')}</div>`}
-
-<!-- ── NEXT STEPS ── -->
-<h2>Next Steps</h2>
-${intel.thesis_next_step ? `<div class="next-action"><div class="section-label" style="color:#15803d;margin-bottom:3px;">AI Recommended</div>${esc(intel.thesis_next_step)}</div>` : ''}
-${openTasks.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No open tasks.</p>' : `<div class="block">${openTasks.map(t => `
-  <div class="task">
-    <span>☐</span>
-    <span style="flex:1;">${esc(t.title)}</span>
-    ${t.assigned_to ? `<span class="badge badge-purple" style="font-size:10px;">${esc(t.assigned_to)}</span>` : ''}
-    ${t.due_date ? `<span class="task-due">${fmtDate(t.due_date)}</span>` : ''}
-  </div>`).join('')}</div>`}
 
 <div class="footer">
   <span>Part Human CRM · ${esc(deal.company_name)}</span>
@@ -958,6 +1127,7 @@ ${openTasks.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No open tas
                   { id: 'nextsteps',  label: openTasks.length > 0 ? `Next Steps (${openTasks.length})` : 'Next Steps' },
                   { id: 'activities', label: 'Activity' },
                   { id: 'meetings',   label: meetings.length > 0 ? `Meetings (${meetings.length})` : 'Meetings' },
+                  { id: 'files',      label: allDealFiles.length > 0 ? `Files (${allDealFiles.length})` : 'Files' },
                   { id: 'research',   label: 'Research' },
                   { id: 'contacts',   label: 'Contacts' },
                 ].map(t => (
@@ -1067,7 +1237,15 @@ ${openTasks.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No open tas
                   {/* Manual next steps — shown first */}
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
                     <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em' }}>My Next Steps</span>
-                    <button className="btn btn-secondary btn-xs" onClick={() => setAddingTask(a => !a)}>+ Add Step</button>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      {autoRefreshing && (
+                        <span style={{ fontSize: 10, color: '#7c3aed', display: 'flex', alignItems: 'center', gap: 4 }}>
+                          <span style={{ display: 'inline-block', width: 7, height: 7, borderRadius: '50%', background: '#7c3aed', animation: 'pulse 1.2s ease-in-out infinite' }} />
+                          Updating AI insights…
+                        </span>
+                      )}
+                      <button className="btn btn-secondary btn-xs" onClick={() => setAddingTask(a => !a)}>+ Add Step</button>
+                    </div>
                   </div>
 
                   {addingTask && (
@@ -1093,43 +1271,174 @@ ${openTasks.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No open tas
                   )}
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: tasks.length > 0 ? 20 : 0 }}>
                     {tasks.map(t => {
-                      const overdue = !t.completed && t.due_date && new Date(t.due_date) < new Date();
-                      const reminded = t.id && hasReminder(t.id);
+                      const overdue    = !t.completed && t.due_date && new Date(t.due_date) < new Date();
+                      const reminded   = t.id && hasReminder(t.id);
+                      const isExpanded = expandedTaskId === t.id && notifyPromptTaskId !== t.id;
+                      const isNotify   = notifyPromptTaskId === t.id;
+                      const files      = taskFiles[t.id] || [];
+                      const sentEntry  = t.review_chain?.filter(e => e.type === 'sent').at(-1);
                       return (
-                        <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: t.completed ? 'var(--surface)' : overdue ? '#fef2f2' : 'var(--surface)', borderRadius: 6, border: `1px solid ${overdue && !t.completed ? '#fca5a5' : 'var(--border)'}`, opacity: t.completed ? 0.6 : 1 }}>
-                          <input type="checkbox" checked={t.completed} onChange={() => toggleTask(t)} style={{ cursor: 'pointer', flexShrink: 0 }} />
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <span style={{ fontSize: 13, textDecoration: t.completed ? 'line-through' : 'none', color: t.completed ? 'var(--text-muted)' : 'var(--text)' }}>{t.title}</span>
-                            <div style={{ display: 'flex', gap: 6, marginTop: 2, alignItems: 'center', flexWrap: 'wrap' }}>
-                              {t.due_date && <span style={{ fontSize: 11, color: overdue && !t.completed ? '#b91c1c' : 'var(--text-faint)', fontWeight: overdue && !t.completed ? 700 : 400 }}>{overdue && !t.completed ? '⚠ ' : ''}{t.due_date}</span>}
-                              {t.assigned_to && <span style={{ fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 3, background: t.assigned_to === 'Mike' ? '#f3e8ff' : '#eff6ff', color: t.assigned_to === 'Mike' ? '#7c3aed' : '#1d4ed8' }}>{t.assigned_to}</span>}
-                              {reminded && <span style={{ fontSize: 10, color: '#f59e0b' }}>🔔</span>}
-                            </div>
-                          </div>
-                          {!t.completed && t.due_date && t.id && (
-                            <button
-                              title={reminded ? 'Cancel reminder' : 'Set reminder'}
-                              onClick={async () => {
-                                if (reminded) {
-                                  clearReminder(t.id);
+                        <div key={t.id} style={{ borderRadius: 6, border: `1px solid ${isNotify ? '#fde68a' : overdue && !t.completed ? '#fca5a5' : 'var(--border)'}`, overflow: 'hidden', opacity: t.completed ? 0.6 : 1 }}>
+                          {/* ── Main row ── */}
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: isNotify ? '#fffbeb' : overdue && !t.completed ? '#fef2f2' : 'var(--surface)' }}>
+                            <input
+                              type="checkbox"
+                              checked={t.completed}
+                              onChange={() => {
+                                if (t.completed) {
+                                  // Un-completing: no prompt, just toggle
+                                  toggleTask(t);
+                                  setNotifyPromptTaskId(null);
                                 } else {
-                                  const ok = await requestAndSave({
-                                    id: t.id,
-                                    title: t.title,
-                                    company: deal.company_name,
-                                    assigned_to: t.assigned_to,
-                                    due_date: t.due_date,
-                                  });
-                                  if (!ok) alert('Enable browser notifications to set reminders.');
+                                  // Completing: ask about notifying
+                                  setNotifyPromptTaskId(t.id);
+                                  setExpandedTaskId(null);
                                 }
-                                setTasks(ts => [...ts]);
                               }}
-                              style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, flexShrink: 0, padding: '0 2px', opacity: reminded ? 1 : 0.35 }}
-                            >
-                              🔔
-                            </button>
+                              style={{ cursor: 'pointer', flexShrink: 0 }}
+                            />
+                            <div style={{ flex: 1, minWidth: 0, cursor: 'pointer' }} onClick={() => { setExpandedTaskId(isExpanded ? null : t.id); setNotifyPromptTaskId(null); }}>
+                              <span style={{ fontSize: 13, textDecoration: t.completed ? 'line-through' : 'none', color: t.completed ? 'var(--text-muted)' : 'var(--text)' }}>{t.title}</span>
+                              <div style={{ display: 'flex', gap: 6, marginTop: 2, alignItems: 'center', flexWrap: 'wrap' }}>
+                                {t.due_date && <span style={{ fontSize: 11, color: overdue && !t.completed ? '#b91c1c' : 'var(--text-faint)', fontWeight: overdue && !t.completed ? 700 : 400 }}>{overdue && !t.completed ? '⚠ ' : ''}{t.due_date}</span>}
+                                {t.assigned_to && <span style={{ fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 3, background: t.assigned_to === 'Mike' ? '#f3e8ff' : '#eff6ff', color: t.assigned_to === 'Mike' ? '#7c3aed' : '#1d4ed8' }}>{t.assigned_to}</span>}
+                                {reminded && <span style={{ fontSize: 10, color: '#f59e0b' }}>🔔</span>}
+                                {sentEntry && (
+                                  <span style={{ fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 3, background: '#d1fae5', color: '#065f46' }}>
+                                    ✉ Sent {new Date(sentEntry.at).toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' })}
+                                  </span>
+                                )}
+                                {files.length > 0 && (
+                                  <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>📎 {files.length}</span>
+                                )}
+                              </div>
+                            </div>
+                            {/* expand toggle (hidden when notify prompt is open) */}
+                            {!isNotify && (
+                              <button
+                                onClick={() => { setExpandedTaskId(isExpanded ? null : t.id); setNotifyPromptTaskId(null); }}
+                                title={isExpanded ? 'Collapse' : 'Attach / Send'}
+                                style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 11, color: 'var(--text-faint)', flexShrink: 0, padding: '0 2px', lineHeight: 1 }}
+                              >
+                                {isExpanded ? '▲' : '▼'}
+                              </button>
+                            )}
+                            {!t.completed && t.due_date && t.id && (
+                              <button
+                                title={reminded ? 'Cancel reminder' : 'Set reminder'}
+                                onClick={async () => {
+                                  if (reminded) {
+                                    clearReminder(t.id);
+                                  } else {
+                                    const ok = await requestAndSave({
+                                      id: t.id,
+                                      title: t.title,
+                                      company: deal.company_name,
+                                      assigned_to: t.assigned_to,
+                                      due_date: t.due_date,
+                                    });
+                                    if (!ok) alert('Enable browser notifications to set reminders.');
+                                  }
+                                  setTasks(ts => [...ts]);
+                                }}
+                                style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, flexShrink: 0, padding: '0 2px', opacity: reminded ? 1 : 0.35 }}
+                              >
+                                🔔
+                              </button>
+                            )}
+                            <button onClick={() => removeTask(t.id)} style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 14, flexShrink: 0, padding: '0 2px' }}>×</button>
+                          </div>
+
+                          {/* ── Notify client? prompt (appears when checkbox is checked) ── */}
+                          {isNotify && (
+                            <div style={{ padding: '10px 14px', background: '#fffbeb', borderTop: '1px solid #fde68a', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                              <span style={{ fontSize: 12, fontWeight: 600, color: '#92400e', flex: 1, minWidth: 120 }}>Notify the client this is done?</span>
+                              <div style={{ display: 'flex', gap: 8 }}>
+                                <button
+                                  onClick={() => {
+                                    const contact = mergedContacts.find(c => c.is_primary) || mergedContacts[0];
+                                    if (!contact?.email) {
+                                      alert('No email found — add a contact with an email on the Contacts tab.');
+                                      return;
+                                    }
+                                    const firstName = contact.name?.split(' ')[0] || contact.name || 'there';
+                                    const fileLinks = files.map(f => `${f.name}: ${f.url}`).join('\n');
+                                    const fileNote = fileLinks
+                                      ? `\n\nI've also attached the following for your reference:\n${fileLinks}`
+                                      : '';
+                                    setComposeEmail({ to: contact.email, toName: contact.name });
+                                    setComposeTaskId(t.id);
+                                    setNotifyCompleteAfterSend(true);
+                                    setComposeDraft({
+                                      subject: `Quick update — ${deal.company_name}`,
+                                      body: `Hi ${firstName},\n\nJust a quick note to let you know I've completed the following:\n\n"${t.title}"\n\nLet me know if you have any questions or if there's anything else you'd like to discuss.${fileNote}\n\nBest,\nPete`,
+                                    });
+                                  }}
+                                  style={{ fontSize: 11, fontWeight: 700, padding: '5px 13px', borderRadius: 6, border: 'none', background: '#f59e0b', color: '#fff', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                                >
+                                  ✉ Yes, send email
+                                </button>
+                                <button
+                                  onClick={() => { toggleTask(t); setNotifyPromptTaskId(null); }}
+                                  style={{ fontSize: 11, fontWeight: 600, padding: '5px 12px', borderRadius: 6, border: '1px solid #fde68a', background: '#fff', color: '#92400e', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                                >
+                                  No, just done
+                                </button>
+                                <button
+                                  onClick={() => setNotifyPromptTaskId(null)}
+                                  style={{ background: 'none', border: 'none', color: '#b45309', cursor: 'pointer', fontSize: 15, padding: '0 2px', lineHeight: 1 }}
+                                  title="Cancel"
+                                >×</button>
+                              </div>
+                            </div>
                           )}
-                          <button onClick={() => removeTask(t.id)} style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 14, flexShrink: 0, padding: '0 2px' }}>×</button>
+
+                          {/* ── Expanded attachment + send panel (hidden when notify prompt is open) ── */}
+                          {isExpanded && (
+                            <div style={{ padding: '8px 12px 10px 36px', background: '#f8fafc', borderTop: '1px solid var(--border)' }}>
+                              {/* File list */}
+                              {files.map(f => (
+                                <div key={f.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '3px 0', fontSize: 12 }}>
+                                  <a href={f.url} target="_blank" rel="noopener noreferrer" style={{ color: '#3b82f6', textDecoration: 'none', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                    📎 {f.name}
+                                  </a>
+                                  <span style={{ fontSize: 11, color: '#9ca3af', flexShrink: 0 }}>{(f.size / 1024).toFixed(0)} KB</span>
+                                  <button
+                                    onClick={() => handleTaskFileDelete(t.id, f.id, f.storage_path)}
+                                    style={{ background: 'none', border: 'none', color: '#9ca3af', cursor: 'pointer', fontSize: 13, padding: 0, flexShrink: 0 }}
+                                  >×</button>
+                                </div>
+                              ))}
+                              {/* Action buttons */}
+                              <div style={{ display: 'flex', gap: 8, marginTop: files.length ? 8 : 2 }}>
+                                <label style={{ cursor: 'pointer', fontSize: 11, fontWeight: 600, padding: '4px 10px', borderRadius: 5, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text-muted)', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                                  {uploadingTaskId === t.id ? 'Uploading…' : '📎 Attach'}
+                                  <input
+                                    type="file"
+                                    style={{ display: 'none' }}
+                                    disabled={uploadingTaskId === t.id}
+                                    onChange={e => { const f = e.target.files[0]; if (f) handleTaskFileUpload(t.id, f); e.target.value = ''; }}
+                                  />
+                                </label>
+                                <button
+                                  onClick={() => {
+                                    const contact = mergedContacts.find(c => c.is_primary) || mergedContacts[0];
+                                    if (!contact?.email) {
+                                      alert('No email address found — add a contact with an email on the Contacts tab.');
+                                      return;
+                                    }
+                                    const fileLinks = files.map(f => `${f.name}: ${f.url}`).join('\n');
+                                    setComposeEmail({ to: contact.email, toName: contact.name });
+                                    setComposeTaskId(t.id);
+                                    setComposeDraft({ subject: t.title, body: fileLinks ? `\n\nAttachments:\n${fileLinks}` : '' });
+                                  }}
+                                  style={{ fontSize: 11, fontWeight: 600, padding: '4px 10px', borderRadius: 5, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text-muted)', cursor: 'pointer' }}
+                                >
+                                  ✉ Send
+                                </button>
+                              </div>
+                            </div>
+                          )}
                         </div>
                       );
                     })}
@@ -1477,6 +1786,86 @@ ${openTasks.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No open tas
                     {savingNotes ? 'Saving…' : 'Save Notes'}
                   </button>
                 </div>
+                </div>
+              )}
+
+              {/* ── Files ── */}
+              {tab === 'files' && (
+                <div>
+                  {/* Drop zone */}
+                  <div
+                    onDragOver={e => { if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); setFilesTabDrop(true); } }}
+                    onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget)) setFilesTabDrop(false); }}
+                    onDrop={e => {
+                      e.preventDefault();
+                      setFilesTabDrop(false);
+                      const file = e.dataTransfer.files?.[0];
+                      if (file) handleDealFileUpload(file);
+                    }}
+                    style={{ position: 'relative', border: `2px dashed ${filesTabDrop ? 'var(--accent)' : 'var(--border)'}`, borderRadius: 10, padding: '20px 16px', textAlign: 'center', marginBottom: 20, background: filesTabDrop ? 'color-mix(in srgb, var(--accent) 6%, transparent)' : 'var(--surface)', transition: 'all .15s' }}
+                  >
+                    <div style={{ fontSize: 22, marginBottom: 4 }}>📁</div>
+                    <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '0 0 8px' }}>
+                      {filesTabDrop ? 'Drop to upload' : 'Drop files here or click to browse'}
+                    </p>
+                    <label style={{ cursor: 'pointer', fontSize: 11, fontWeight: 700, padding: '5px 14px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text-muted)', display: 'inline-block' }}>
+                      {uploadingDealFile ? 'Uploading…' : '+ Add File'}
+                      <input
+                        type="file"
+                        style={{ display: 'none' }}
+                        disabled={uploadingDealFile}
+                        onChange={e => { const f = e.target.files?.[0]; if (f) handleDealFileUpload(f); e.target.value = ''; }}
+                      />
+                    </label>
+                    <p style={{ fontSize: 10, color: 'var(--text-faint)', margin: '8px 0 0' }}>
+                      All files are included in AI thesis builds
+                    </p>
+                  </div>
+
+                  {/* File list */}
+                  {allDealFiles.length === 0 ? (
+                    <p style={{ fontSize: 12, color: 'var(--text-faint)', textAlign: 'center', padding: '8px 0' }}>
+                      No files yet. Upload documents, briefs, or proposals above.
+                    </p>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      {allDealFiles.map(f => (
+                        <div key={`${f._source}-${f.id}`} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 7 }}>
+                          <span style={{ fontSize: 18, flexShrink: 0 }}>
+                            {/pdf/i.test(f.mime_type) ? '📄' : /image/i.test(f.mime_type) ? '🖼' : /word|doc/i.test(f.mime_type) ? '📝' : /sheet|excel|csv/i.test(f.mime_type) ? '📊' : '📎'}
+                          </span>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <a href={f.url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 13, fontWeight: 500, color: 'var(--text)', textDecoration: 'none', display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {f.name}
+                            </a>
+                            <div style={{ display: 'flex', gap: 8, marginTop: 2, alignItems: 'center' }}>
+                              {f.size > 0 && <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>{(f.size / 1024).toFixed(0)} KB</span>}
+                              {f.task_title && (
+                                <span style={{ fontSize: 10, color: '#7c3aed', background: '#f5f3ff', padding: '1px 6px', borderRadius: 3, fontWeight: 600 }}>
+                                  ↳ {f.task_title.length > 40 ? f.task_title.slice(0, 40) + '…' : f.task_title}
+                                </span>
+                              )}
+                              {!f.task_title && (
+                                <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>Deal file</span>
+                              )}
+                            </div>
+                          </div>
+                          {f._source === 'deal' && (
+                            <button
+                              onClick={() => handleDealFileDelete(f.id, f.storage_path)}
+                              style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 15, flexShrink: 0, padding: '0 2px' }}
+                            >×</button>
+                          )}
+                          {f._source === 'task' && (
+                            <button
+                              onClick={() => handleTaskFileDelete(f.task_id, f.id, f.storage_path)}
+                              style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 15, flexShrink: 0, padding: '0 2px' }}
+                            >×</button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -2093,8 +2482,9 @@ ${openTasks.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No open tas
           const importErrors = [];
 
           // Re-fetch from DB so the meeting list is always in sync
+          let updatedMeetings = null;
           try {
-            const updatedMeetings = await fetchDealMeetings(deal.id);
+            updatedMeetings = await fetchDealMeetings(deal.id);
             setMeetings(updatedMeetings);
           } catch (e) {
             importErrors.push('Meeting fetch failed: ' + e.message);
@@ -2129,6 +2519,9 @@ ${openTasks.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No open tas
           if (importErrors.length > 0) {
             alert('Import issues:\n\n' + importErrors.join('\n\n'));
           }
+
+          // New meeting = new context → refresh AI next steps in background
+          silentRefreshThesis(updatedMeetings || undefined);
 
           setShowTranscriptImporter(false);
           setInitialTranscript('');
@@ -2212,7 +2605,16 @@ ${openTasks.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No open tas
             </span>
             <div style={{ display: 'flex', gap: 8 }}>
               <button
-                onClick={() => setComposeEmail(null)}
+                onClick={() => {
+                  setComposeEmail(null);
+                  // Always clear task association — otherwise the next unrelated send
+                  // would call markDealTaskSent on the wrong task
+                  setComposeTaskId(null);
+                  if (notifyCompleteAfterSend) {
+                    setNotifyCompleteAfterSend(false);
+                    // keep notifyPromptTaskId so user can re-trigger
+                  }
+                }}
                 style={{ fontSize: 12, fontWeight: 600, padding: '6px 14px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-muted)', cursor: 'pointer' }}
               >
                 Discard

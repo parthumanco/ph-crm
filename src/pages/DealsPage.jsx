@@ -4,7 +4,7 @@ import {
   ACTIVE_STAGES, CLOSED_STAGES,
   stageColor, stageLabel, dealValue, fmt$, daysSince,
 } from '../lib/deals';
-import { upsertProject, buildTimelineFromParsed, bulkInsertMilestones, bulkInsertTasks, migrateDealMeetingsToProject } from '../lib/projects';
+import { upsertProject, buildTimelineFromParsed, bulkInsertMilestones, bulkInsertTasks, migrateDealMeetingsToProject, migrateDealTasksToProject } from '../lib/projects';
 import DealDetailModal from '../components/DealDetailModal';
 import ProposalImporter from '../components/ProposalImporter';
 import TranscriptImporter from '../components/TranscriptImporter';
@@ -230,8 +230,11 @@ export default function DealsPage({ refreshKey = 0, targetDealId = null, onTarge
         start_date:  today,
         source_deal_id: deal.id,
       });
-      // Migrate any deal meetings into the new project's Meetings tab
-      if (deal.id) await migrateDealMeetingsToProject(deal.id, proj.id);
+      // Migrate any deal meetings + tasks into the new project
+      if (deal.id) {
+        await migrateDealMeetingsToProject(deal.id, proj.id);
+        await migrateDealTasksToProject(deal.id, proj.id).catch(e => console.warn('Task migration:', e.message));
+      }
       setWonToast(proj.name || deal.company_name);
       setTimeout(() => setWonToast(null), 5000);
     } catch (e) {
@@ -346,8 +349,11 @@ export default function DealsPage({ refreshKey = 0, targetDealId = null, onTarge
       if (msRows.length > 0) await bulkInsertMilestones(msRows);
       if (taskRows.length > 0) await bulkInsertTasks(taskRows);
 
-      // 3. Migrate any deal meetings over to the new project
-      if (deal.id) await migrateDealMeetingsToProject(deal.id, proj.id);
+      // 3. Migrate any deal meetings + tasks over to the new project
+      if (deal.id) {
+        await migrateDealMeetingsToProject(deal.id, proj.id);
+        await migrateDealTasksToProject(deal.id, proj.id).catch(e => console.warn('Task migration:', e.message));
+      }
 
       // 4. Show success toast
       setWonToast(proj.name || deal.company_name);

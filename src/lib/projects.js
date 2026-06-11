@@ -765,6 +765,95 @@ export async function migrateDealMeetingsToProject(dealId, projectId) {
   if (error) throw new Error(error.message);
 }
 
+// Migrate deal tasks (with files + review_chain) to project_tasks when a deal is won.
+// Tasks land at the top level (milestone_id = null) so they're visible in the project.
+export async function migrateDealTasksToProject(dealId, projectId) {
+  // 1. Fetch deal tasks
+  const { data: dealTasks, error: tErr } = await supabase
+    .from('tasks')
+    .select('*')
+    .eq('deal_id', dealId);
+  if (tErr) throw new Error(tErr.message);
+  if (!dealTasks?.length) return;
+
+  // 2. Fetch associated files
+  const taskIds = dealTasks.map(t => t.id);
+  const { data: dealFiles } = await supabase
+    .from('deal_task_files')
+    .select('*')
+    .in('task_id', taskIds);
+  const filesByTask = {};
+  (dealFiles || []).forEach(f => {
+    if (!filesByTask[f.task_id]) filesByTask[f.task_id] = [];
+    filesByTask[f.task_id].push(f);
+  });
+
+  // 3. Insert as project_tasks
+  const now = new Date().toISOString();
+  const rows = dealTasks.map((t, i) => ({
+    project_id:    projectId,
+    milestone_id:  null,
+    title:         t.title,
+    assigned_to:   t.assigned_to || null,
+    due_date:      t.due_date || null,
+    completed:     t.completed || false,
+    completed_at:  t.completed_at || null,
+    review_chain:  t.review_chain || [],
+    order_index:   i,
+    created_at:    now,
+    source_deal_task_id: t.id,
+  }));
+  let inserted = null;
+  const { data: ins1, error: iErr } = await supabase
+    .from('project_tasks')
+    .insert(rows)
+    .select('id, source_deal_task_id');
+  if (iErr) {
+    // source_deal_task_id column may not exist yet — retry without it so tasks still migrate
+    console.warn('migrateDealTasksToProject: retrying without source_deal_task_id:', iErr.message);
+    const rowsWithoutSource = rows.map(({ source_deal_task_id, ...r }) => r);
+    const { data: ins2, error: iErr2 } = await supabase
+      .from('project_tasks')
+      .insert(rowsWithoutSource)
+      .select('id');
+    if (iErr2) {
+      console.warn('migrateDealTasksToProject: insert failed entirely:', iErr2.message);
+      return; // can't proceed without task IDs
+    }
+    inserted = ins2; // no source_deal_task_id mapping available — file copy will be skipped
+  } else {
+    inserted = ins1;
+  }
+
+  // 4. Copy files to project_files for each migrated task
+  // Requires source_deal_task_id mapping; skipped if fallback insert was used
+  if (inserted?.length) {
+    const idMap = {};
+    inserted.forEach(r => { if (r.source_deal_task_id) idMap[r.source_deal_task_id] = r.id; });
+    const fileRows = [];
+    Object.entries(filesByTask).forEach(([dealTaskId, files]) => {
+      const projTaskId = idMap[dealTaskId];
+      if (!projTaskId) return;
+      files.forEach(f => {
+        fileRows.push({
+          project_id:   projectId,
+          task_id:      projTaskId,
+          name:         f.name,
+          size:         f.size,
+          mime_type:    f.mime_type,
+          storage_path: f.storage_path,
+          url:          f.url,
+          created_at:   now,
+        });
+      });
+    });
+    if (fileRows.length) {
+      const { error: fErr } = await supabase.from('project_files').insert(fileRows);
+      if (fErr) console.warn('migrateDealTasksToProject: file copy failed:', fErr.message);
+    }
+  }
+}
+
 export async function generateProposalFromMeetings(meetings, companyName, startDate) {
   const key = import.meta.env.VITE_ANTHROPIC_API_KEY;
   if (!key) throw new Error('No API key configured');

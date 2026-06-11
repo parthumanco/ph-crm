@@ -142,3 +142,78 @@ export async function deleteTask(id) {
   const { error } = await supabase.from('tasks').delete().eq('id', id);
   if (error) throw new Error(error.message);
 }
+
+// ── Deal Files (deal-level, not tied to a task) ───────────────────────────────
+
+export async function uploadDealFile(dealId, file) {
+  const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+  const path = `deal-files/${dealId}/${Date.now()}-${safeName}`;
+  const { error: storageErr } = await supabase.storage
+    .from('project-files')
+    .upload(path, file, { contentType: file.type });
+  if (storageErr) throw new Error(storageErr.message);
+  const { data: { publicUrl } } = supabase.storage.from('project-files').getPublicUrl(path);
+  const { data, error } = await supabase
+    .from('deal_files')
+    .insert({ deal_id: dealId, name: file.name, size: file.size, mime_type: file.type, storage_path: path, url: publicUrl })
+    .select().single();
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+export async function fetchDealFiles(dealId) {
+  const { data, error } = await supabase
+    .from('deal_files')
+    .select('*')
+    .eq('deal_id', dealId)
+    .order('created_at', { ascending: false });
+  if (error) throw new Error(error.message);
+  return data || [];
+}
+
+export async function deleteDealFile(id, storagePath) {
+  if (storagePath) await supabase.storage.from('project-files').remove([storagePath]);
+  const { error } = await supabase.from('deal_files').delete().eq('id', id);
+  if (error) throw new Error(error.message);
+}
+
+// ── Deal Task Files ────────────────────────────────────────────────────────────
+
+export async function uploadDealTaskFile(taskId, file) {
+  const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+  const path = `deal-tasks/${taskId}/${Date.now()}-${safeName}`;
+  const { error: storageErr } = await supabase.storage
+    .from('project-files')
+    .upload(path, file, { contentType: file.type });
+  if (storageErr) throw new Error(storageErr.message);
+  const { data: { publicUrl } } = supabase.storage.from('project-files').getPublicUrl(path);
+  const { data, error } = await supabase
+    .from('deal_task_files')
+    .insert({ task_id: taskId, name: file.name, size: file.size, mime_type: file.type, storage_path: path, url: publicUrl })
+    .select().single();
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+export async function fetchDealTaskFiles(taskIds) {
+  if (!taskIds.length) return [];
+  const { data, error } = await supabase.from('deal_task_files').select('*').in('task_id', taskIds);
+  if (error) throw new Error(error.message);
+  return data || [];
+}
+
+export async function deleteDealTaskFile(id, storagePath) {
+  if (storagePath) await supabase.storage.from('project-files').remove([storagePath]);
+  const { error } = await supabase.from('deal_task_files').delete().eq('id', id);
+  if (error) throw new Error(error.message);
+}
+
+export async function markDealTaskSent(taskId, sentBy = 'Pete') {
+  const { data, error: fetchErr } = await supabase.from('tasks').select('review_chain').eq('id', taskId).single();
+  if (fetchErr) console.warn('markDealTaskSent: could not fetch existing chain:', fetchErr.message);
+  const chain = Array.isArray(data?.review_chain) ? data.review_chain : [];
+  const updated = [...chain, { type: 'sent', by: sentBy, at: new Date().toISOString() }];
+  const { error } = await supabase.from('tasks').update({ review_chain: updated }).eq('id', taskId);
+  if (error) throw new Error(error.message);
+  return updated;
+}
