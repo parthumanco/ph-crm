@@ -1448,6 +1448,88 @@ export async function generateQuickNextStep(companyName, noteText, dealNotes = '
   return text.trim();
 }
 
+// ── Document generation ───────────────────────────────────────────────────────
+
+const PH_VOICE = `You are Pete Andrews, Managing Partner at Part Human — a brand strategy and design firm based in Andover, MA.
+Part Human helps companies at critical inflection points clarify their market position, build their brand, and go to market with intention.
+
+Voice principles:
+- Write like someone who actually listened and has a clear, specific POV about this client
+- Confident without arrogance. Direct without being blunt.
+- Use first-person plural: "we", "our approach", "what we heard" — never "I"
+- Zero generic agency language: no "synergy", "holistic", "leverage", "utilize", "cutting-edge", "best-in-class"
+- Emotional AND logical — connect brand to business outcomes the client cares about
+- Reference the client's specific situation, not generic placeholders
+- Write like you're pitching to someone smart who has seen a hundred generic decks and is done with them`;
+
+export async function generateDocumentSections(type, dealContext) {
+  const typeInstructions = {
+    proposal: {
+      label: 'Proposal',
+      instructions: `Generate a Proposal document. Return a JSON object with these exact keys:
+- "understanding": 2–3 paragraphs. Start with the client's specific situation. Show you understand what's at stake. Use emotional and logical framing. Do NOT use a header in the text — just write the paragraphs.
+- "strategic_approach": 1–2 paragraphs about Part Human's specific approach for this engagement. What methodology, what principles, why it fits this client.
+- "objectives": array of 6–9 strings (bullet points). Start each with a verb. Specific to this client, not generic.
+- "outcomes": array of 4–6 strings (bullet points). What will the client have at the end. Concrete and tangible.
+- "phases": array of phase objects — each has "title" (e.g. "Sprint 1: Brand Strategy"), "duration" (e.g. "Weeks 1–2"), "deliverables" (array of strings). Generate 2–3 phases appropriate for the scope.
+- "investment": 1–2 sentences framing the investment — not the price itself, but the value and the engagement type.
+- "next_steps": 1–2 sentences. Clear, specific, action-oriented.`,
+    },
+    goo: {
+      label: 'Goals & Objectives',
+      instructions: `Generate a Goals, Objectives & Outcomes document. This is a "napkin note" — tight, direct, written in a first-person plural voice that shows you listened and have a clear POV. NOT a formal proposal. Return a JSON object with these exact keys:
+- "what_we_heard": 2–3 paragraphs. Narrate back what you understand about their situation — with insight added. Show you see things they may not have named yet. Direct, slightly provocative.
+- "the_goal": SINGLE sentence. The clearest possible statement of what we're trying to accomplish together. Should make the client think "yes, exactly."
+- "objectives": array of 4–6 objects — each has "title" (short, punchy, starts with a verb) and "description" (1–2 sentences of context).
+- "outcomes": array of 4–6 strings. What they'll have when this phase is done. Concrete.
+- "what_this_is_not": 2–4 sentences. Clear scope guardrails. What you're explicitly NOT doing yet.
+- "next_step": 1 sentence. Singular, concrete next action.`,
+    },
+    sow: {
+      label: 'Statement of Work',
+      instructions: `Generate a Statement of Work document. This is professional and specific — it defines the work, not the strategy. Return a JSON object with these exact keys:
+- "goals": 1–2 paragraphs about the project goals and what this SOW accomplishes.
+- "approach": 1 paragraph about the overall approach/methodology for this engagement.
+- "deliverables": array of category objects — each has "category" (section title like "Brand Strategy", "Website Design", "Launch") and "items" (array of specific deliverable strings). Generate 3–6 categories appropriate for the scope.
+- "timeline": 1 sentence about overall estimated duration.
+- "start_date": 1 sentence about when work begins.
+- "payment_schedule": 1–2 sentences about payment structure (e.g. "Split into two equal payments of 50%. First payment to commence work, second upon project completion.").`,
+    },
+  };
+
+  const inst = typeInstructions[type];
+  if (!inst) throw new Error(`No AI generation for document type: ${type}`);
+
+  const system = `${PH_VOICE}
+
+You are generating a ${inst.label} document.
+${inst.instructions}
+
+CRITICAL: Return ONLY valid JSON — no markdown fences, no explanation, no preamble. Just the raw JSON object.`;
+
+  const data = await withTimeout(
+    callClaude({
+      model: 'claude-sonnet-4-5-20251101',
+      max_tokens: 4000,
+      system,
+      messages: [{
+        role: 'user',
+        content: `Generate the ${inst.label} document sections based on this deal context:\n\n${dealContext}`,
+      }],
+    }),
+    60000
+  );
+
+  const raw = (data.content || []).find(b => b.type === 'text')?.text || '';
+  // Strip any markdown fences if model added them despite instructions
+  const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+  try {
+    return JSON.parse(cleaned);
+  } catch (e) {
+    throw new Error(`Document generation returned invalid JSON: ${cleaned.slice(0, 200)}`);
+  }
+}
+
 export async function generateRejectionResponse(taskTitle, projectName, rejectionNotes) {
   const data = await withTimeout(
     callClaude({

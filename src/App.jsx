@@ -10,6 +10,7 @@ import WeeklyReportPage from './pages/WeeklyReportPage';
 import ChatPage from './pages/ChatPage';
 import SettingsPage from './pages/SettingsPage';
 import OldGoldPage from './pages/OldGoldPage';
+import DocumentsPage from './pages/DocumentsPage';
 import { loadIcp, DEFAULT_ICP, loadTeamMembers, DEFAULT_TEAM_MEMBERS } from './lib/settings';
 import { checkAndFireReminders } from './lib/reminders';
 
@@ -24,9 +25,11 @@ const NAV = [
   { divider: true },
   { id: 'discover', label: 'Find New Companies',  icon: '🧭' },
   { id: 'signals',  label: 'Watch List',           icon: '🌡️' },
-  { id: 'chat',     label: 'Little Stevie',       icon: '💬' },
+  { id: 'chat',      label: 'Little Stevie',      icon: '💬' },
   { divider: true },
-  { id: 'settings', label: 'Settings',            icon: '⚙️'  },
+  { id: 'documents', label: 'Documents',          icon: '📄' },
+  { divider: true },
+  { id: 'settings',  label: 'Settings',           icon: '⚙️'  },
   { id: 'support',  label: 'Support',             icon: '🎧' },
 ];
 
@@ -40,8 +43,9 @@ const PAGE_TITLES = {
   projects: { title: 'Projects',             sub: 'Timelines, milestones & deliverables' },
   discover: { title: 'Find New Companies',   sub: 'Find new companies to add to your watch list' },
   report:   { title: 'Weekly Outreach',      sub: 'AI briefing & draft outreach' },
-  chat:     { title: 'Little Stevie',        sub: 'Ask anything about your pipeline' },
-  settings: { title: 'Settings',             sub: 'ICP, team, billing rates & notifications' },
+  chat:      { title: 'Little Stevie',        sub: 'Ask anything about your pipeline' },
+  documents: { title: 'Documents',           sub: 'Proposals, SOWs, MSAs, MNDAs & Goals + Objectives' },
+  settings:  { title: 'Settings',            sub: 'ICP, team, billing rates & notifications' },
 };
 
 // Keeps a page mounted but invisible so background work (scans, report generation) isn't interrupted.
@@ -53,7 +57,7 @@ function PageSlot({ active, children }) {
   );
 }
 
-const VALID_PAGES = new Set(['clients','projects','deals','pipeline','report','oldgold','discover','signals','chat','settings','support']);
+const VALID_PAGES = new Set(['clients','projects','deals','pipeline','report','oldgold','discover','signals','chat','documents','settings','support']);
 
 function pageFromHash() {
   const h = window.location.hash.replace('#', '');
@@ -173,6 +177,9 @@ export default function App() {
         </PageSlot>
         <PageSlot active={page === 'chat'}>
           <ChatPage />
+        </PageSlot>
+        <PageSlot active={page === 'documents'}>
+          <DocumentsPage refreshKey={pageKeys.documents || 0} onNavigate={handleSetPage} />
         </PageSlot>
         <PageSlot active={page === 'settings'}>
           <SettingsPage icp={icp} onIcpSaved={setIcp} teamMembers={teamMembers} onTeamMembersSaved={setTeamMembers} />
