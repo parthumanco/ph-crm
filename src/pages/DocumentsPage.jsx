@@ -363,8 +363,30 @@ export default function DocumentsPage({ refreshKey = 0 }) {
         )}
       </div>
 
-      {/* ── EDITOR MODAL ─────────────────────────────────────────────────── */}
-      {editorDoc && (
+      {/* ── INLINE EDITOR — new documents generated from the form above ─── */}
+      {editorDoc && !editorDoc.id && (
+        <div style={{ marginBottom: 32 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+            <div style={{ height: 1, flex: 1, background: '#e5e7eb' }} />
+            <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.07em', color: '#9ca3af' }}>Generated Document</span>
+            <div style={{ height: 1, flex: 1, background: '#e5e7eb' }} />
+          </div>
+          <DocumentEditor
+            inline
+            doc={editorDoc}
+            dealContext={editorContext}
+            onClose={() => { setEditorDoc(null); setEditorContext(null); }}
+            onSaved={(saved, deletedId) => {
+              handleEditorSaved(saved, deletedId);
+              if (deletedId) { setEditorDoc(null); return; }
+              if (saved) setEditorDoc(saved); // keep inline but now has an id
+            }}
+          />
+        </div>
+      )}
+
+      {/* ── MODAL — reopening a saved document from the list below ───────── */}
+      {editorDoc && editorDoc.id && (
         <DocumentEditor
           doc={editorDoc}
           dealContext={editorContext}

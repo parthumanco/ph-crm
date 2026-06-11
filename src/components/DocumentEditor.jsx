@@ -856,7 +856,7 @@ function buildDocumentBody(doc, sections) {
 
 // ── Main DocumentEditor component ─────────────────────────────────────────────
 
-export default function DocumentEditor({ doc: initialDoc, onClose, onSaved, dealContext }) {
+export default function DocumentEditor({ doc: initialDoc, onClose, onSaved, dealContext, inline = false }) {
   const isNew = !initialDoc?.id;
   const [doc, setDoc]           = useState(initialDoc || { type: 'proposal', title: '', status: 'draft', sections: null });
   const [sections, setSections] = useState(initialDoc?.sections || defaultSections(initialDoc?.type || 'proposal'));
@@ -869,6 +869,7 @@ export default function DocumentEditor({ doc: initialDoc, onClose, onSaved, deal
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [savingToFiles, setSavingToFiles] = useState(false);
   const [fileSaveMsg, setFileSaveMsg]     = useState(null); // {ok, text}
+  const [savedFileUrl, setSavedFileUrl]   = useState(null); // URL of last company file snapshot
 
   const dt = docType(doc.type);
   const ds = docStatus(doc.status);
@@ -932,6 +933,21 @@ export default function DocumentEditor({ doc: initialDoc, onClose, onSaved, deal
       const saved = await upsertDocument({ ...doc, sections });
       setDoc(saved);
       onSaved?.(saved);
+      // Auto-save to company files whenever a company is linked
+      if (saved.company_name) {
+        try {
+          const bodyHtml = buildDocumentBody(saved, sections);
+          const fullHtml = `<!DOCTYPE html><html><head><meta charset="utf-8">
+<title>${escRaw(saved.title || 'Document')} — Part Human</title>
+<style>* { box-sizing: border-box; margin: 0; padding: 0; } body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 13px; color: #1a1a1a; line-height: 1.6; padding: 48px 56px; max-width: 860px; margin: 0 auto; }</style>
+</head><body>${bodyHtml}</body></html>`;
+          const fileRecord = await saveDocToCompanyFiles(saved.company_name, saved.title || 'document', saved.id, fullHtml);
+          setSavedFileUrl(fileRecord.url || null);
+        } catch (e) {
+          // File save failure is non-blocking — doc is already saved
+          console.warn('Company file auto-save failed:', e.message);
+        }
+      }
     } catch (e) {
       setSaveError(e.message);
     } finally {
@@ -1014,7 +1030,8 @@ ${bodyHtml}
 </style></head><body>
 ${bodyHtml}
 </body></html>`;
-      await saveDocToCompanyFiles(companyName, currentDoc.title || 'document', currentDoc.id, fullHtml);
+      const fileRecord = await saveDocToCompanyFiles(companyName, currentDoc.title || 'document', currentDoc.id, fullHtml);
+      setSavedFileUrl(fileRecord.url || null);
       setFileSaveMsg({ ok: true, text: `✓ Saved to ${companyName}'s company files.` });
     } catch (e) {
       setFileSaveMsg({ ok: false, text: `Failed: ${e.message}` });
@@ -1036,9 +1053,8 @@ ${bodyHtml}
     }
   };
 
-  return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.5)', zIndex: 1000, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '20px', overflowY: 'auto' }}>
-      <div style={{ background: '#fff', borderRadius: 14, width: '100%', maxWidth: 860, minHeight: '80vh', display: 'flex', flexDirection: 'column', boxShadow: '0 20px 60px rgba(0,0,0,.25)' }}>
+  const editorPanel = (
+    <div style={{ background: '#fff', borderRadius: inline ? 14 : 14, width: '100%', maxWidth: inline ? '100%' : 860, minHeight: inline ? 0 : '80vh', display: 'flex', flexDirection: 'column', boxShadow: inline ? '0 2px 16px rgba(0,0,0,.08)' : '0 20px 60px rgba(0,0,0,.25)', border: inline ? '1px solid #e5e7eb' : 'none' }}>
 
         {/* Header */}
         <div style={{ padding: '18px 24px 14px', borderBottom: '1px solid #f3f4f6', display: 'flex', gap: 12, alignItems: 'flex-start' }}>
@@ -1104,7 +1120,7 @@ ${bodyHtml}
             >
               ⬇ MD
             </button>
-            {doc.company_name && (
+            {doc.company_name && !inline && (
               <button
                 onClick={handleSaveToCompanyFiles}
                 disabled={savingToFiles}
@@ -1113,6 +1129,9 @@ ${bodyHtml}
               >
                 {savingToFiles ? 'Saving…' : '🏢 Save to Files'}
               </button>
+            )}
+            {inline && doc.company_name && savedFileUrl && (
+              <span style={{ fontSize: 11, color: '#059669', fontWeight: 600, padding: '7px 6px' }}>✓ Saved to {doc.company_name}</span>
             )}
             {doc.id && !confirmDelete && (
               <button onClick={() => setConfirmDelete(true)} style={{ padding: '7px 10px', borderRadius: 8, border: '1px solid #fecaca', background: '#fff', color: '#ef4444', fontSize: 12, cursor: 'pointer' }}>🗑</button>
@@ -1167,7 +1186,33 @@ ${bodyHtml}
             />
           )}
         </div>
+
+        {/* Inline rendered document — shown below editor after save */}
+        {inline && savedFileUrl && (
+          <div style={{ borderTop: '2px solid #f3f4f6', padding: '0' }}>
+            <div style={{ padding: '12px 24px 10px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#f9fafb' }}>
+              <span style={{ fontSize: 12, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '.06em' }}>
+                📄 Saved to {doc.company_name}'s Files
+              </span>
+              <a href={savedFileUrl} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: '#f97316', fontWeight: 600, textDecoration: 'none' }}>
+                Open full page ↗
+              </a>
+            </div>
+            <iframe
+              src={savedFileUrl}
+              title="Document preview"
+              style={{ width: '100%', height: 600, border: 'none', display: 'block' }}
+            />
+          </div>
+        )}
       </div>
+  );
+
+  if (inline) return editorPanel;
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.5)', zIndex: 1000, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '20px', overflowY: 'auto' }}>
+      {editorPanel}
     </div>
   );
 }
