@@ -1064,6 +1064,77 @@ ${openTasks.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No open tas
               {tab === 'nextsteps' && (
                 <div>
 
+                  {/* Manual next steps — shown first */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                    <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em' }}>My Next Steps</span>
+                    <button className="btn btn-secondary btn-xs" onClick={() => setAddingTask(a => !a)}>+ Add Step</button>
+                  </div>
+
+                  {addingTask && (
+                    <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: 12, marginBottom: 12 }}>
+                      <input type="text" placeholder="What needs to happen next?" value={taskForm.title} onChange={e => setTaskForm(f => ({ ...f, title: e.target.value }))} style={{ width: '100%', fontSize: 12, marginBottom: 8 }} />
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
+                        <input type="date" value={taskForm.due_date} onChange={e => setTaskForm(f => ({ ...f, due_date: e.target.value }))} style={{ fontSize: 12 }} />
+                        <select value={taskForm.assigned_to} onChange={e => setTaskForm(f => ({ ...f, assigned_to: e.target.value }))} style={{ fontSize: 12 }}>
+                          {OWNERS.map(o => <option key={o} value={o}>{o}</option>)}
+                        </select>
+                      </div>
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        <button className="btn btn-primary btn-sm" onClick={submitTask} disabled={savingTask}>{savingTask ? 'Saving…' : 'Add'}</button>
+                        <button className="btn btn-ghost btn-sm" onClick={() => setAddingTask(false)}>Cancel</button>
+                      </div>
+                    </div>
+                  )}
+
+                  {tasks.length === 0 && !addingTask && !companyIntel?.thesis_next_step && (
+                    <p style={{ fontSize: 12, color: 'var(--text-faint)', textAlign: 'center', padding: '16px 0' }}>
+                      No next steps yet. Build a thesis to get AI recommendations, or add one manually.
+                    </p>
+                  )}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: tasks.length > 0 ? 20 : 0 }}>
+                    {tasks.map(t => {
+                      const overdue = !t.completed && t.due_date && new Date(t.due_date) < new Date();
+                      const reminded = t.id && hasReminder(t.id);
+                      return (
+                        <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: t.completed ? 'var(--surface)' : overdue ? '#fef2f2' : 'var(--surface)', borderRadius: 6, border: `1px solid ${overdue && !t.completed ? '#fca5a5' : 'var(--border)'}`, opacity: t.completed ? 0.6 : 1 }}>
+                          <input type="checkbox" checked={t.completed} onChange={() => toggleTask(t)} style={{ cursor: 'pointer', flexShrink: 0 }} />
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <span style={{ fontSize: 13, textDecoration: t.completed ? 'line-through' : 'none', color: t.completed ? 'var(--text-muted)' : 'var(--text)' }}>{t.title}</span>
+                            <div style={{ display: 'flex', gap: 6, marginTop: 2, alignItems: 'center', flexWrap: 'wrap' }}>
+                              {t.due_date && <span style={{ fontSize: 11, color: overdue && !t.completed ? '#b91c1c' : 'var(--text-faint)', fontWeight: overdue && !t.completed ? 700 : 400 }}>{overdue && !t.completed ? '⚠ ' : ''}{t.due_date}</span>}
+                              {t.assigned_to && <span style={{ fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 3, background: t.assigned_to === 'Mike' ? '#f3e8ff' : '#eff6ff', color: t.assigned_to === 'Mike' ? '#7c3aed' : '#1d4ed8' }}>{t.assigned_to}</span>}
+                              {reminded && <span style={{ fontSize: 10, color: '#f59e0b' }}>🔔</span>}
+                            </div>
+                          </div>
+                          {!t.completed && t.due_date && t.id && (
+                            <button
+                              title={reminded ? 'Cancel reminder' : 'Set reminder'}
+                              onClick={async () => {
+                                if (reminded) {
+                                  clearReminder(t.id);
+                                } else {
+                                  const ok = await requestAndSave({
+                                    id: t.id,
+                                    title: t.title,
+                                    company: deal.company_name,
+                                    assigned_to: t.assigned_to,
+                                    due_date: t.due_date,
+                                  });
+                                  if (!ok) alert('Enable browser notifications to set reminders.');
+                                }
+                                setTasks(ts => [...ts]);
+                              }}
+                              style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, flexShrink: 0, padding: '0 2px', opacity: reminded ? 1 : 0.35 }}
+                            >
+                              🔔
+                            </button>
+                          )}
+                          <button onClick={() => removeTask(t.id)} style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 14, flexShrink: 0, padding: '0 2px' }}>×</button>
+                        </div>
+                      );
+                    })}
+                  </div>
+
                   {/* AI-recommended next steps from thesis */}
                   {(companyIntel?.thesis_next_step || companyIntel?.entry_contact || companyIntel?.recommended_angle) && (
                     <div style={{ marginBottom: 20 }}>
@@ -1255,78 +1326,6 @@ ${openTasks.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No open tas
                     </div>
                   </div>
 
-                  {/* Manual next steps */}
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-                    <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em' }}>My Next Steps</span>
-                    <button className="btn btn-secondary btn-xs" onClick={() => setAddingTask(a => !a)}>+ Add Step</button>
-                  </div>
-
-                  {addingTask && (
-                    <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: 12, marginBottom: 12 }}>
-                      <input type="text" placeholder="What needs to happen next?" value={taskForm.title} onChange={e => setTaskForm(f => ({ ...f, title: e.target.value }))} style={{ width: '100%', fontSize: 12, marginBottom: 8 }} />
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
-                        <input type="date" value={taskForm.due_date} onChange={e => setTaskForm(f => ({ ...f, due_date: e.target.value }))} style={{ fontSize: 12 }} />
-                        <select value={taskForm.assigned_to} onChange={e => setTaskForm(f => ({ ...f, assigned_to: e.target.value }))} style={{ fontSize: 12 }}>
-                          {OWNERS.map(o => <option key={o} value={o}>{o}</option>)}
-                        </select>
-                      </div>
-                      <div style={{ display: 'flex', gap: 6 }}>
-                        <button className="btn btn-primary btn-sm" onClick={submitTask} disabled={savingTask}>{savingTask ? 'Saving…' : 'Add'}</button>
-                        <button className="btn btn-ghost btn-sm" onClick={() => setAddingTask(false)}>Cancel</button>
-                      </div>
-                    </div>
-                  )}
-
-                  {tasks.length === 0 && !addingTask && !companyIntel?.thesis_next_step && (
-                    <p style={{ fontSize: 12, color: 'var(--text-faint)', textAlign: 'center', padding: '16px 0' }}>
-                      No next steps yet. Build a thesis to get AI recommendations, or add one manually.
-                    </p>
-                  )}
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                    {tasks.map(t => {
-                      const overdue = !t.completed && t.due_date && new Date(t.due_date) < new Date();
-                      const reminded = t.id && hasReminder(t.id);
-                      return (
-                        <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: t.completed ? 'var(--surface)' : overdue ? '#fef2f2' : 'var(--surface)', borderRadius: 6, border: `1px solid ${overdue && !t.completed ? '#fca5a5' : 'var(--border)'}`, opacity: t.completed ? 0.6 : 1 }}>
-                          <input type="checkbox" checked={t.completed} onChange={() => toggleTask(t)} style={{ cursor: 'pointer', flexShrink: 0 }} />
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <span style={{ fontSize: 13, textDecoration: t.completed ? 'line-through' : 'none', color: t.completed ? 'var(--text-muted)' : 'var(--text)' }}>{t.title}</span>
-                            <div style={{ display: 'flex', gap: 6, marginTop: 2, alignItems: 'center', flexWrap: 'wrap' }}>
-                              {t.due_date && <span style={{ fontSize: 11, color: overdue && !t.completed ? '#b91c1c' : 'var(--text-faint)', fontWeight: overdue && !t.completed ? 700 : 400 }}>{overdue && !t.completed ? '⚠ ' : ''}{t.due_date}</span>}
-                              {t.assigned_to && <span style={{ fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 3, background: t.assigned_to === 'Mike' ? '#f3e8ff' : '#eff6ff', color: t.assigned_to === 'Mike' ? '#7c3aed' : '#1d4ed8' }}>{t.assigned_to}</span>}
-                              {reminded && <span style={{ fontSize: 10, color: '#f59e0b' }}>🔔</span>}
-                            </div>
-                          </div>
-                          {/* Reminder toggle */}
-                          {!t.completed && t.due_date && t.id && (
-                            <button
-                              title={reminded ? 'Cancel reminder' : 'Set reminder'}
-                              onClick={async () => {
-                                if (reminded) {
-                                  clearReminder(t.id);
-                                } else {
-                                  const ok = await requestAndSave({
-                                    id: t.id,
-                                    title: t.title,
-                                    company: deal.company_name,
-                                    assigned_to: t.assigned_to,
-                                    due_date: t.due_date,
-                                  });
-                                  if (!ok) alert('Enable browser notifications to set reminders.');
-                                }
-                                // force re-render
-                                setTasks(ts => [...ts]);
-                              }}
-                              style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, flexShrink: 0, padding: '0 2px', opacity: reminded ? 1 : 0.35 }}
-                            >
-                              🔔
-                            </button>
-                          )}
-                          <button onClick={() => removeTask(t.id)} style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 14, flexShrink: 0, padding: '0 2px' }}>×</button>
-                        </div>
-                      );
-                    })}
-                  </div>
                 </div>
               )}
 
