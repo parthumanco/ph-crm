@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { upsertDocument, deleteDocument, defaultSections, DOC_TYPES, DOC_STATUSES, SOW_STANDARD_TERMS, docType, docStatus } from '../lib/documents';
+import { upsertDocument, deleteDocument, defaultSections, DOC_TYPES, DOC_STATUSES, SOW_STANDARD_TERMS, docType, docStatus, saveDocToCompanyFiles } from '../lib/documents';
 import { generateDocumentSections } from '../lib/anthropic';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -719,6 +719,128 @@ function buildMndaHtml(doc, sections) {
 </div>`;
 }
 
+// ── Markdown builder ──────────────────────────────────────────────────────────
+
+function buildDocumentMarkdown(doc, sections) {
+  const s = sections || {};
+  const md = [];
+
+  md.push(`# ${doc.title || 'Untitled'}`);
+  md.push('');
+  if (doc.company_name) md.push(`**For:** ${doc.company_name}`);
+  md.push('**Prepared by:** Part Human');
+  md.push('');
+
+  const type = doc.type;
+
+  if (type === 'proposal') {
+    if (s.prepared_for) { md.push(`**Prepared for:** ${s.prepared_for}`); md.push(''); }
+    if (s.date)         { md.push(`**Date:** ${s.date}`); md.push(''); }
+    if (s.understanding) {
+      md.push('## Understanding of the Project'); md.push('');
+      md.push(s.understanding); md.push('');
+    }
+    if (s.strategic_approach) {
+      md.push('## Our Strategic Approach'); md.push('');
+      md.push(s.strategic_approach); md.push('');
+    }
+    const objs = (s.objectives || []).filter(o => String(o).trim());
+    if (objs.length) {
+      md.push('## Primary Objectives'); md.push('');
+      objs.forEach(o => md.push(`- ${String(o)}`)); md.push('');
+    }
+    const outs = (s.outcomes || []).filter(o => String(o).trim());
+    if (outs.length) {
+      md.push('## Expected Outcomes'); md.push('');
+      outs.forEach(o => md.push(`- ${String(o)}`)); md.push('');
+    }
+    const phases = (s.phases || []);
+    if (phases.length) {
+      md.push('## Sprint Breakdown'); md.push('');
+      phases.forEach(p => {
+        md.push(`### ${p.title || ''}${p.duration ? ` (${p.duration})` : ''}`);
+        (p.deliverables || []).forEach(d => md.push(`- ${String(d)}`));
+        md.push('');
+      });
+    }
+    if (s.investment) { md.push('## Investment'); md.push(''); md.push(s.investment); md.push(''); }
+    if (s.next_steps) { md.push('## Next Steps'); md.push(''); md.push(s.next_steps); md.push(''); }
+  } else if (type === 'goo') {
+    if (s.prepared_for) { md.push(`**Prepared for:** ${s.prepared_for}`); md.push(''); }
+    if (s.date)         { md.push(`**Date:** ${s.date}`); md.push(''); }
+    md.push('*This is the napkin, not the proposal — a quick check that we heard you right.*'); md.push('');
+    if (s.what_we_heard) { md.push('## What We Heard'); md.push(''); md.push(s.what_we_heard); md.push(''); }
+    if (s.the_goal)     { md.push('## The Goal'); md.push(''); md.push(`**${s.the_goal}**`); md.push(''); }
+    const objs = (s.objectives || []);
+    if (objs.length) {
+      md.push('## Objectives'); md.push('');
+      objs.forEach((o, i) => {
+        const obj = typeof o === 'object' ? o : { title: String(o), description: '' };
+        md.push(`**${i + 1}. ${obj.title || ''}**`);
+        if (obj.description) md.push(obj.description);
+        md.push('');
+      });
+    }
+    const outs = (s.outcomes || []).filter(o => String(o).trim());
+    if (outs.length) {
+      md.push('## Outcomes'); md.push('');
+      outs.forEach(o => md.push(`- ${String(o)}`)); md.push('');
+    }
+    if (s.what_this_is_not) { md.push('## What This Is Not'); md.push(''); md.push(s.what_this_is_not); md.push(''); }
+    if (s.next_step)        { md.push('## Next Step'); md.push(''); md.push(`**${s.next_step}**`); md.push(''); }
+  } else if (type === 'sow') {
+    if (s.prepared_for) { md.push(`**Prepared for:** ${s.prepared_for}`); md.push(''); }
+    if (s.date)         { md.push(`**Date:** ${s.date}`); md.push(''); }
+    if (s.goals)   { md.push('## Project Goals'); md.push(''); md.push(s.goals); md.push(''); }
+    if (s.approach){ md.push('## Approach'); md.push(''); md.push(s.approach); md.push(''); }
+    const delivs = (s.deliverables || []);
+    if (delivs.length) {
+      md.push('## Activities + Deliverables'); md.push('');
+      delivs.forEach(cat => {
+        md.push(`### ${cat.category || ''}`);
+        (cat.items || []).forEach(item => md.push(`- ${String(item)}`));
+        md.push('');
+      });
+    }
+    if (s.timeline || s.start_date) {
+      md.push('## Timeline'); md.push('');
+      if (s.timeline)    md.push(s.timeline);
+      if (s.start_date)  md.push(`**Start Date:** ${s.start_date}`);
+      md.push('');
+    }
+    if (s.cost || s.payment_schedule) {
+      md.push('## Investment'); md.push('');
+      if (s.cost)             md.push(`**Total:** ${s.cost}`);
+      if (s.payment_schedule) md.push(s.payment_schedule);
+      md.push('');
+    }
+    md.push('## Terms + Conditions'); md.push('');
+    SOW_STANDARD_TERMS.forEach(section => {
+      md.push(`### ${section.heading}`);
+      section.items.forEach((item, i) => md.push(`${i + 1}. ${item}`));
+      md.push('');
+    });
+  } else if (type === 'msa') {
+    md.push(`**Client:** ${s.client_name || '[CLIENT NAME]'}`);
+    md.push(`**Effective Date:** ${s.effective_date || '[DATE]'}`);
+    md.push('');
+    md.push('*The full MSA legal text is in the PDF export. Use that version for signatures.*');
+    md.push('');
+  } else if (type === 'mnda') {
+    md.push(`**Counterparty:** ${s.counterparty_name || '[COUNTERPARTY]'}`);
+    md.push(`**Effective Date:** ${s.effective_date || '[DATE]'}`);
+    md.push(`**Purpose:** ${s.purpose || ''}`);
+    md.push('');
+    md.push('*The full MNDA legal text is in the PDF export. Use that version for signatures.*');
+    md.push('');
+  }
+
+  md.push('---');
+  md.push(`*Prepared by Part Human · ${PH_ADDR}*`);
+
+  return md.join('\n');
+}
+
 // ── Build preview/export HTML body ────────────────────────────────────────────
 
 function buildDocumentBody(doc, sections) {
@@ -745,6 +867,8 @@ export default function DocumentEditor({ doc: initialDoc, onClose, onSaved, deal
   const [genError, setGenError]     = useState(null);
   const [deleting, setDeleting]     = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [savingToFiles, setSavingToFiles] = useState(false);
+  const [fileSaveMsg, setFileSaveMsg]     = useState(null); // {ok, text}
 
   const dt = docType(doc.type);
   const ds = docStatus(doc.status);
@@ -845,6 +969,60 @@ ${bodyHtml}
     win.document.close();
   };
 
+  const handleExportMarkdown = () => {
+    const mdStr = buildDocumentMarkdown(doc, sections);
+    const blob = new Blob([mdStr], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const safeName = (doc.title || 'document').replace(/[^a-zA-Z0-9 _-]/g, '').trim().replace(/\s+/g, '-') || 'document';
+    a.download = `${safeName}.md`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleSaveToCompanyFiles = async () => {
+    const companyName = doc.company_name;
+    if (!companyName) {
+      setFileSaveMsg({ ok: false, text: 'No company linked to this document. Save the document first and make sure it has a company name.' });
+      return;
+    }
+    setSavingToFiles(true);
+    setFileSaveMsg(null);
+    try {
+      // Save doc first if unsaved, to get an ID
+      let currentDoc = doc;
+      if (!currentDoc.id) {
+        if (!currentDoc.title.trim()) {
+          setFileSaveMsg({ ok: false, text: 'Please save the document first (it needs a title).' });
+          setSavingToFiles(false);
+          return;
+        }
+        currentDoc = await upsertDocument({ ...currentDoc, sections });
+        setDoc(currentDoc);
+        onSaved?.(currentDoc);
+      }
+      // Build the full HTML snapshot
+      const bodyHtml = buildDocumentBody(currentDoc, sections);
+      const fullHtml = `<!DOCTYPE html><html><head><meta charset="utf-8">
+<title>${(currentDoc.title || 'Document').replace(/</g, '&lt;')} — Part Human</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 13px; color: #1a1a1a; line-height: 1.6; padding: 48px 56px; max-width: 860px; margin: 0 auto; }
+</style></head><body>
+${bodyHtml}
+</body></html>`;
+      await saveDocToCompanyFiles(companyName, currentDoc.title || 'document', currentDoc.id, fullHtml);
+      setFileSaveMsg({ ok: true, text: `✓ Saved to ${companyName}'s company files.` });
+    } catch (e) {
+      setFileSaveMsg({ ok: false, text: `Failed: ${e.message}` });
+    } finally {
+      setSavingToFiles(false);
+    }
+  };
+
   const previewHtml = buildDocumentBody(doc, sections);
 
   const renderEditor = () => {
@@ -919,6 +1097,23 @@ ${bodyHtml}
             >
               ⬇ PDF
             </button>
+            <button
+              onClick={handleExportMarkdown}
+              title="Download Markdown"
+              style={{ padding: '7px 10px', borderRadius: 8, border: '1px solid #e5e7eb', background: '#fff', color: '#374151', fontSize: 12, cursor: 'pointer' }}
+            >
+              ⬇ MD
+            </button>
+            {doc.company_name && (
+              <button
+                onClick={handleSaveToCompanyFiles}
+                disabled={savingToFiles}
+                title={`Save to ${doc.company_name}'s company profile`}
+                style={{ padding: '7px 10px', borderRadius: 8, border: '1px solid #d1fae5', background: savingToFiles ? '#f9fafb' : '#f0fdf4', color: savingToFiles ? '#9ca3af' : '#059669', fontSize: 12, fontWeight: 600, cursor: savingToFiles ? 'default' : 'pointer', whiteSpace: 'nowrap' }}
+              >
+                {savingToFiles ? 'Saving…' : '🏢 Save to Files'}
+              </button>
+            )}
             {doc.id && !confirmDelete && (
               <button onClick={() => setConfirmDelete(true)} style={{ padding: '7px 10px', borderRadius: 8, border: '1px solid #fecaca', background: '#fff', color: '#ef4444', fontSize: 12, cursor: 'pointer' }}>🗑</button>
             )}
@@ -943,6 +1138,12 @@ ${bodyHtml}
         {genError && (
           <div style={{ margin: '12px 24px 0', padding: '10px 14px', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 8, fontSize: 13, color: '#92400e' }}>
             {genError}
+          </div>
+        )}
+        {fileSaveMsg && (
+          <div style={{ margin: '12px 24px 0', padding: '10px 14px', background: fileSaveMsg.ok ? '#f0fdf4' : '#fef2f2', border: `1px solid ${fileSaveMsg.ok ? '#bbf7d0' : '#fecaca'}`, borderRadius: 8, fontSize: 13, color: fileSaveMsg.ok ? '#065f46' : '#991b1b', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span>{fileSaveMsg.text}</span>
+            <button onClick={() => setFileSaveMsg(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, color: 'inherit', opacity: .6, lineHeight: 1 }}>×</button>
           </div>
         )}
 

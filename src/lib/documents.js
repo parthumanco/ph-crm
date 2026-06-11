@@ -19,16 +19,226 @@ export const docStatus = id => DOC_STATUSES.find(s => s.id === id) || DOC_STATUS
 
 // ── DB operations ─────────────────────────────────────────────────────────────
 
-export async function fetchDocuments({ dealId, companyId } = {}) {
+export async function fetchDocuments({ dealId, companyId, companyName } = {}) {
   let query = supabase
     .from('documents')
     .select('*')
     .order('updated_at', { ascending: false });
-  if (dealId)    query = query.eq('deal_id', dealId);
-  if (companyId) query = query.eq('company_id', companyId);
+  if (dealId)      query = query.eq('deal_id', dealId);
+  if (companyId)   query = query.eq('company_id', companyId);
+  if (companyName) query = query.ilike('company_name', companyName);
   const { data, error } = await query;
   if (error) throw new Error(error.message);
   return data || [];
+}
+
+// ── Company picker — all unique companies across deals + clients ──────────────
+
+export async function fetchAllCompaniesForPicker() {
+  const [dealsRes, clientsRes] = await Promise.all([
+    supabase.from('deals').select('company_name, stage').not('company_name', 'is', null),
+    supabase.from('clients').select('name').not('name', 'is', null),
+  ]);
+
+  const seen = new Set();
+  const companies = [];
+
+  // From deals — group by stage category
+  for (const d of dealsRes.data || []) {
+    const name = d.company_name?.trim();
+    if (!name || seen.has(name.toLowerCase())) continue;
+    seen.add(name.toLowerCase());
+    const isActive = !['won', 'lost', 'nurture'].includes(d.stage);
+    companies.push({ name, source: isActive ? 'Pipeline' : 'Past Deal' });
+  }
+
+  // From clients table
+  for (const c of clientsRes.data || []) {
+    const name = c.name?.trim();
+    if (!name || seen.has(name.toLowerCase())) continue;
+    seen.add(name.toLowerCase());
+    companies.push({ name, source: 'Client' });
+  }
+
+  return companies.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+// ── Context gatherer — everything we know about a company ────────────────────
+
+export async function gatherCompanyContext(companyName) {
+  const lines = [`COMPANY: ${companyName}`];
+
+  // 1. Company intel (thesis, summary, scores)
+  const { data: company } = await supabase
+    .from('companies')
+    .select('*')
+    .ilike('name', companyName)
+    .maybeSingle();
+
+  if (company) {
+    if (company.website)  lines.push(`WEBSITE: ${company.website}`);
+    lines.push('');
+    lines.push('== COMPANY INTELLIGENCE ==');
+    if (company.summary)   lines.push(`Summary: ${company.summary}`);
+    if (company.thesis)    lines.push(`\nThesis:\n${company.thesis}`);
+    if (company.icp_score) lines.push(`ICP Score: ${company.icp_score}/10`);
+    if (company.overall_score) lines.push(`Signal Score: ${company.overall_score}/10`);
+    if (company.recommended_angle) lines.push(`Recommended Angle: ${company.recommended_angle}`);
+    const tags = (company.tags || []).map(t => typeof t === 'string' ? t : t?.label || '').filter(Boolean);
+    if (tags.length) lines.push(`Tags: ${tags.join(', ')}`);
+    const triggers = (company.triggers || []).map(t => typeof t === 'string' ? t : t?.category || t?.label || '').filter(Boolean);
+    if (triggers.length) lines.push(`Triggers: ${triggers.join(', ')}`);
+    const contacts = (company.contacts || []);
+    if (contacts.length) {
+      lines.push(`Contacts: ${contacts.map(c => `${c.name}${c.title ? ` (${c.title})` : ''}${c.email ? ` <${c.email}>` : ''}`).join('; ')}`);
+    }
+    const thesis_risks = (company.thesis_risks || []);
+    if (thesis_risks.length) {
+      lines.push(`\nKnown Risks:`);
+      thesis_risks.forEach(r => lines.push(`  - ${r.title || r}: ${r.detail || ''}`));
+    }
+  }
+
+  // 2. Most recent/active deal
+  const { data: deals } = await supabase
+    .from('deals')
+    .select('*')
+    .ilike('company_name', companyName)
+    .order('updated_at', { ascending: false })
+    .limit(3);
+
+  const activeDeal = (deals || []).find(d => !['won', 'lost'].includes(d.stage)) || (deals || [])[0];
+  if (activeDeal) {
+    lines.push('');
+    lines.push('== DEAL STATUS ==');
+    lines.push(`Stage: ${activeDeal.stage?.replace(/_/g, ' ')}`);
+    if (activeDeal.retainer_value) lines.push(`Monthly Retainer: $${parseFloat(activeDeal.retainer_value).toLocaleString()}/mo`);
+    if (activeDeal.project_value)  lines.push(`Project Value: $${parseFloat(activeDeal.project_value).toLocaleString()}`);
+    if (activeDeal.engagement_type) lines.push(`Engagement Type: ${activeDeal.engagement_type}`);
+    if (activeDeal.notes)          lines.push(`\nDeal Notes:\n${activeDeal.notes}`);
+
+    // Activities
+    const { data: activities } = await supabase
+      .from('activities')
+      .select('*')
+      .eq('deal_id', activeDeal.id)
+      .order('activity_date', { ascending: false })
+      .limit(10);
+
+    if ((activities || []).length > 0) {
+      lines.push('');
+      lines.push('== RECENT ACTIVITIES ==');
+      activities.forEach(a => {
+        const d = a.activity_date ? new Date(a.activity_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '?';
+        lines.push(`[${d}] ${a.type?.toUpperCase() || 'NOTE'}: ${(a.summary || '').slice(0, 200)}`);
+      });
+    }
+
+    // Open tasks
+    const { data: tasks } = await supabase
+      .from('tasks')
+      .select('*')
+      .eq('deal_id', activeDeal.id)
+      .eq('completed', false)
+      .order('created_at', { ascending: true });
+
+    if ((tasks || []).length > 0) {
+      lines.push('');
+      lines.push('== OPEN NEXT STEPS ==');
+      tasks.forEach(t => lines.push(`  - ${t.title}${t.assigned_to ? ` [${t.assigned_to}]` : ''}${t.due_date ? ` due ${t.due_date}` : ''}`));
+    }
+  }
+
+  // 3. Meetings (from deals + projects)
+  const dealIds = (deals || []).map(d => d.id);
+  if (dealIds.length) {
+    const { data: meetings } = await supabase
+      .from('project_meetings')
+      .select('*')
+      .in('deal_id', dealIds)
+      .order('meeting_date', { ascending: false })
+      .limit(6);
+
+    if ((meetings || []).length > 0) {
+      lines.push('');
+      lines.push('== MEETINGS ==');
+      meetings.forEach(m => {
+        const d = m.meeting_date ? new Date(m.meeting_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '?';
+        lines.push(`\n[${d}] ${m.title || 'Meeting'}`);
+        if (m.summary) lines.push(`Summary: ${m.summary}`);
+        const actions = (m.action_items || []);
+        if (actions.length) {
+          lines.push(`Action items: ${actions.map(ai => ai.title || ai).join('; ')}`);
+        }
+      });
+    }
+  }
+
+  // 4. Active projects
+  const { data: projects } = await supabase
+    .from('projects')
+    .select('id, name, status, description, start_date, end_date, client_name')
+    .ilike('client_name', companyName)
+    .is('archived_at', null)
+    .limit(3);
+
+  if ((projects || []).length > 0) {
+    lines.push('');
+    lines.push('== ACTIVE PROJECTS ==');
+    projects.forEach(p => {
+      lines.push(`${p.name} — ${p.status || 'active'}${p.description ? `: ${p.description}` : ''}`);
+    });
+  }
+
+  return lines.join('\n');
+}
+
+// ── Company files (HTML snapshots saved from Document Editor) ─────────────────
+
+const companySlug = name => name.toLowerCase().replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+
+export async function saveDocToCompanyFiles(companyName, docTitle, docId, htmlContent) {
+  const slug = companySlug(companyName);
+  const safeName = docTitle.replace(/[^a-zA-Z0-9 _-]/g, '').trim() || 'document';
+  const timestamp = Date.now();
+  const fileName = `${safeName}-${timestamp}.html`;
+  const storagePath = `company-files/${slug}/${fileName}`;
+
+  const blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8' });
+  const { error: upErr } = await supabase.storage
+    .from('project-files')
+    .upload(storagePath, blob, { contentType: 'text/html', upsert: false });
+  if (upErr) throw new Error(upErr.message);
+
+  const { data: urlData } = supabase.storage.from('project-files').getPublicUrl(storagePath);
+  const url = urlData?.publicUrl || '';
+
+  const now = new Date().toISOString();
+  const { data, error } = await supabase
+    .from('company_files')
+    .insert({ company_name: companyName, name: `${safeName}.html`, size: blob.size, mime_type: 'text/html', storage_path: storagePath, url, source: 'document', document_id: docId || null, created_at: now })
+    .select()
+    .single();
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+export async function fetchCompanyFiles(companyName) {
+  const { data, error } = await supabase
+    .from('company_files')
+    .select('*')
+    .ilike('company_name', companyName)
+    .order('created_at', { ascending: false });
+  if (error) throw new Error(error.message);
+  return data || [];
+}
+
+export async function deleteCompanyFile(id, storagePath) {
+  if (storagePath) {
+    await supabase.storage.from('project-files').remove([storagePath]);
+  }
+  const { error } = await supabase.from('company_files').delete().eq('id', id);
+  if (error) throw new Error(error.message);
 }
 
 export async function upsertDocument(doc) {

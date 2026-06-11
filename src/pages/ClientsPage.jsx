@@ -4,6 +4,8 @@ import {
   upsertClient, upsertClientContacts, enrichClientContact,
   addClientItem, deleteClientItem, askClientQuestion,
 } from '../lib/clients';
+import { fetchDocuments, fetchCompanyFiles, docType } from '../lib/documents';
+import DocumentEditor from '../components/DocumentEditor';
 
 const STATUS_COLOR = { active: '#10b981', completed: '#6366f1', on_hold: '#f59e0b', cancelled: '#ef4444', archived: '#9ca3af' };
 const projStatus = p => p.archived_at ? 'archived' : (p.status || 'active');
@@ -71,6 +73,26 @@ export default function ClientsPage({ onNavigate, refreshKey, icp }) {
   const [aiMessages, setAiMessages] = useState([]);
   const [aiLoading, setAiLoading]   = useState(false);
   const aiEndRef                    = useRef(null);
+
+  // Documents + files tab
+  const [clientDocs,    setClientDocs]    = useState([]);
+  const [clientFiles,   setClientFiles]   = useState([]);
+  const [docsLoading,   setDocsLoading]   = useState(false);
+  const [openDoc,       setOpenDoc]       = useState(null); // doc open in editor
+
+  // ── Load documents + files for current client ─────────────────────────────
+  useEffect(() => {
+    if (!detail || tab !== 'documents') return;
+    const name = detail.client.name;
+    setDocsLoading(true);
+    Promise.all([
+      fetchDocuments({ companyName: name }),
+      fetchCompanyFiles(name),
+    ]).then(([docs, files]) => {
+      setClientDocs(docs);
+      setClientFiles(files);
+    }).catch(console.error).finally(() => setDocsLoading(false));
+  }, [tab, detail]);
 
   // ── Load list ──────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -374,6 +396,7 @@ export default function ClientsPage({ onNavigate, refreshKey, icp }) {
                   { id: 'contacts',  label: 'Contacts' },
                   { id: 'history',   label: `History${historyItems.length > 0 ? ` (${historyItems.length})` : ''}` },
                   { id: 'research',  label: `Research${detail.items.length > 0 ? ` (${detail.items.length})` : ''}` },
+                  { id: 'documents', label: `📄 Documents${clientDocs.length + clientFiles.length > 0 ? ` (${clientDocs.length + clientFiles.length})` : ''}` },
                   { id: 'ai',        label: '✦ Ask AI' },
                 ].map(t => (
                   <button key={t.id} onClick={() => setTab(t.id)} style={{ fontSize: 12, fontWeight: 600, padding: '8px 14px', border: 'none', background: 'none', cursor: 'pointer', color: tab === t.id ? 'var(--accent)' : 'var(--text-muted)', borderBottom: tab === t.id ? '2px solid var(--accent)' : '2px solid transparent', marginBottom: -1, whiteSpace: 'nowrap' }}>{t.label}</button>
@@ -831,6 +854,93 @@ export default function ClientsPage({ onNavigate, refreshKey, icp }) {
               )}
 
               {/* ── Ask AI ── */}
+              {/* ── Documents ── */}
+              {tab === 'documents' && (
+                <div>
+                  {docsLoading ? (
+                    <p style={{ fontSize: 13, color: 'var(--text-faint)', padding: '20px 0' }}>Loading…</p>
+                  ) : (
+                    <>
+                      {/* Saved documents */}
+                      {clientDocs.length > 0 && (
+                        <div style={{ marginBottom: 28 }}>
+                          <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.06em', color: 'var(--text-faint)', marginBottom: 10 }}>
+                            Documents ({clientDocs.length})
+                          </div>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                            {clientDocs.map(d => {
+                              const dt = docType(d.type);
+                              return (
+                                <div
+                                  key={d.id}
+                                  onClick={() => setOpenDoc(d)}
+                                  style={{ padding: '12px 14px', background: 'var(--surface)', border: '1px solid var(--border)', borderLeft: `3px solid ${dt.color}`, borderRadius: 10, cursor: 'pointer', display: 'flex', gap: 10, alignItems: 'center' }}
+                                  onMouseEnter={e => e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,.08)'}
+                                  onMouseLeave={e => e.currentTarget.style.boxShadow = 'none'}
+                                >
+                                  <span style={{ fontSize: 18 }}>{dt.icon}</span>
+                                  <div style={{ flex: 1, minWidth: 0 }}>
+                                    <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                      {d.title || <span style={{ color: 'var(--text-faint)', fontStyle: 'italic' }}>Untitled</span>}
+                                    </div>
+                                    <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 2 }}>
+                                      {dt.label} · {d.status} · {d.updated_at ? new Date(d.updated_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}
+                                    </div>
+                                  </div>
+                                  <span style={{ fontSize: 12, color: 'var(--text-faint)' }}>→</span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Company files (HTML snapshots saved from editor) */}
+                      {clientFiles.length > 0 && (
+                        <div style={{ marginBottom: 28 }}>
+                          <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.06em', color: 'var(--text-faint)', marginBottom: 10 }}>
+                            Saved File Snapshots ({clientFiles.length})
+                          </div>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                            {clientFiles.map(f => (
+                              <a
+                                key={f.id}
+                                href={f.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                style={{ padding: '12px 14px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, display: 'flex', gap: 10, alignItems: 'center', textDecoration: 'none', color: 'inherit' }}
+                                onMouseEnter={e => e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,.08)'}
+                                onMouseLeave={e => e.currentTarget.style.boxShadow = 'none'}
+                              >
+                                <span style={{ fontSize: 18 }}>🌐</span>
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                  <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</div>
+                                  <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 2 }}>
+                                    HTML Snapshot · {f.created_at ? new Date(f.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}
+                                    {f.size ? ` · ${Math.round(f.size / 1024)}KB` : ''}
+                                  </div>
+                                </div>
+                                <span style={{ fontSize: 11, color: '#3b82f6' }}>Open ↗</span>
+                              </a>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {clientDocs.length === 0 && clientFiles.length === 0 && (
+                        <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--text-faint)' }}>
+                          <div style={{ fontSize: 28, marginBottom: 8 }}>📄</div>
+                          <div style={{ fontSize: 13, marginBottom: 8 }}>No documents yet for {detail.client.name}.</div>
+                          <p style={{ fontSize: 12, maxWidth: 280, margin: '0 auto', lineHeight: 1.5 }}>
+                            Create a Proposal, SOW, MSA or other document from the Documents page and save it to this company's files.
+                          </p>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
+
               {tab === 'ai' && (
                 <div style={{ display: 'flex', flexDirection: 'column', height: '100%', maxWidth: 680 }}>
                   <div style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 16, lineHeight: 1.5 }}>
@@ -862,6 +972,25 @@ export default function ClientsPage({ onNavigate, refreshKey, icp }) {
             </div>
           </>
         ) : null}
+
+        {/* ── Document Editor (from Documents tab) ── */}
+        {openDoc && (
+          <DocumentEditor
+            doc={openDoc}
+            onClose={() => setOpenDoc(null)}
+            onSaved={(saved, deletedId) => {
+              if (deletedId) { setClientDocs(prev => prev.filter(d => d.id !== deletedId)); setOpenDoc(null); return; }
+              if (saved) {
+                setClientDocs(prev => {
+                  const idx = prev.findIndex(d => d.id === saved.id);
+                  if (idx >= 0) { const n = [...prev]; n[idx] = saved; return n; }
+                  return [saved, ...prev];
+                });
+                setOpenDoc(saved);
+              }
+            }}
+          />
+        )}
 
         {/* ── Thesis live progress modal ── */}
         {showThesisModal && (
