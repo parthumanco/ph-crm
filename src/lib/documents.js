@@ -219,10 +219,33 @@ const companySlug = name => name.toLowerCase().replace(/[^a-z0-9]/g, '-').replac
 export async function saveDocToCompanyFiles(companyName, docTitle, docId, htmlContent) {
   const slug = companySlug(companyName);
   const safeName = docTitle.replace(/[^a-zA-Z0-9 _-]/g, '').trim() || 'document';
-  const timestamp = Date.now();
-  const fileName = `${safeName}-${timestamp}.html`;
-  const storagePath = `company-files/${slug}/${fileName}`;
 
+  // If this document already has a file record, replace the storage object and update the row
+  if (docId) {
+    const { data: existing } = await supabase
+      .from('company_files')
+      .select('id, storage_path')
+      .eq('document_id', docId)
+      .maybeSingle();
+
+    if (existing) {
+      // Overwrite the existing storage file
+      const blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8' });
+      await supabase.storage.from('project-files').upload(existing.storage_path, blob, { contentType: 'text/html', upsert: true });
+      const { data: urlData } = supabase.storage.from('project-files').getPublicUrl(existing.storage_path);
+      const { data, error } = await supabase
+        .from('company_files')
+        .update({ name: `${safeName}.html`, size: blob.size, url: urlData?.publicUrl || existing.url })
+        .eq('id', existing.id)
+        .select().single();
+      if (error) throw new Error(error.message);
+      return data;
+    }
+  }
+
+  // First save — create a new storage file and record
+  const fileName = `${safeName}-${Date.now()}.html`;
+  const storagePath = `company-files/${slug}/${fileName}`;
   const blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8' });
   const { error: upErr } = await supabase.storage
     .from('project-files')
@@ -230,14 +253,10 @@ export async function saveDocToCompanyFiles(companyName, docTitle, docId, htmlCo
   if (upErr) throw new Error(upErr.message);
 
   const { data: urlData } = supabase.storage.from('project-files').getPublicUrl(storagePath);
-  const url = urlData?.publicUrl || '';
-
-  const now = new Date().toISOString();
   const { data, error } = await supabase
     .from('company_files')
-    .insert({ company_name: companyName, name: `${safeName}.html`, size: blob.size, mime_type: 'text/html', storage_path: storagePath, url, source: 'document', document_id: docId || null, created_at: now })
-    .select()
-    .single();
+    .insert({ company_name: companyName, name: `${safeName}.html`, size: blob.size, mime_type: 'text/html', storage_path: storagePath, url: urlData?.publicUrl || '', source: 'document', document_id: docId || null, created_at: new Date().toISOString() })
+    .select().single();
   if (error) throw new Error(error.message);
   return data;
 }

@@ -1837,14 +1837,20 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
                   ) : (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                       {allDealFiles.map(f => (
-                        <div key={`${f._source}-${f.id}`} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 7 }}>
+                        <div
+                          key={`${f._source}-${f.id}`}
+                          onClick={() => window.open(f.url, '_blank')}
+                          style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 7, cursor: 'pointer' }}
+                          onMouseEnter={e => e.currentTarget.style.background = 'var(--bg)'}
+                          onMouseLeave={e => e.currentTarget.style.background = 'var(--surface)'}
+                        >
                           <span style={{ fontSize: 18, flexShrink: 0 }}>
-                            {/pdf/i.test(f.mime_type) ? '📄' : /image/i.test(f.mime_type) ? '🖼' : /word|doc/i.test(f.mime_type) ? '📝' : /sheet|excel|csv/i.test(f.mime_type) ? '📊' : '📎'}
+                            {/pdf/i.test(f.mime_type) ? '📄' : /image/i.test(f.mime_type) ? '🖼' : /word|doc/i.test(f.mime_type) ? '📝' : /sheet|excel|csv/i.test(f.mime_type) ? '📊' : /html/i.test(f.mime_type) ? '📄' : '📎'}
                           </span>
                           <div style={{ flex: 1, minWidth: 0 }}>
-                            <a href={f.url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 13, fontWeight: 500, color: 'var(--text)', textDecoration: 'none', display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                               {f.name}
-                            </a>
+                            </div>
                             <div style={{ display: 'flex', gap: 8, marginTop: 2, alignItems: 'center' }}>
                               {f.size > 0 && <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>{(f.size / 1024).toFixed(0)} KB</span>}
                               {f.task_title && (
@@ -1854,7 +1860,7 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
                               )}
                               {f._source === 'document' && (
                                 <span style={{ fontSize: 10, color: '#f97316', background: '#fff7ed', padding: '1px 6px', borderRadius: 3, fontWeight: 600 }}>
-                                  📄 Generated doc
+                                  Generated doc
                                 </span>
                               )}
                               {f._source === 'deal' && (
