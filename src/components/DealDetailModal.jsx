@@ -9,6 +9,7 @@ import {
   STAGES, ACTIVITY_TYPES, OWNERS, stageColor, stageLabel, fmt$, daysSince,
 } from '../lib/deals';
 import { fetchDealMeetings, deleteProjectMeeting } from '../lib/projects';
+import { fetchCompanyFiles } from '../lib/documents';
 import { fetchCompanyIntel, runBuildThesis, findOrCreateCompany, addCompanyResearchItem, removeCompanyResearchItem, addCompanyContact, updateCompanyContact, deleteCompanyContact, setPrimaryContact } from '../lib/clients';
 import { loadIcp } from '../lib/settings';
 import { requestAndSave, clearReminder, hasReminder } from '../lib/reminders';
@@ -97,6 +98,7 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
 
   // Deal-level files (Files tab)
   const [dealFiles, setDealFiles]             = useState([]);
+  const [companyFiles, setCompanyFiles]       = useState([]); // generated docs from Documents page
   const [filesTabDrop, setFilesTabDrop]       = useState(false);
   const [uploadingDealFile, setUploadingDealFile] = useState(false);
 
@@ -124,6 +126,9 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
       }).catch(console.error);
       fetchDealMeetings(initialDeal.id).then(setMeetings).catch(console.error);
       fetchDealFiles(initialDeal.id).then(setDealFiles).catch(console.error);
+      if (initialDeal.company_name) {
+        fetchCompanyFiles(initialDeal.company_name).then(setCompanyFiles).catch(console.error);
+      }
     }
   }, [initialDeal.id, isNew]);
 
@@ -805,6 +810,8 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
     }),
     // Deal-level files (Files tab uploads)
     ...dealFiles.map(f => ({ ...f, _source: 'deal', task_title: null })),
+    // Generated documents from Documents page (saved to company files)
+    ...companyFiles.map(f => ({ ...f, _source: 'document', task_title: null })),
   ].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
   const openTasks = tasks.filter(t => !t.completed);
@@ -1845,7 +1852,12 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
                                   ↳ {f.task_title.length > 40 ? f.task_title.slice(0, 40) + '…' : f.task_title}
                                 </span>
                               )}
-                              {!f.task_title && (
+                              {f._source === 'document' && (
+                                <span style={{ fontSize: 10, color: '#f97316', background: '#fff7ed', padding: '1px 6px', borderRadius: 3, fontWeight: 600 }}>
+                                  📄 Generated doc
+                                </span>
+                              )}
+                              {f._source === 'deal' && (
                                 <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>Deal file</span>
                               )}
                             </div>
@@ -1861,6 +1873,9 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
                               onClick={() => handleTaskFileDelete(f.task_id, f.id, f.storage_path)}
                               style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 15, flexShrink: 0, padding: '0 2px' }}
                             >×</button>
+                          )}
+                          {f._source === 'document' && (
+                            <span style={{ fontSize: 11, color: '#f97316', flexShrink: 0, padding: '0 4px' }} title="Managed from Documents page">↗</span>
                           )}
                         </div>
                       ))}
