@@ -641,6 +641,135 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
   const openTasks = tasks.filter(t => !t.completed);
   const overdueTasks = openTasks.filter(t => t.due_date && new Date(t.due_date) < new Date());
 
+  const exportToPdf = () => {
+    const intel = companyIntel || {};
+    const primaryContact = deal.contact_name
+      ? { name: deal.contact_name, email: deal.contact_email }
+      : (deal.company_id && intel.contacts?.[0]) || null;
+
+    const fmtDate = d => d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
+    const esc = s => (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8">
+<title>${esc(deal.company_name)} — Part Human</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 13px; color: #1a1a1a; line-height: 1.5; padding: 40px 48px; max-width: 820px; margin: 0 auto; }
+  h1 { font-size: 26px; font-weight: 800; color: #111; margin-bottom: 4px; }
+  h2 { font-size: 13px; font-weight: 800; text-transform: uppercase; letter-spacing: .06em; color: #6b7280; margin: 28px 0 10px; padding-bottom: 6px; border-bottom: 1.5px solid #e5e7eb; }
+  h3 { font-size: 13px; font-weight: 700; color: #111; margin-bottom: 4px; }
+  .meta { display: flex; gap: 10px; flex-wrap: wrap; margin: 8px 0 6px; }
+  .badge { display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 10px; border-radius: 20px; }
+  .badge-blue { background: #eff6ff; color: #1d4ed8; }
+  .badge-green { background: #f0fdf4; color: #15803d; }
+  .badge-orange { background: #fff7ed; color: #c2410c; }
+  .badge-purple { background: #f5f3ff; color: #6d28d9; }
+  .contact { font-size: 13px; color: #374151; margin-top: 6px; }
+  .contact a { color: #f97316; text-decoration: none; }
+  .summary { font-size: 13px; color: #374151; line-height: 1.65; margin-bottom: 10px; }
+  .triggers { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+  .trigger { font-size: 11px; padding: 3px 10px; border-radius: 20px; background: #f3f4f6; color: #374151; border: 1px solid #e5e7eb; }
+  .section-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: #9ca3af; margin-bottom: 3px; }
+  .block { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px 14px; margin-bottom: 8px; }
+  .block-title { font-size: 13px; font-weight: 700; color: #111; margin-bottom: 4px; }
+  .block-meta { font-size: 11px; color: #9ca3af; margin-bottom: 6px; }
+  .block-body { font-size: 12px; color: #374151; line-height: 1.6; white-space: pre-wrap; }
+  .action-item { display: flex; align-items: baseline; gap: 8px; font-size: 12px; color: #374151; padding: 5px 0; border-top: 1px solid #f3f4f6; }
+  .action-owner { font-size: 10px; font-weight: 800; padding: 1px 7px; border-radius: 10px; background: #ede9fe; color: #6d28d9; white-space: nowrap; flex-shrink: 0; }
+  .action-due { font-size: 10px; color: #9ca3af; margin-left: auto; white-space: nowrap; }
+  .task { display: flex; align-items: baseline; gap: 8px; font-size: 12px; color: #374151; padding: 6px 0; border-top: 1px solid #f3f4f6; }
+  .task:first-child { border-top: none; }
+  .task-due { font-size: 11px; color: #9ca3af; }
+  .activity-row { display: flex; gap: 10px; padding: 8px 0; border-top: 1px solid #f3f4f6; font-size: 12px; }
+  .activity-row:first-child { border-top: none; }
+  .activity-type { font-size: 10px; font-weight: 700; text-transform: uppercase; color: #6b7280; width: 56px; flex-shrink: 0; padding-top: 2px; }
+  .activity-date { font-size: 11px; color: #9ca3af; white-space: nowrap; }
+  .risks { margin-top: 10px; }
+  .risk { padding: 8px 12px; background: #fffbeb; border: 1px solid #fde68a; border-radius: 6px; margin-bottom: 6px; font-size: 12px; color: #92400e; }
+  .thesis-text { font-size: 13px; color: #374151; line-height: 1.7; white-space: pre-wrap; }
+  .next-action { padding: 10px 12px; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; margin-bottom: 10px; font-size: 12px; color: #14532d; }
+  .footer { margin-top: 40px; padding-top: 14px; border-top: 1px solid #e5e7eb; font-size: 10px; color: #9ca3af; display: flex; justify-content: space-between; }
+  @media print { body { padding: 24px 32px; } }
+</style></head><body>
+
+<!-- ── HEADER ── -->
+<h1>${esc(deal.company_name)}</h1>
+${deal.website ? `<div style="font-size:12px;color:#9ca3af;margin-bottom:6px;">${esc(deal.website)}</div>` : ''}
+<div class="meta">
+  ${deal.stage ? `<span class="badge badge-blue">${esc(deal.stage.replace(/_/g,' '))}</span>` : ''}
+  ${deal.assigned_to ? `<span class="badge badge-purple">${esc(deal.assigned_to)}</span>` : ''}
+  ${parseFloat(deal.retainer_value) > 0 ? `<span class="badge badge-green">$${parseFloat(deal.retainer_value).toLocaleString()}/mo</span>` : ''}
+  ${parseFloat(deal.project_value) > 0 ? `<span class="badge badge-orange">$${parseFloat(deal.project_value).toLocaleString()} project</span>` : ''}
+</div>
+${primaryContact ? `<div class="contact"><strong>${esc(primaryContact.name)}</strong>${primaryContact.email ? ` · <a href="mailto:${esc(primaryContact.email)}">${esc(primaryContact.email)}</a>` : ''}</div>` : ''}
+${deal.notes ? `<p class="summary" style="margin-top:10px;font-size:12px;color:#6b7280;">${esc(deal.notes)}</p>` : ''}
+
+<!-- ── RESEARCH ── -->
+<h2>Research</h2>
+${intel.icp_score || intel.overall_score ? `
+<div class="meta" style="margin-bottom:10px;">
+  ${intel.icp_score ? `<span class="badge badge-purple">ICP ${intel.icp_score}/100</span>` : ''}
+  ${intel.overall_score ? `<span class="badge badge-orange">Score ${intel.overall_score}/100</span>` : ''}
+  ${(intel.tags || []).map(t => `<span class="badge" style="background:#f3f4f6;color:#374151;">${esc(typeof t === 'string' ? t : t.label || '')}</span>`).join('')}
+</div>` : ''}
+${intel.summary ? `<p class="summary">${esc(intel.summary)}</p>` : '<p style="color:#9ca3af;font-size:12px;">No research data yet.</p>'}
+${intel.recommended_angle ? `<div style="margin-bottom:10px;"><div class="section-label">Recommended Angle</div><p class="summary">${esc(intel.recommended_angle)}</p></div>` : ''}
+${(intel.triggers || []).length > 0 ? `<div class="section-label" style="margin-bottom:6px;">Triggers</div><div class="triggers">${intel.triggers.map(t => `<span class="trigger">${esc(typeof t === 'string' ? t : t.category || t.label || '')}</span>`).join('')}</div>` : ''}
+${intel.thesis ? `<div style="margin-top:12px;"><div class="section-label" style="margin-bottom:6px;">Thesis</div><p class="thesis-text">${esc(intel.thesis)}</p></div>` : ''}
+${(intel.thesis_risks || []).length > 0 ? `<div class="risks"><div class="section-label" style="margin-bottom:6px;">Risks</div>${intel.thesis_risks.map(r => `<div class="risk"><strong>${esc(r.title || r)}</strong>${r.detail ? `<br>${esc(r.detail)}` : ''}</div>`).join('')}</div>` : ''}
+${(intel.research_items || []).length > 0 ? `<div style="margin-top:12px;"><div class="section-label" style="margin-bottom:6px;">Research Materials</div>${intel.research_items.map(item => `<div class="block"><div class="block-title">${esc(item.title || item.type || 'Item')}</div>${item.url ? `<a href="${esc(item.url)}" style="font-size:11px;color:#f97316;">${esc(item.url)}</a>` : ''}${item.body ? `<p class="block-body" style="margin-top:4px;">${esc(item.body)}</p>` : ''}</div>`).join('')}</div>` : ''}
+
+<!-- ── MEETINGS ── -->
+<h2>Meetings</h2>
+${meetings.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No meetings logged yet.</p>' : meetings.map(mtg => `
+<div class="block">
+  <div class="block-title">${esc(mtg.title || 'Meeting')}</div>
+  <div class="block-meta">${fmtDate(mtg.meeting_date)}${mtg.attendees?.length ? ' · ' + mtg.attendees.map(esc).join(', ') : ''}</div>
+  ${mtg.summary ? `<p class="block-body">${esc(mtg.summary)}</p>` : ''}
+  ${(mtg.action_items || []).length > 0 ? `<div style="margin-top:8px;">${mtg.action_items.map(ai => `
+    <div class="action-item">
+      ${ai.owner ? `<span class="action-owner">${esc(ai.owner)}</span>` : ''}
+      <span>${esc(ai.title || ai)}</span>
+      ${ai.due_date ? `<span class="action-due">${fmtDate(ai.due_date)}</span>` : ''}
+    </div>`).join('')}</div>` : ''}
+</div>`).join('')}
+
+<!-- ── ACTIVITY ── -->
+<h2>Activity</h2>
+${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activity logged yet.</p>' : `<div class="block">${activities.map(a => {
+  const toMatch = a.type === 'email' ? a.summary?.match(/^\[([^\]]+)\]/) : null;
+  const toName = toMatch?.[1] || null;
+  const body = toName ? a.summary.replace(/^\[[^\]]+\]/, '').trim() : a.summary;
+  return `<div class="activity-row">
+    <div class="activity-type">${esc(a.type)}</div>
+    <div style="flex:1;"><span class="activity-date">${fmtDate(a.activity_date)}</span>${a.assigned_to ? ` · <strong>${esc(a.assigned_to)}</strong>` : ''}${toName ? ` → ${esc(toName)}` : ''}<br>${esc(body)}</div>
+  </div>`;
+}).join('')}</div>`}
+
+<!-- ── NEXT STEPS ── -->
+<h2>Next Steps</h2>
+${intel.thesis_next_step ? `<div class="next-action"><div class="section-label" style="color:#15803d;margin-bottom:3px;">AI Recommended</div>${esc(intel.thesis_next_step)}</div>` : ''}
+${openTasks.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No open tasks.</p>' : `<div class="block">${openTasks.map(t => `
+  <div class="task">
+    <span>☐</span>
+    <span style="flex:1;">${esc(t.title)}</span>
+    ${t.assigned_to ? `<span class="badge badge-purple" style="font-size:10px;">${esc(t.assigned_to)}</span>` : ''}
+    ${t.due_date ? `<span class="task-due">${fmtDate(t.due_date)}</span>` : ''}
+  </div>`).join('')}</div>`}
+
+<div class="footer">
+  <span>Part Human CRM · ${esc(deal.company_name)}</span>
+  <span>Exported ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}</span>
+</div>
+
+<script>window.onload = () => { window.print(); }</script>
+</body></html>`;
+
+    const win = window.open('', '_blank');
+    win.document.write(html);
+    win.document.close();
+  };
+
   return (
     <>
     <div
@@ -708,8 +837,13 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
                 {movingBack ? 'Moving…' : '↩ Active Outreach'}
               </button>
               <button
+                onClick={exportToPdf}
+                style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-muted)', cursor: 'pointer' }}
+                title="Export to PDF"
+              >⬇ Export PDF</button>
+              <button
                 onClick={() => setShowEditForm(v => !v)}
-                style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 6, border: '1px solid var(--border)', background: showEditForm ? 'var(--accent)' : 'var(--surface)', color: showEditForm ? '#fff' : 'var(--text-muted)', cursor: 'pointer' }}
+                style={{ fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 6, border: '1px solid var(--border)', background: showEditForm ? 'var(--accent)' : 'var(--surface)', color: showEditForm ? '#fff' : 'var(--text-muted)', cursor: 'pointer' }}
               >
                 {showEditForm ? '▲ Close' : '✏ Edit'}
               </button>
