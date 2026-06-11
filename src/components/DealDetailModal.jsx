@@ -708,8 +708,8 @@ ${deal.notes ? `<p class="summary" style="margin-top:10px;font-size:12px;color:#
 <h2>Research</h2>
 ${intel.icp_score || intel.overall_score ? `
 <div class="meta" style="margin-bottom:10px;">
-  ${intel.icp_score ? `<span class="badge badge-purple">ICP ${intel.icp_score}/100</span>` : ''}
-  ${intel.overall_score ? `<span class="badge badge-orange">Score ${intel.overall_score}/100</span>` : ''}
+  ${intel.icp_score ? `<span class="badge badge-purple">ICP ${intel.icp_score}/10</span>` : ''}
+  ${intel.overall_score ? `<span class="badge badge-orange">Sig ${intel.overall_score}/10</span>` : ''}
   ${(intel.tags || []).map(t => `<span class="badge" style="background:#f3f4f6;color:#374151;">${esc(typeof t === 'string' ? t : t.label || '')}</span>`).join('')}
 </div>` : ''}
 ${intel.summary ? `<p class="summary">${esc(intel.summary)}</p>` : '<p style="color:#9ca3af;font-size:12px;">No research data yet.</p>'}
@@ -1711,12 +1711,12 @@ ${openTasks.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No open tas
                         <div style={{ display: 'flex', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
                           {companyIntel.icp_score && (
                             <span style={{ fontSize: 12, fontWeight: 700, padding: '3px 10px', borderRadius: 20, background: '#ede9fe', color: '#6d28d9' }}>
-                              ICP {companyIntel.icp_score}/100
+                              ICP {companyIntel.icp_score}/10
                             </span>
                           )}
                           {companyIntel.overall_score && (
                             <span style={{ fontSize: 12, fontWeight: 700, padding: '3px 10px', borderRadius: 20, background: '#fff7ed', color: '#c2410c' }}>
-                              Score {companyIntel.overall_score}/100
+                              Sig {companyIntel.overall_score}/10
                             </span>
                           )}
                           {companyIntel.funding_stage && (
