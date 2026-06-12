@@ -5,6 +5,7 @@ import {
   stageColor, stageLabel, dealValue, fmt$, daysSince,
 } from '../lib/deals';
 import { upsertProject, buildTimelineFromParsed, bulkInsertMilestones, bulkInsertTasks, migrateDealMeetingsToProject, migrateDealTasksToProject } from '../lib/projects';
+import { upsertClientContacts } from '../lib/clients';
 import DealDetailModal from '../components/DealDetailModal';
 import ProposalImporter from '../components/ProposalImporter';
 import TranscriptImporter from '../components/TranscriptImporter';
@@ -230,6 +231,15 @@ export default function DealsPage({ refreshKey = 0, targetDealId = null, onTarge
         start_date:  today,
         source_deal_id: deal.id,
       });
+      // Push the deal's primary contact into the client record
+      if (proj.client_id && deal.contact_name) {
+        upsertClientContacts(proj.client_id, [{
+          name:  deal.contact_name,
+          email: deal.contact_email || null,
+          title: deal.contact_title || null,
+        }]).catch(e => console.warn('Won contact sync:', e.message));
+      }
+
       // Migrate any deal meetings + tasks into the new project
       if (deal.id) {
         await migrateDealMeetingsToProject(deal.id, proj.id);
@@ -349,13 +359,22 @@ export default function DealsPage({ refreshKey = 0, targetDealId = null, onTarge
       if (msRows.length > 0) await bulkInsertMilestones(msRows);
       if (taskRows.length > 0) await bulkInsertTasks(taskRows);
 
-      // 3. Migrate any deal meetings + tasks over to the new project
+      // 3. Push the deal's primary contact into the client record
+      if (proj.client_id && deal.contact_name) {
+        upsertClientContacts(proj.client_id, [{
+          name:  deal.contact_name,
+          email: deal.contact_email || null,
+          title: deal.contact_title || null,
+        }]).catch(e => console.warn('Proposal contact sync:', e.message));
+      }
+
+      // 4. Migrate any deal meetings + tasks over to the new project
       if (deal.id) {
         await migrateDealMeetingsToProject(deal.id, proj.id);
         await migrateDealTasksToProject(deal.id, proj.id).catch(e => console.warn('Task migration:', e.message));
       }
 
-      // 4. Show success toast
+      // 5. Show success toast
       setWonToast(proj.name || deal.company_name);
       setTimeout(() => setWonToast(null), 5000);
     } catch (e) {
