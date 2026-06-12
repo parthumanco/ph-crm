@@ -94,7 +94,7 @@ export async function upsertProject(p) {
       const { findOrCreateClient } = await import('./clients.js');
       const client = await findOrCreateClient(payload.client_name.trim());
       if (client) payload.client_id = client.id;
-    } catch { /* non-fatal */ }
+    } catch (e) { console.warn('upsertProject: client sync failed — client_id not set:', e.message); }
   }
 
   const { data, error } = await supabase

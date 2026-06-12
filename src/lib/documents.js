@@ -136,13 +136,21 @@ export async function gatherCompanyContext(companyName, contactName = null) {
     if (activeDeal.engagement_type) lines.push(`Engagement Type: ${activeDeal.engagement_type}`);
     if (activeDeal.notes)          lines.push(`\nDeal Notes:\n${activeDeal.notes}`);
 
-    // Activities
-    const { data: activities } = await supabase
-      .from('activities')
-      .select('*')
-      .eq('deal_id', activeDeal.id)
-      .order('activity_date', { ascending: false })
-      .limit(10);
+    // Activities, tasks, meetings, projects — all independent once deal IDs are known, run in parallel
+    const dealIds = (deals || []).map(d => d.id);
+    const [
+      { data: activities },
+      { data: tasks },
+      { data: meetings },
+      { data: projects },
+    ] = await Promise.all([
+      supabase.from('activities').select('*').eq('deal_id', activeDeal.id).order('activity_date', { ascending: false }).limit(10),
+      supabase.from('tasks').select('*').eq('deal_id', activeDeal.id).eq('completed', false).order('created_at', { ascending: true }),
+      dealIds.length
+        ? supabase.from('project_meetings').select('*').in('deal_id', dealIds).order('meeting_date', { ascending: false }).limit(6)
+        : Promise.resolve({ data: [] }),
+      supabase.from('projects').select('id, name, status, description, start_date, end_date, client_name').ilike('client_name', companyName).is('archived_at', null).limit(3),
+    ]);
 
     if ((activities || []).length > 0) {
       lines.push('');
@@ -153,30 +161,11 @@ export async function gatherCompanyContext(companyName, contactName = null) {
       });
     }
 
-    // Open tasks
-    const { data: tasks } = await supabase
-      .from('tasks')
-      .select('*')
-      .eq('deal_id', activeDeal.id)
-      .eq('completed', false)
-      .order('created_at', { ascending: true });
-
     if ((tasks || []).length > 0) {
       lines.push('');
       lines.push('== OPEN NEXT STEPS ==');
       tasks.forEach(t => lines.push(`  - ${t.title}${t.assigned_to ? ` [${t.assigned_to}]` : ''}${t.due_date ? ` due ${t.due_date}` : ''}`));
     }
-  }
-
-  // 3. Meetings (from deals + projects)
-  const dealIds = (deals || []).map(d => d.id);
-  if (dealIds.length) {
-    const { data: meetings } = await supabase
-      .from('project_meetings')
-      .select('*')
-      .in('deal_id', dealIds)
-      .order('meeting_date', { ascending: false })
-      .limit(6);
 
     if ((meetings || []).length > 0) {
       lines.push('');
@@ -186,27 +175,17 @@ export async function gatherCompanyContext(companyName, contactName = null) {
         lines.push(`\n[${d}] ${m.title || 'Meeting'}`);
         if (m.summary) lines.push(`Summary: ${m.summary}`);
         const actions = (m.action_items || []);
-        if (actions.length) {
-          lines.push(`Action items: ${actions.map(ai => ai.title || ai).join('; ')}`);
-        }
+        if (actions.length) lines.push(`Action items: ${actions.map(ai => ai.title || ai).join('; ')}`);
       });
     }
-  }
 
-  // 4. Active projects
-  const { data: projects } = await supabase
-    .from('projects')
-    .select('id, name, status, description, start_date, end_date, client_name')
-    .ilike('client_name', companyName)
-    .is('archived_at', null)
-    .limit(3);
-
-  if ((projects || []).length > 0) {
-    lines.push('');
-    lines.push('== ACTIVE PROJECTS ==');
-    projects.forEach(p => {
-      lines.push(`${p.name} — ${p.status || 'active'}${p.description ? `: ${p.description}` : ''}`);
-    });
+    if ((projects || []).length > 0) {
+      lines.push('');
+      lines.push('== ACTIVE PROJECTS ==');
+      projects.forEach(p => {
+        lines.push(`${p.name} — ${p.status || 'active'}${p.description ? `: ${p.description}` : ''}`);
+      });
+    }
   }
 
   return lines.join('\n');

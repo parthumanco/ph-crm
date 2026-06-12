@@ -2606,7 +2606,7 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
           {/* Compose header */}
           <div style={{ padding: '12px 16px', background: '#1e293b', borderRadius: '12px 12px 0 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <span style={{ fontSize: 13, fontWeight: 700, color: '#f1f5f9' }}>✉️ New Email</span>
-            <button onClick={() => setComposeEmail(null)} style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: 18, cursor: 'pointer', lineHeight: 1 }}>×</button>
+            <button onClick={() => { setComposeEmail(null); setComposeTaskId(null); setNotifyCompleteAfterSend(false); }} style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: 18, cursor: 'pointer', lineHeight: 1 }}>×</button>
           </div>
 
           <div style={{ padding: '0 0 4px', borderBottom: '1px solid var(--border)' }}>

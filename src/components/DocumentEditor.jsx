@@ -38,7 +38,7 @@ function ListEditor({ label, value = [], onChange, hint, placeholder = 'One item
       {hint && <p style={{ fontSize: 12, color: '#9ca3af', marginBottom: 6 }}>{hint}</p>}
       <textarea
         value={text}
-        onChange={e => onChange(e.target.value.split('\n').filter(l => l.trim() || true))}
+        onChange={e => onChange(e.target.value.split('\n').filter(l => l.trim() !== ''))}
         rows={6}
         placeholder={placeholder}
         style={{ width: '100%', padding: '10px 12px', border: '1px solid #e5e7eb', borderRadius: 8, fontSize: 13, lineHeight: 1.7, resize: 'vertical', fontFamily: 'inherit', color: '#111', background: '#fff', outline: 'none', boxSizing: 'border-box' }}
@@ -84,7 +84,7 @@ function DeliverablesEditor({ value = [], onChange }) {
           </div>
           <textarea
             value={Array.isArray(cat.items) ? cat.items.join('\n') : ''}
-            onChange={e => updateCat(i, 'items', e.target.value.split('\n').filter(l => l.trim() || true))}
+            onChange={e => updateCat(i, 'items', e.target.value.split('\n').filter(l => l.trim() !== ''))}
             placeholder="One deliverable per line"
             rows={4}
             style={{ width: '100%', padding: '8px 10px', border: '1px solid #e5e7eb', borderRadius: 6, fontSize: 12, lineHeight: 1.6, resize: 'vertical', fontFamily: 'inherit', boxSizing: 'border-box' }}
@@ -134,7 +134,7 @@ function PhasesEditor({ value = [], onChange }) {
           </div>
           <textarea
             value={Array.isArray(phase.deliverables) ? phase.deliverables.join('\n') : ''}
-            onChange={e => updatePhase(i, 'deliverables', e.target.value.split('\n').filter(l => l.trim() || true))}
+            onChange={e => updatePhase(i, 'deliverables', e.target.value.split('\n').filter(l => l.trim() !== ''))}
             placeholder="Core deliverables — one per line"
             rows={4}
             style={{ width: '100%', padding: '8px 10px', border: '1px solid #e5e7eb', borderRadius: 6, fontSize: 12, lineHeight: 1.6, resize: 'vertical', fontFamily: 'inherit', boxSizing: 'border-box' }}
@@ -983,6 +983,7 @@ ${bodyHtml}
 <script>window.onload = () => { window.print(); }<\/script>
 </body></html>`;
     const win = window.open('', '_blank');
+    if (!win) { alert('Please allow popups for this site to export PDF.'); return; }
     win.document.write(html);
     win.document.close();
   };

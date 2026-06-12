@@ -347,11 +347,12 @@ export default function DealsPage({ refreshKey = 0, targetDealId = null, onTarge
     try {
       // 1. Create the project
       const proj = await upsertProject({
-        name:        parsed.project_name || deal.company_name || 'New Project',
-        client_name: deal.company_name || '',
-        status:      'active',
-        start_date:  startDate,
-        budget:      parsed.total_budget || null,
+        name:           parsed.project_name || deal.company_name || 'New Project',
+        client_name:    deal.company_name || '',
+        status:         'active',
+        start_date:     startDate,
+        budget:         parsed.total_budget || null,
+        source_deal_id: deal.id,
       });
 
       // 2. Build and insert milestones + tasks
