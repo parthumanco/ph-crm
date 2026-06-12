@@ -9,7 +9,7 @@ import {
   STAGES, ACTIVITY_TYPES, OWNERS, stageColor, stageLabel, fmt$, daysSince,
 } from '../lib/deals';
 import { fetchDealMeetings, deleteProjectMeeting } from '../lib/projects';
-import { fetchCompanyFiles } from '../lib/documents';
+import { fetchCompanyFiles, deleteCompanyFile } from '../lib/documents';
 import { fetchCompanyIntel, runBuildThesis, findOrCreateCompany, addCompanyResearchItem, removeCompanyResearchItem, addCompanyContact, updateCompanyContact, deleteCompanyContact, setPrimaryContact } from '../lib/clients';
 import { loadIcp } from '../lib/settings';
 import { requestAndSave, clearReminder, hasReminder } from '../lib/reminders';
@@ -1878,7 +1878,7 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
                                   ↳ {f.task_title.length > 40 ? f.task_title.slice(0, 40) + '…' : f.task_title}
                                 </span>
                               )}
-                              {f._source === 'document' && (
+                                  {f._source === 'document' && (
                                 <span style={{ fontSize: 10, color: '#f97316', background: '#fff7ed', padding: '1px 6px', borderRadius: 3, fontWeight: 600 }}>
                                   Generated doc
                                 </span>
@@ -1899,6 +1899,12 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
                               onClick={e => { e.stopPropagation(); handleTaskFileDelete(f.task_id, f.id, f.storage_path); }}
                               style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 15, flexShrink: 0, padding: '0 2px' }}
                             >×</button>
+                          )}
+                          {f._source === 'document' && (
+                            <button
+                              onClick={e => { e.stopPropagation(); deleteCompanyFile(f.id, f.storage_path).then(() => setCompanyFiles(prev => prev.filter(cf => cf.id !== f.id))).catch(console.error); }}
+                              style={{ background: 'none', border: '1px solid #fecaca', borderRadius: 20, color: '#ef4444', cursor: 'pointer', fontSize: 10, fontWeight: 700, flexShrink: 0, padding: '2px 8px', lineHeight: 1.4 }}
+                            >Delete</button>
                           )}
                         </div>
                         );
