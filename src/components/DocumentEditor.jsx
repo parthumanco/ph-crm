@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { upsertDocument, deleteDocument, defaultSections, DOC_TYPES, DOC_STATUSES, SOW_STANDARD_TERMS, docType, docStatus, saveDocToCompanyFiles } from '../lib/documents';
+import { upsertDocument, deleteDocument, defaultSections, DOC_TYPES, DOC_STATUSES, SOW_STANDARD_TERMS, docType, docStatus, saveDocToCompanyFiles, deleteCompanyFile } from '../lib/documents';
 import { generateDocumentSections } from '../lib/anthropic';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -869,7 +869,8 @@ export default function DocumentEditor({ doc: initialDoc, onClose, onSaved, deal
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [savingToFiles, setSavingToFiles] = useState(false);
   const [fileSaveMsg, setFileSaveMsg]     = useState(null); // {ok, text}
-  const [savedFileUrl, setSavedFileUrl]   = useState(null); // URL of last company file snapshot
+  const [savedFileUrl, setSavedFileUrl]     = useState(null); // URL of last company file snapshot
+  const [savedFileRecord, setSavedFileRecord] = useState(null); // full company_files record for deletion
 
   const dt = docType(doc.type);
   const ds = docStatus(doc.status);
@@ -943,6 +944,7 @@ export default function DocumentEditor({ doc: initialDoc, onClose, onSaved, deal
 </head><body>${bodyHtml}</body></html>`;
           const fileRecord = await saveDocToCompanyFiles(saved.company_name, saved.title || 'document', saved.id, fullHtml);
           setSavedFileUrl(fileRecord.url || null);
+          setSavedFileRecord(fileRecord);
         } catch (e) {
           // File save failure is non-blocking — doc is already saved
           console.warn('Company file auto-save failed:', e.message);
@@ -1032,6 +1034,7 @@ ${bodyHtml}
 </body></html>`;
       const fileRecord = await saveDocToCompanyFiles(companyName, currentDoc.title || 'document', currentDoc.id, fullHtml);
       setSavedFileUrl(fileRecord.url || null);
+      setSavedFileRecord(fileRecord);
       setFileSaveMsg({ ok: true, text: `✓ Saved to ${companyName}'s company files.` });
     } catch (e) {
       setFileSaveMsg({ ok: false, text: `Failed: ${e.message}` });
@@ -1203,6 +1206,21 @@ ${bodyHtml}
               title="Document preview"
               style={{ width: '100%', height: 600, border: 'none', display: 'block' }}
             />
+            <div style={{ padding: '12px 24px', display: 'flex', justifyContent: 'flex-end', background: '#f9fafb', borderTop: '1px solid #f3f4f6' }}>
+              <button
+                onClick={async () => {
+                  if (!savedFileRecord) return;
+                  try {
+                    await deleteCompanyFile(savedFileRecord.id, savedFileRecord.storage_path);
+                    setSavedFileUrl(null);
+                    setSavedFileRecord(null);
+                  } catch (e) { console.error('delete file:', e.message); }
+                }}
+                style={{ fontSize: 11, fontWeight: 700, padding: '4px 14px', borderRadius: 20, border: '1px solid #fecaca', background: '#fff', color: '#ef4444', cursor: 'pointer' }}
+              >
+                Delete
+              </button>
+            </div>
           </div>
         )}
       </div>
