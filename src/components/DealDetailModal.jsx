@@ -44,6 +44,7 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
   const [showTranscriptImporter, setShowTranscriptImporter] = useState(false);
   const [showProposalDraft, setShowProposalDraft] = useState(false);
   const [dragOverMtgId, setDragOverMtgId] = useState(null); // id of card being hovered during drag
+  const [dragOverTaskId, setDragOverTaskId] = useState(null); // task card file drop target
   const [dragMtgId, setDragMtgId] = useState(null); // id of card being dragged (state so opacity re-renders)
   const [fileDropActive, setFileDropActive] = useState(false); // file being dragged over meeting log
   const [initialTranscript, setInitialTranscript] = useState(''); // pre-filled transcript from dropped file
@@ -100,6 +101,11 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
   const [dealFiles, setDealFiles]             = useState([]);
   const [companyFiles, setCompanyFiles]       = useState([]); // generated docs from Documents page
   const [filesTabDrop, setFilesTabDrop]       = useState(false);
+  const [confirmDeleteFileId, setConfirmDeleteFileId] = useState(null); // file id awaiting delete confirmation
+  const [hoveredFileId, setHoveredFileId] = useState(null); // file row being hovered
+  const [confirmDeleteTaskId, setConfirmDeleteTaskId] = useState(null); // task id awaiting delete confirmation
+  const [confirmDeleteDeal, setConfirmDeleteDeal] = useState(false); // deal delete confirmation
+  const [meetingSummaryPrompt, setMeetingSummaryPrompt] = useState(null); // { meeting, tasks } after transcript import
   const [uploadingDealFile, setUploadingDealFile] = useState(false);
 
   // AI email draft state
@@ -222,7 +228,7 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
     setDeleting(true);
     try {
       await deleteDeal(deal.id);
-      onSaved(null);
+      onSaved?.(null);
       onClose();
     } catch (e) {
       alert('Error deleting deal: ' + e.message);
@@ -232,40 +238,29 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
   };
 
   const [movingBack, setMovingBack] = useState(false);
-  const moveBackToOutreach = async () => {
+  const moveToWatchList = async () => {
     if (movingBack) return;
     setMovingBack(true);
     try {
-      // Restore (or create) a pipeline entry for this company at 'active' status
-      // First check if a 'won' entry exists — if so, restore it; otherwise insert a new one
-      const { data: existing } = await supabase
-        .from('pipeline_entries')
-        .select('id')
-        .eq('company_id', deal.company_id)
-        .eq('status', 'won')
-        .limit(1);
-
-      if (existing?.length) {
-        await supabase.from('pipeline_entries')
-          .update({ status: 'active', updated_at: new Date().toISOString() })
-          .eq('id', existing[0].id);
-      } else {
-        await supabase.from('pipeline_entries').insert({
-          company_id: deal.company_id,
-          status: 'active',
-          notes: deal.notes || null,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        });
+      // Move deal to nurture stage — preserves all tasks, files, activities, meetings
+      await upsertDeal({ ...deal, stage: 'nurture' });
+      // Sync pipeline_entries so Signal Watch / Watch List views pick it up correctly
+      if (deal.company_id) {
+        const { data: existing } = await supabase
+          .from('pipeline_entries')
+          .select('id, status')
+          .eq('company_id', deal.company_id)
+          .limit(1);
+        if (existing?.length) {
+          await supabase.from('pipeline_entries')
+            .update({ status: 'watch_list', updated_at: new Date().toISOString() })
+            .eq('id', existing[0].id);
+        }
       }
-      // Move deal stage back to outreach so it doesn't linger at a forward stage
-      await upsertDeal({ ...deal, stage: 'outreach' });
       onClose();
-      // Navigate to Active Outreach if handler provided
-      onSaved?.({ ...deal, stage: 'outreach' });
-      alert(`${deal.company_name} moved back to Active Outreach.`);
+      onSaved?.({ ...deal, stage: 'nurture' });
     } catch (e) {
-      alert('Error moving back: ' + e.message);
+      alert('Error moving to Watch List: ' + e.message);
     } finally {
       setMovingBack(false);
     }
@@ -1006,11 +1001,11 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
                 </span>
               )}
               <button
-                onClick={moveBackToOutreach}
+                onClick={moveToWatchList}
                 disabled={movingBack}
                 style={{ fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 20, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-muted)', cursor: 'pointer' }}
               >
-                {movingBack ? 'Moving…' : '↩ Active Outreach'}
+                {movingBack ? 'Moving…' : '↩ Watch List'}
               </button>
               <button
                 onClick={exportToPdf}
@@ -1029,6 +1024,52 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
 
         {/* Body */}
         <div style={{ flex: 1, overflowY: 'auto', padding: '20px 24px' }}>
+
+          {/* ── Meeting summary prompt (appears after transcript import) ── */}
+          {meetingSummaryPrompt && (
+            <div style={{ background: '#f0fdf4', border: '1px solid #86efac', borderRadius: 10, padding: '14px 16px', marginBottom: 20, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16 }}>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 700, color: '#15803d', marginBottom: 2 }}>📋 Send a meeting summary?</div>
+                <div style={{ fontSize: 11, color: '#166534' }}>
+                  {meetingSummaryPrompt.tasks.length} next step{meetingSummaryPrompt.tasks.length !== 1 ? 's' : ''} identified — send a summary email to {deal.contact_name || 'the client'} with your tasks and theirs.
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: 8, flexShrink: 0, alignItems: 'center' }}>
+                <button
+                  onClick={() => {
+                    const contact = mergedContacts.find(c => c.is_primary) || mergedContacts[0];
+                    if (!contact?.email) {
+                      alert('No email found — add a contact with an email on the Contacts tab first.');
+                      return;
+                    }
+                    const firstName = contact.name?.split(' ')[0] || 'there';
+                    const meetingDate = meetingSummaryPrompt.meeting?.meeting_date
+                      ? new Date(meetingSummaryPrompt.meeting.meeting_date).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+                      : new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+
+                    const allTasks = meetingSummaryPrompt.tasks;
+                    const phTasks  = allTasks.filter(t => OWNERS.includes(t.assigned_to));
+                    const clientTasks = allTasks.filter(t => !OWNERS.includes(t.assigned_to));
+
+                    const phLines     = phTasks.length     ? phTasks.map(t => `  • ${t.title}${t.assigned_to ? ` — ${t.assigned_to}` : ''}`).join('\n') : '  • Nothing on our end just yet';
+                    const clientLines = clientTasks.length ? clientTasks.map(t => `  • ${t.title}${t.assigned_to ? ` — ${t.assigned_to}` : ''}`).join('\n') : '  • Nothing on your end just yet';
+
+                    setComposeEmail({ to: contact.email, toName: contact.name });
+                    setComposeDraft({
+                      subject: `Meeting Summary — ${deal.company_name} — ${meetingDate}`,
+                      body: `Hi ${firstName},\n\nGreat meeting today. Here's a quick summary of what we each have on our plate heading into the next phase.\n\nPART HUMAN:\n${phLines}\n\nYOUR NEXT STEPS:\n${clientLines}\n\nLet us know if anything looks off or if priorities shift. Looking forward to making progress together.\n\nBest,\nPete`,
+                    });
+                    setMeetingSummaryPrompt(null);
+                  }}
+                  style={{ fontSize: 11, fontWeight: 700, padding: '5px 14px', borderRadius: 20, border: 'none', background: '#16a34a', color: '#fff', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                >✉ Send Summary</button>
+                <button
+                  onClick={() => setMeetingSummaryPrompt(null)}
+                  style={{ fontSize: 11, fontWeight: 600, padding: '5px 12px', borderRadius: 20, border: '1px solid #86efac', background: 'transparent', color: '#15803d', cursor: 'pointer' }}
+                >Dismiss</button>
+              </div>
+            </div>
+          )}
 
           {/* Collapsible edit form */}
           {showEditForm && (
@@ -1353,7 +1394,15 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
                                 🔔
                               </button>
                             )}
-                            <button onClick={() => removeTask(t.id)} style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 14, flexShrink: 0, padding: '0 2px' }}>×</button>
+                            {confirmDeleteTaskId === t.id ? (
+                              <div style={{ display: 'flex', gap: 4, alignItems: 'center', flexShrink: 0 }}>
+                                <span style={{ fontSize: 10, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>Sure?</span>
+                                <button onClick={() => { setConfirmDeleteTaskId(null); removeTask(t.id); }} style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 20, border: 'none', background: '#ef4444', color: '#fff', cursor: 'pointer', whiteSpace: 'nowrap' }}>Yes</button>
+                                <button onClick={() => setConfirmDeleteTaskId(null)} style={{ fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 20, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text-muted)', cursor: 'pointer' }}>Cancel</button>
+                              </div>
+                            ) : (
+                              <button onClick={() => setConfirmDeleteTaskId(t.id)} style={{ fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 20, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text-muted)', cursor: 'pointer', flexShrink: 0, whiteSpace: 'nowrap' }}>Delete</button>
+                            )}
                           </div>
 
                           {/* ── Notify client? prompt (appears when checkbox is checked) ── */}
@@ -1402,29 +1451,47 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
 
                           {/* ── Expanded attachment + send panel (hidden when notify prompt is open) ── */}
                           {isExpanded && (
-                            <div style={{ padding: '8px 12px 10px 36px', background: '#f8fafc', borderTop: '1px solid var(--border)' }}>
+                            <div
+                              onDragOver={e => { if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); setDragOverTaskId(t.id); } }}
+                              onDragLeave={e => { if (e.relatedTarget && !e.currentTarget.contains(e.relatedTarget)) setDragOverTaskId(null); }}
+                              onDrop={e => { e.preventDefault(); setDragOverTaskId(null); Array.from(e.dataTransfer.files || []).forEach(f => handleTaskFileUpload(t.id, f)); }}
+                              style={{ padding: '8px 12px 10px 36px', background: dragOverTaskId === t.id ? 'color-mix(in srgb, var(--accent) 8%, #f8fafc)' : '#f8fafc', borderTop: `1px solid ${dragOverTaskId === t.id ? 'var(--accent)' : 'var(--border)'}`, transition: 'all .15s' }}
+                            >
+                              {dragOverTaskId === t.id && (
+                                <div style={{ fontSize: 11, color: 'var(--accent)', fontWeight: 600, marginBottom: 6, textAlign: 'center' }}>Drop to attach</div>
+                              )}
                               {/* File list */}
                               {files.map(f => (
-                                <div key={f.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '3px 0', fontSize: 12 }}>
+                                <div key={f.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0', fontSize: 12 }}
+                                  onMouseEnter={e => { const btn = e.currentTarget.querySelector('.del-pill'); if (btn) btn.style.opacity = '1'; }}
+                                  onMouseLeave={e => { const btn = e.currentTarget.querySelector('.del-pill'); if (btn && confirmDeleteFileId !== f.id) btn.style.opacity = '0'; }}
+                                >
                                   <a href={f.url} target="_blank" rel="noopener noreferrer" style={{ color: '#3b82f6', textDecoration: 'none', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                     📎 {f.name}
                                   </a>
                                   <span style={{ fontSize: 11, color: '#9ca3af', flexShrink: 0 }}>{(f.size / 1024).toFixed(0)} KB</span>
-                                  <button
-                                    onClick={() => handleTaskFileDelete(t.id, f.id, f.storage_path)}
-                                    style={{ background: 'none', border: 'none', color: '#9ca3af', cursor: 'pointer', fontSize: 13, padding: 0, flexShrink: 0 }}
-                                  >×</button>
+                                  {confirmDeleteFileId === f.id ? (
+                                    <div style={{ display: 'flex', gap: 4, alignItems: 'center', flexShrink: 0 }}>
+                                      <span style={{ fontSize: 10, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>Sure?</span>
+                                      <button onClick={() => { setConfirmDeleteFileId(null); handleTaskFileDelete(t.id, f.id, f.storage_path); }} style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 20, border: 'none', background: '#ef4444', color: '#fff', cursor: 'pointer' }}>Yes</button>
+                                      <button onClick={() => setConfirmDeleteFileId(null)} style={{ fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 20, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text-muted)', cursor: 'pointer' }}>Cancel</button>
+                                    </div>
+                                  ) : (
+                                    <button className="del-pill" onClick={() => setConfirmDeleteFileId(f.id)} style={{ fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 20, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text-muted)', cursor: 'pointer', flexShrink: 0, opacity: 0, transition: 'opacity .15s' }}>Delete</button>
+                                  )}
                                 </div>
                               ))}
                               {/* Action buttons */}
-                              <div style={{ display: 'flex', gap: 8, marginTop: files.length ? 8 : 2 }}>
-                                <label style={{ cursor: 'pointer', fontSize: 11, fontWeight: 600, padding: '4px 10px', borderRadius: 5, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text-muted)', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                                  {uploadingTaskId === t.id ? 'Uploading…' : '📎 Attach'}
+                              <div style={{ display: 'flex', gap: 8, marginTop: files.length ? 8 : 2, alignItems: 'center' }}>
+                                <label style={{ cursor: 'pointer', fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', height: 28, width: 80, textAlign: 'center', padding: '0', borderRadius: 20, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text-muted)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', boxSizing: 'border-box' }}>
+                                  {uploadingTaskId === t.id ? '…' : 'Attach'}
                                   <input
                                     type="file"
+                                    accept="*/*"
+                                    multiple
                                     style={{ display: 'none' }}
                                     disabled={uploadingTaskId === t.id}
-                                    onChange={e => { const f = e.target.files[0]; if (f) handleTaskFileUpload(t.id, f); e.target.value = ''; }}
+                                    onChange={e => { Array.from(e.target.files || []).forEach(f => handleTaskFileUpload(t.id, f)); e.target.value = ''; }}
                                   />
                                 </label>
                                 <button
@@ -1434,15 +1501,21 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
                                       alert('No email address found — add a contact with an email on the Contacts tab.');
                                       return;
                                     }
+                                    const firstName = contact.name?.split(' ')[0] || contact.name || 'there';
                                     const fileLinks = files.map(f => `${f.name}: ${f.url}`).join('\n');
+                                    const fileNote = fileLinks ? `\n\nI've attached the following for your reference:\n${fileLinks}` : '';
                                     setComposeEmail({ to: contact.email, toName: contact.name });
                                     setComposeTaskId(t.id);
-                                    setComposeDraft({ subject: t.title, body: fileLinks ? `\n\nAttachments:\n${fileLinks}` : '' });
+                                    setComposeDraft({
+                                      subject: t.title,
+                                      body: `Hi ${firstName},\n\nI wanted to share the following with you regarding "${t.title}".\n\nPlease let me know if you have any questions or if there's anything you'd like to discuss.${fileNote}\n\nBest,\nPete`,
+                                    });
                                   }}
-                                  style={{ fontSize: 11, fontWeight: 600, padding: '4px 10px', borderRadius: 5, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text-muted)', cursor: 'pointer' }}
+                                  style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', height: 28, width: 80, padding: 0, borderRadius: 20, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text-muted)', cursor: 'pointer', boxSizing: 'border-box' }}
                                 >
-                                  ✉ Send
+                                  Send
                                 </button>
+                                <span style={{ fontSize: 10, color: 'var(--text-faint)', marginLeft: 4 }}>or drag & drop</span>
                               </div>
                             </div>
                           )}
@@ -1649,7 +1722,7 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
               {tab === 'meetings' && (
                 <div
                   onDragOver={e => { if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); setFileDropActive(true); } }}
-                  onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget)) setFileDropActive(false); }}
+                  onDragLeave={e => { if (e.relatedTarget && !e.currentTarget.contains(e.relatedTarget)) setFileDropActive(false); }}
                   onDrop={e => {
                     e.preventDefault();
                     e.stopPropagation();
@@ -1802,12 +1875,12 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
                   {/* Drop zone */}
                   <div
                     onDragOver={e => { if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); setFilesTabDrop(true); } }}
-                    onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget)) setFilesTabDrop(false); }}
+                    onDragLeave={e => { if (e.relatedTarget && !e.currentTarget.contains(e.relatedTarget)) setFilesTabDrop(false); }}
                     onDrop={e => {
                       e.preventDefault();
                       setFilesTabDrop(false);
-                      const file = e.dataTransfer.files?.[0];
-                      if (file) handleDealFileUpload(file);
+                      const files = Array.from(e.dataTransfer.files || []);
+                      files.forEach(file => handleDealFileUpload(file));
                     }}
                     style={{ position: 'relative', border: `2px dashed ${filesTabDrop ? 'var(--accent)' : 'var(--border)'}`, borderRadius: 10, padding: '20px 16px', textAlign: 'center', marginBottom: 20, background: filesTabDrop ? 'color-mix(in srgb, var(--accent) 6%, transparent)' : 'var(--surface)', transition: 'all .15s' }}
                   >
@@ -1816,16 +1889,18 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
                       {filesTabDrop ? 'Drop to upload' : 'Drop files here or click to browse'}
                     </p>
                     <label style={{ cursor: 'pointer', fontSize: 11, fontWeight: 700, padding: '5px 14px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text-muted)', display: 'inline-block' }}>
-                      {uploadingDealFile ? 'Uploading…' : '+ Add File'}
+                      {uploadingDealFile ? 'Uploading…' : '+ Add Files'}
                       <input
                         type="file"
+                        accept="*/*"
+                        multiple
                         style={{ display: 'none' }}
                         disabled={uploadingDealFile}
-                        onChange={e => { const f = e.target.files?.[0]; if (f) handleDealFileUpload(f); e.target.value = ''; }}
+                        onChange={e => { Array.from(e.target.files || []).forEach(f => handleDealFileUpload(f)); e.target.value = ''; }}
                       />
                     </label>
                     <p style={{ fontSize: 10, color: 'var(--text-faint)', margin: '8px 0 0' }}>
-                      All files are included in AI thesis builds
+                      PDFs, Word docs, images, spreadsheets, video — any format · All files feed AI thesis builds
                     </p>
                   </div>
 
@@ -1860,12 +1935,12 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
                         <div
                           key={`${f._source}-${f.id}`}
                           onClick={openFile}
-                          style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 7, cursor: 'pointer', textDecoration: 'none', color: 'inherit' }}
-                          onMouseEnter={e => e.currentTarget.style.background = 'var(--bg)'}
-                          onMouseLeave={e => e.currentTarget.style.background = 'var(--surface)'}
+                          style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', background: hoveredFileId === f.id ? 'var(--bg)' : 'var(--surface)', border: '1px solid var(--border)', borderRadius: 7, cursor: 'pointer', textDecoration: 'none', color: 'inherit' }}
+                          onMouseEnter={() => setHoveredFileId(f.id)}
+                          onMouseLeave={() => { setHoveredFileId(null); }}
                         >
                           <span style={{ fontSize: 18, flexShrink: 0 }}>
-                            {/pdf/i.test(f.mime_type) ? '📄' : /image/i.test(f.mime_type) ? '🖼' : /word|doc/i.test(f.mime_type) ? '📝' : /sheet|excel|csv/i.test(f.mime_type) ? '📊' : '📎'}
+{'📎'}
                           </span>
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -1888,24 +1963,30 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
                               )}
                             </div>
                           </div>
-                          {f._source === 'deal' && (
+                          {confirmDeleteFileId === f.id ? (
+                            <div onClick={e => e.stopPropagation()} style={{ display: 'flex', gap: 5, alignItems: 'center', flexShrink: 0 }}>
+                              <span style={{ fontSize: 10, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>Are you sure?</span>
+                              <button
+                                onClick={e => {
+                                  e.stopPropagation();
+                                  setConfirmDeleteFileId(null);
+                                  if (f._source === 'deal') handleDealFileDelete(f.id, f.storage_path);
+                                  else if (f._source === 'task') handleTaskFileDelete(f.task_id, f.id, f.storage_path);
+                                  else if (f._source === 'document') deleteCompanyFile(f.id, f.storage_path).then(() => setCompanyFiles(prev => prev.filter(cf => cf.id !== f.id))).catch(console.error);
+                                }}
+                                style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 20, border: 'none', background: '#ef4444', color: '#fff', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                              >Yes, delete</button>
+                              <button
+                                onClick={e => { e.stopPropagation(); setConfirmDeleteFileId(null); }}
+                                style={{ fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 20, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text-muted)', cursor: 'pointer' }}
+                              >Cancel</button>
+                            </div>
+                          ) : hoveredFileId === f.id ? (
                             <button
-                              onClick={e => { e.stopPropagation(); handleDealFileDelete(f.id, f.storage_path); }}
-                              style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 15, flexShrink: 0, padding: '0 2px' }}
-                            >×</button>
-                          )}
-                          {f._source === 'task' && (
-                            <button
-                              onClick={e => { e.stopPropagation(); handleTaskFileDelete(f.task_id, f.id, f.storage_path); }}
-                              style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 15, flexShrink: 0, padding: '0 2px' }}
-                            >×</button>
-                          )}
-                          {f._source === 'document' && (
-                            <button
-                              onClick={e => { e.stopPropagation(); deleteCompanyFile(f.id, f.storage_path).then(() => setCompanyFiles(prev => prev.filter(cf => cf.id !== f.id))).catch(console.error); }}
-                              style={{ background: 'none', border: '1px solid #fecaca', borderRadius: 20, color: '#ef4444', cursor: 'pointer', fontSize: 10, fontWeight: 700, flexShrink: 0, padding: '2px 8px', lineHeight: 1.4 }}
-                            >Delete</button>
-                          )}
+                              onClick={e => { e.stopPropagation(); setConfirmDeleteFileId(f.id); }}
+                              style={{ fontSize: 10, fontWeight: 600, padding: '2px 10px', borderRadius: 20, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text-muted)', cursor: 'pointer', flexShrink: 0, whiteSpace: 'nowrap' }}
+                            >Delete file</button>
+                          ) : null}
                         </div>
                         );
                       })}
@@ -2508,6 +2589,44 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
 
             </>
           )}
+
+          {/* ── Delete Deal footer ── */}
+          {deal.id && (
+            <div style={{ marginTop: 32, paddingTop: 16, borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'flex-end' }}>
+              {confirmDeleteDeal ? (
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Permanently delete this deal?</span>
+                  <button
+                    onClick={async () => {
+                      setConfirmDeleteDeal(false);
+                      setDeleting(true);
+                      try {
+                        await deleteDeal(deal.id);
+                        onSaved(null);
+                        onClose();
+                      } catch (e) {
+                        alert('Error deleting deal: ' + e.message);
+                      } finally {
+                        setDeleting(false);
+                      }
+                    }}
+                    style={{ fontSize: 11, fontWeight: 700, padding: '4px 14px', borderRadius: 20, border: 'none', background: '#ef4444', color: '#fff', cursor: 'pointer' }}
+                  >{deleting ? 'Deleting…' : 'Yes, delete'}</button>
+                  <button
+                    onClick={() => setConfirmDeleteDeal(false)}
+                    style={{ fontSize: 11, fontWeight: 600, padding: '4px 12px', borderRadius: 20, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text-muted)', cursor: 'pointer' }}
+                  >Cancel</button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setConfirmDeleteDeal(true)}
+                  style={{ fontSize: 11, fontWeight: 600, padding: '4px 14px', borderRadius: 20, border: '1px solid #fecaca', background: 'transparent', color: '#ef4444', cursor: 'pointer', opacity: 0, transition: 'opacity .2s' }}
+                  onMouseEnter={e => e.currentTarget.style.opacity = '1'}
+                  onMouseLeave={e => e.currentTarget.style.opacity = '0'}
+                >Delete deal</button>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -2567,6 +2686,11 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
 
           // New meeting = new context → refresh AI next steps in background
           silentRefreshThesis(updatedMeetings || undefined);
+
+          // Prompt to send meeting summary if tasks were imported
+          if (importedTasks?.length) {
+            setMeetingSummaryPrompt({ meeting, tasks: importedTasks });
+          }
 
           setShowTranscriptImporter(false);
           setInitialTranscript('');
