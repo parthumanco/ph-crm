@@ -854,6 +854,31 @@ export async function migrateDealTasksToProject(dealId, projectId) {
   }
 }
 
+// Migrate deal-level files (uploaded directly to the deal, not to a task) → project_files.
+// These appear in the project Files tab at the top level (no milestone_id, no task_id).
+export async function migrateDealFilesToProject(dealId, projectId) {
+  const { data: files, error } = await supabase
+    .from('deal_files')
+    .select('*')
+    .eq('deal_id', dealId);
+  if (error) throw new Error(error.message);
+  if (!files?.length) return;
+
+  const rows = files.map(f => ({
+    project_id:   projectId,
+    milestone_id: null,
+    task_id:      null,
+    name:         f.name,
+    size:         f.size,
+    mime_type:    f.mime_type,
+    storage_path: f.storage_path,
+    url:          f.url,
+  }));
+
+  const { error: iErr } = await supabase.from('project_files').insert(rows);
+  if (iErr) console.warn('migrateDealFilesToProject: insert failed:', iErr.message);
+}
+
 export async function generateProposalFromMeetings(meetings, companyName, startDate) {
   const key = import.meta.env.VITE_ANTHROPIC_API_KEY;
   if (!key) throw new Error('No API key configured');

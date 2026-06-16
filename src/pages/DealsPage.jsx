@@ -4,7 +4,7 @@ import {
   ACTIVE_STAGES, CLOSED_STAGES,
   stageColor, stageLabel, dealValue, fmt$, daysSince,
 } from '../lib/deals';
-import { upsertProject, buildTimelineFromParsed, bulkInsertMilestones, bulkInsertTasks, migrateDealMeetingsToProject, migrateDealTasksToProject } from '../lib/projects';
+import { upsertProject, buildTimelineFromParsed, bulkInsertMilestones, bulkInsertTasks, migrateDealMeetingsToProject, migrateDealTasksToProject, migrateDealFilesToProject } from '../lib/projects';
 import { upsertClientContacts } from '../lib/clients';
 import DealDetailModal from '../components/DealDetailModal';
 import ProposalImporter from '../components/ProposalImporter';
@@ -240,10 +240,11 @@ export default function DealsPage({ refreshKey = 0, targetDealId = null, onTarge
         }]).catch(e => console.warn('Won contact sync:', e.message));
       }
 
-      // Migrate any deal meetings + tasks into the new project
+      // Migrate any deal meetings, tasks, and files into the new project
       if (deal.id) {
         await migrateDealMeetingsToProject(deal.id, proj.id);
         await migrateDealTasksToProject(deal.id, proj.id).catch(e => console.warn('Task migration:', e.message));
+        await migrateDealFilesToProject(deal.id, proj.id).catch(e => console.warn('File migration:', e.message));
       }
       setWonToast(proj.name || deal.company_name);
       setTimeout(() => setWonToast(null), 5000);
@@ -369,10 +370,11 @@ export default function DealsPage({ refreshKey = 0, targetDealId = null, onTarge
         }]).catch(e => console.warn('Proposal contact sync:', e.message));
       }
 
-      // 4. Migrate any deal meetings + tasks over to the new project
+      // 4. Migrate any deal meetings, tasks, and files over to the new project
       if (deal.id) {
         await migrateDealMeetingsToProject(deal.id, proj.id);
         await migrateDealTasksToProject(deal.id, proj.id).catch(e => console.warn('Task migration:', e.message));
+        await migrateDealFilesToProject(deal.id, proj.id).catch(e => console.warn('File migration:', e.message));
       }
 
       // 5. Show success toast

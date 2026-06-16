@@ -1001,23 +1001,24 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
                 </span>
               )}
               <button
-                onClick={moveToWatchList}
-                disabled={movingBack}
-                style={{ fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 20, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-muted)', cursor: 'pointer' }}
-              >
-                {movingBack ? 'Moving…' : '↩ Watch List'}
-              </button>
-              <button
-                onClick={exportToPdf}
-                style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-muted)', cursor: 'pointer' }}
-                title="Export to PDF"
-              >⬇ Export PDF</button>
-              <button
                 onClick={() => setShowEditForm(v => !v)}
-                style={{ fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 6, border: '1px solid var(--border)', background: showEditForm ? 'var(--accent)' : 'var(--surface)', color: showEditForm ? '#fff' : 'var(--text-muted)', cursor: 'pointer' }}
+                style={{ fontSize: 11, fontWeight: 700, padding: '3px 0', width: 96, borderRadius: 20, border: '1px solid var(--border)', background: showEditForm ? 'var(--accent)' : 'var(--surface)', color: showEditForm ? '#fff' : 'var(--text-muted)', cursor: 'pointer' }}
               >
-                {showEditForm ? '▲ Close' : '✏ Edit'}
+                {showEditForm ? 'Close' : 'Edit Deal'}
               </button>
+              <div style={{ marginLeft: 'auto', display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-end' }}>
+                <button
+                  onClick={exportToPdf}
+                  style={{ fontSize: 11, fontWeight: 700, padding: '3px 0', width: 96, borderRadius: 20, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-muted)', cursor: 'pointer' }}
+                >Export PDF</button>
+                <button
+                  onClick={moveToWatchList}
+                  disabled={movingBack}
+                  style={{ fontSize: 11, fontWeight: 700, padding: '3px 0', width: 96, borderRadius: 20, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-muted)', cursor: 'pointer' }}
+                >
+                  {movingBack ? 'Moving…' : 'Watch List'}
+                </button>
+              </div>
             </div>
           )}
         </div>
