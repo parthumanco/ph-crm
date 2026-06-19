@@ -1,10 +1,11 @@
 import { useState, useEffect, useRef } from 'react';
 import {
   fetchClients, fetchClientDetail, fetchCompanyIntel, runClientDeepScan, runBuildThesis,
-  upsertClient, upsertClientContacts, enrichClientContact,
-  addClientItem, deleteClientItem, askClientQuestion,
+  upsertClient, upsertClientContacts, enrichClientContact, findOrCreateCompany,
+  addClientItem, deleteClientItem, askClientQuestion, silentRefreshThesis,
 } from '../lib/clients';
 import { fetchDocuments, fetchCompanyFiles, docType } from '../lib/documents';
+import { deleteProject, restoreProject, upsertProject } from '../lib/projects';
 import DocumentEditor from '../components/DocumentEditor';
 
 const STATUS_COLOR = { active: '#10b981', completed: '#6366f1', on_hold: '#f59e0b', cancelled: '#ef4444', archived: '#9ca3af' };
@@ -39,6 +40,23 @@ export default function ClientsPage({ onNavigate, refreshKey, icp }) {
   const [loadingList, setLoadingList]     = useState(true);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [tab, setTab]                     = useState('overview');
+  const [hoveredProjectId, setHoveredProjectId]       = useState(null); // archived project row being hovered
+  const [confirmDeleteProjectId, setConfirmDeleteProjectId] = useState(null); // project id awaiting delete confirmation
+  const [deletingProjectId, setDeletingProjectId]     = useState(null);
+  const [restoringProjectId, setRestoringProjectId]   = useState(null);
+
+  // New client
+  const [showNewClient, setShowNewClient] = useState(false);
+  const [newClientDraft, setNewClientDraft] = useState({ name: '', website: '', linkedin_url: '', notes: '' });
+  const [creatingClient, setCreatingClient] = useState(false);
+  const [newClientError, setNewClientError] = useState('');
+
+  // New project (from client's Projects tab)
+  const [addingProject, setAddingProject] = useState(false);
+  const [newProjectName, setNewProjectName] = useState('');
+  const [newProjectStart, setNewProjectStart] = useState(() => new Date().toISOString().slice(0, 10));
+  const [creatingProject, setCreatingProject] = useState(false);
+  const [newProjectError, setNewProjectError] = useState('');
 
   // Edit
   const [editing, setEditing]   = useState(false);
@@ -79,6 +97,18 @@ export default function ClientsPage({ onNavigate, refreshKey, icp }) {
   const [clientFiles,   setClientFiles]   = useState([]);
   const [docsLoading,   setDocsLoading]   = useState(false);
   const [openDoc,       setOpenDoc]       = useState(null); // doc open in editor
+
+  // Background thesis auto-refresh — fires after any add (item/contact/etc.)
+  // so the AI thesis stays current without a manual "Build Thesis" click.
+  const autoRefreshingRef = useRef(false);
+  const triggerThesisRefresh = (overrides = {}) => {
+    if (!detail?.client?.name || autoRefreshingRef.current) return;
+    autoRefreshingRef.current = true;
+    silentRefreshThesis(detail.client.name, { ...detail, intel, ...overrides }, selected)
+      .then(updated => { if (updated) setIntel(prev => ({ ...prev, ...updated })); })
+      .catch(e => console.warn('[ClientsPage] thesis auto-refresh failed:', e.message))
+      .finally(() => { autoRefreshingRef.current = false; });
+  };
 
   // ── Load documents + files for current client ─────────────────────────────
   useEffect(() => {
@@ -128,6 +158,67 @@ export default function ClientsPage({ onNavigate, refreshKey, icp }) {
   const filtered = clients.filter(c => c.name.toLowerCase().includes(search.toLowerCase()));
 
   // ── Handlers ──────────────────────────────────────────────────────────────
+  const handleCreateClient = async () => {
+    const name = newClientDraft.name.trim();
+    if (!name) { setNewClientError('Name is required'); return; }
+    const dupe = clients.find(c => c.name.toLowerCase() === name.toLowerCase());
+    if (dupe) {
+      // Already exists — just navigate there instead of creating a duplicate.
+      setSelected(dupe.id);
+      setShowNewClient(false);
+      setNewClientDraft({ name: '', website: '', linkedin_url: '', notes: '' });
+      setNewClientError('');
+      return;
+    }
+    setCreatingClient(true);
+    setNewClientError('');
+    try {
+      const saved = await upsertClient({
+        name,
+        website: newClientDraft.website.trim() || null,
+        linkedin_url: newClientDraft.linkedin_url.trim() || null,
+        notes: newClientDraft.notes.trim() || null,
+      });
+      // Also create the matching companies row up front, so Quick Scan / Build
+      // Thesis / contact discovery are available immediately — exactly like a
+      // client that got created automatically via a won deal or project.
+      await findOrCreateCompany(name).catch(e => console.warn('findOrCreateCompany failed:', e.message));
+      setClients(prev => [...prev, saved].sort((a, b) => a.name.localeCompare(b.name)));
+      setSelected(saved.id);
+      setShowNewClient(false);
+      setNewClientDraft({ name: '', website: '', linkedin_url: '', notes: '' });
+    } catch (e) {
+      setNewClientError(e.message || 'Failed to create client');
+    } finally {
+      setCreatingClient(false);
+    }
+  };
+
+  const handleCreateProject = async () => {
+    const name = newProjectName.trim();
+    if (!name || !detail?.client) { setNewProjectError('Project name is required'); return; }
+    setCreatingProject(true);
+    setNewProjectError('');
+    try {
+      const saved = await upsertProject({
+        name,
+        client_name: detail.client.name,
+        start_date: newProjectStart || null,
+        status: 'active',
+      });
+      setDetail(d => ({ ...d, projects: [saved, ...d.projects] }));
+      setAddingProject(false);
+      setNewProjectName('');
+      setNewProjectStart(new Date().toISOString().slice(0, 10));
+      // Jump straight to the new project on the Projects page.
+      onNavigate?.('projects', null, saved.id);
+    } catch (e) {
+      setNewProjectError(e.message || 'Failed to create project');
+    } finally {
+      setCreatingProject(false);
+    }
+  };
+
   const handleSaveClient = async () => {
     setSaving(true);
     try {
@@ -144,9 +235,11 @@ export default function ClientsPage({ onNavigate, refreshKey, icp }) {
     setSavingItem(true);
     try {
       const item = await addClientItem({ clientId: selected, type: itemDraft.type, title: itemDraft.title || itemDraft.body.slice(0, 60), url: itemDraft.url || null, body: itemDraft.body || null });
-      setDetail(d => ({ ...d, items: [item, ...d.items] }));
+      let newItems;
+      setDetail(d => { newItems = [item, ...d.items]; return { ...d, items: newItems }; });
       setItemDraft({ type: 'note', title: '', url: '', body: '' });
       setAddingItem(false);
+      triggerThesisRefresh({ items: newItems });
     } catch (e) { console.error(e); }
     finally { setSavingItem(false); }
   };
@@ -204,6 +297,7 @@ export default function ClientsPage({ onNavigate, refreshKey, icp }) {
       }, selected);
       setIntel(updated);
       addThesisLog('✅', `Thesis complete — ICP ${updated.icp_score ?? '?'}/10 · ${updated.icp_tier ?? ''}`, 4);
+      setTimeout(() => setShowThesisModal(false), 1500);
     } catch (e) {
       setThesisError(e.message || 'Thesis build failed');
       addThesisLog('❌', `Error: ${e.message}`, 0);
@@ -274,6 +368,7 @@ export default function ClientsPage({ onNavigate, refreshKey, icp }) {
       const updated = await enrichClientContact(selected, contact, detail?.client?.name || '');
       setDetail(d => ({ ...d, client: { ...d.client, contacts: updated } }));
       setExpandedContact(contact.name);
+      triggerThesisRefresh();
     } catch (e) { console.error('Enrich failed:', e); }
     finally { setEnrichingContact(null); }
   };
@@ -286,6 +381,7 @@ export default function ClientsPage({ onNavigate, refreshKey, icp }) {
     setContactDraft({ name: '', title: '', email: '', linkedin: '' });
     setAddingContact(false);
     setExpandedContact(newContact.name);
+    triggerThesisRefresh();
   };
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -294,13 +390,17 @@ export default function ClientsPage({ onNavigate, refreshKey, icp }) {
 
       {/* ── Left sidebar ── */}
       <div style={{ width: 220, flexShrink: 0, borderRight: '1px solid var(--border)', display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--surface)' }}>
-        <div style={{ padding: '12px 12px 8px' }}>
+        <div style={{ padding: '12px 12px 8px', display: 'flex', flexDirection: 'column', gap: 8 }}>
           <input
             value={search}
             onChange={e => setSearch(e.target.value)}
             placeholder="Search clients…"
             style={{ width: '100%', fontSize: 12, padding: '7px 10px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)' }}
           />
+          <button
+            onClick={() => { setShowNewClient(true); setNewClientDraft({ name: '', website: '', linkedin_url: '', notes: '' }); setNewClientError(''); }}
+            style={{ width: '100%', fontSize: 12, fontWeight: 700, padding: '7px 10px', borderRadius: 7, border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff', cursor: 'pointer' }}
+          >+ New Client</button>
         </div>
         <div style={{ flex: 1, overflowY: 'auto', padding: '4px 0' }}>
           {loadingList ? (
@@ -371,20 +471,22 @@ export default function ClientsPage({ onNavigate, refreshKey, icp }) {
                       <button
                         onClick={handleDeepScan}
                         disabled={scanning || buildingThesis}
-                        style={{ fontSize: 11, fontWeight: 700, padding: '6px 12px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--surface)', color: (scanning || buildingThesis) ? 'var(--text-faint)' : 'var(--text-muted)', cursor: (scanning || buildingThesis) ? 'default' : 'pointer', display: 'flex', alignItems: 'center', gap: 5 }}
+                        style={{ fontSize: 11, fontWeight: 700, padding: '6px 12px', borderRadius: 20, border: '1px solid var(--accent)', background: (scanning || buildingThesis) ? 'var(--surface)' : 'var(--accent)', color: (scanning || buildingThesis) ? 'var(--text-faint)' : '#fff', cursor: (scanning || buildingThesis) ? 'default' : 'pointer', display: 'flex', alignItems: 'center', gap: 5 }}
                       >
-                        {scanning ? <><span style={{ display: 'inline-block', width: 10, height: 10, border: '2px solid var(--accent)', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} /> {scanStatus || 'Scanning…'}</> : '🔍 Quick Scan'}
+                        {scanning ? <><span style={{ display: 'inline-block', width: 10, height: 10, border: '2px solid var(--accent)', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} /> {scanStatus || 'Scanning…'}</> : 'Quick Scan'}
                       </button>
                       <button
                         onClick={handleBuildThesis}
                         disabled={scanning || buildingThesis}
-                        style={{ fontSize: 11, fontWeight: 700, padding: '6px 14px', borderRadius: 7, border: '1px solid var(--accent)', background: buildingThesis ? 'var(--surface)' : 'var(--accent)', color: buildingThesis ? 'var(--text-faint)' : '#fff', cursor: (scanning || buildingThesis) ? 'default' : 'pointer', display: 'flex', alignItems: 'center', gap: 5 }}
+                        style={{ fontSize: 11, fontWeight: 700, padding: '6px 14px', borderRadius: 20, border: '1px solid var(--accent)', background: buildingThesis ? 'var(--surface)' : 'var(--accent)', color: buildingThesis ? 'var(--text-faint)' : '#fff', cursor: (scanning || buildingThesis) ? 'default' : 'pointer', display: 'flex', alignItems: 'center', gap: 5 }}
                       >
-                        {buildingThesis ? <><span style={{ display: 'inline-block', width: 10, height: 10, border: '2px solid var(--accent)', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} /> Building…</> : '🧠 Build Thesis'}
+                        {buildingThesis
+                          ? <><span style={{ display: 'inline-block', width: 10, height: 10, border: '2px solid var(--accent)', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} /> Building…</>
+                          : intel?.thesis_built ? 'Expand Research' : 'Build Thesis'}
                       </button>
                     </>
                   )}
-                  <button onClick={() => { setEditing(true); setTab('contacts'); }} style={{ fontSize: 11, fontWeight: 700, padding: '6px 12px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-muted)', cursor: 'pointer' }}>✏️ Edit</button>
+                  <button onClick={() => { setEditing(true); setTab('contacts'); }} style={{ fontSize: 11, fontWeight: 700, padding: '6px 12px', borderRadius: 20, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-muted)', cursor: 'pointer' }}>Edit</button>
                 </div>
               </div>
 
@@ -577,7 +679,7 @@ export default function ClientsPage({ onNavigate, refreshKey, icp }) {
                     <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em' }}>
                       {allContacts.length} Contact{allContacts.length !== 1 ? 's' : ''}
                     </div>
-                    <button onClick={() => setAddingContact(true)} style={{ fontSize: 11, fontWeight: 700, padding: '5px 12px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-muted)', cursor: 'pointer' }}>+ Add Contact</button>
+                    <button onClick={() => setAddingContact(true)} style={{ fontSize: 11, fontWeight: 700, padding: '5px 12px', borderRadius: 7, border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff', cursor: 'pointer' }}>+ Add Contact</button>
                   </div>
 
                   {/* Add contact form */}
@@ -639,7 +741,7 @@ export default function ClientsPage({ onNavigate, refreshKey, icp }) {
                               onClick={() => handleEnrichContact(c)}
                               disabled={!!enrichingContact}
                               title="Enrich with AI — builds full dossier from web search"
-                              style={{ fontSize: 10, fontWeight: 700, padding: '4px 10px', borderRadius: 6, border: '1px solid var(--border)', background: isEnriching ? 'var(--surface-2)' : 'var(--surface)', color: isEnriching ? 'var(--accent)' : 'var(--text-muted)', cursor: enrichingContact ? 'default' : 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}
+                              style={{ fontSize: 10, fontWeight: 700, padding: '4px 10px', borderRadius: 6, border: '1px solid var(--accent)', background: isEnriching ? 'var(--surface-2)' : 'var(--accent)', color: isEnriching ? 'var(--accent)' : '#fff', cursor: enrichingContact ? 'default' : 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}
                             >
                               {isEnriching ? <><span style={{ display: 'inline-block', width: 8, height: 8, border: '1.5px solid var(--accent)', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} /> enriching…</> : '🔬 Enrich'}
                             </button>
@@ -764,18 +866,129 @@ export default function ClientsPage({ onNavigate, refreshKey, icp }) {
               {/* ── Projects ── */}
               {tab === 'projects' && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 12, maxWidth: 680 }}>
+                  <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                    {addingProject ? (
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'flex-end', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: 12, width: '100%' }}>
+                        <div style={{ flex: '1 1 200px' }}>
+                          <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 3 }}>Project Name</label>
+                          <input
+                            autoFocus
+                            value={newProjectName}
+                            onChange={e => setNewProjectName(e.target.value)}
+                            onKeyDown={e => { if (e.key === 'Enter') handleCreateProject(); if (e.key === 'Escape') setAddingProject(false); }}
+                            placeholder="e.g. Rebrand & Website Redesign"
+                            style={{ width: '100%', fontSize: 13, padding: '6px 10px' }}
+                          />
+                        </div>
+                        <div>
+                          <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 3 }}>Start Date</label>
+                          <input
+                            type="date"
+                            value={newProjectStart}
+                            onChange={e => setNewProjectStart(e.target.value)}
+                            style={{ fontSize: 13, padding: '6px 10px' }}
+                          />
+                        </div>
+                        <button onClick={handleCreateProject} disabled={creatingProject || !newProjectName.trim()} style={{ fontSize: 12, fontWeight: 700, padding: '7px 16px', borderRadius: 7, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer', opacity: creatingProject || !newProjectName.trim() ? 0.6 : 1 }}>
+                          {creatingProject ? 'Creating…' : 'Create'}
+                        </button>
+                        <button onClick={() => { setAddingProject(false); setNewProjectError(''); }} style={{ fontSize: 12, padding: '7px 14px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-muted)', cursor: 'pointer' }}>Cancel</button>
+                        {newProjectError && <div style={{ fontSize: 12, color: '#ef4444', width: '100%' }}>{newProjectError}</div>}
+                      </div>
+                    ) : (
+                      <button onClick={() => setAddingProject(true)} style={{ fontSize: 12, fontWeight: 700, padding: '7px 16px', borderRadius: 8, border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff', cursor: 'pointer' }}>+ Add Project</button>
+                    )}
+                  </div>
                   {detail.projects.length === 0 ? (
                     <div style={{ fontSize: 13, color: 'var(--text-faint)', textAlign: 'center', padding: '40px 0' }}>No projects yet.</div>
-                  ) : detail.projects.map(p => (
-                    <div key={p.id} onClick={() => onNavigate?.('projects')} style={{ padding: '14px 16px', background: 'var(--surface)', borderRadius: 10, border: '1px solid var(--border)', cursor: 'pointer', transition: 'border-color .15s' }} onMouseEnter={e => e.currentTarget.style.borderColor = 'var(--accent)'} onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--border)'}>
+                  ) : detail.projects.map(p => {
+                    const isArchived = projStatus(p) === 'archived';
+                    return (
+                    <div
+                      key={p.id}
+                      onClick={() => onNavigate?.('projects', null, p.id)}
+                      onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--accent)'; }}
+                      onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; }}
+                      style={{ padding: '14px 16px', background: 'var(--surface)', borderRadius: 10, border: '1px solid var(--border)', cursor: 'pointer', transition: 'border-color .15s', position: 'relative' }}
+                    >
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
                         <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>{p.name}</div>
-                        <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 10, background: (STATUS_COLOR[projStatus(p)] || '#9ca3af') + '22', color: STATUS_COLOR[projStatus(p)] || '#9ca3af', flexShrink: 0 }}>{projStatusLabel(p)}</span>
+                        <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0 }}>
+                          {isArchived && (
+                            <button
+                              onClick={async e => {
+                                e.stopPropagation();
+                                setRestoringProjectId(p.id);
+                                try {
+                                  await restoreProject(p.id);
+                                  setDetail(d => ({ ...d, projects: d.projects.map(proj => proj.id === p.id ? { ...proj, archived_at: null, status: 'active' } : proj) }));
+                                } catch (e2) {
+                                  alert('Error restoring project: ' + e2.message);
+                                } finally {
+                                  setRestoringProjectId(null);
+                                }
+                              }}
+                              disabled={restoringProjectId === p.id}
+                              style={{ width: 70, textAlign: 'center', fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text-muted)', cursor: restoringProjectId === p.id ? 'not-allowed' : 'pointer' }}
+                            >
+                              {restoringProjectId === p.id ? '…' : 'Restore'}
+                            </button>
+                          )}
+                          <span style={{ width: 70, textAlign: 'center', fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 10, background: (STATUS_COLOR[projStatus(p)] || '#9ca3af') + '22', color: STATUS_COLOR[projStatus(p)] || '#9ca3af', flexShrink: 0 }}>{projStatusLabel(p)}</span>
+                        </div>
                       </div>
                       {p.description && <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '4px 0 0', lineHeight: 1.5 }}>{p.description}</p>}
                       <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 6 }}>Started {fmtDate(p.start_date)}{p.end_date ? ` · Ends ${fmtDate(p.end_date)}` : ''}</div>
+
+                      {isArchived && (
+                        <div
+                          onMouseEnter={e => { e.stopPropagation(); setHoveredProjectId(p.id); }}
+                          onMouseLeave={e => { e.stopPropagation(); setHoveredProjectId(null); }}
+                          style={{ position: 'absolute', top: 38, right: 12, height: 22, display: 'flex', alignItems: 'center' }}
+                        >
+                          {confirmDeleteProjectId === p.id ? (
+                            <div
+                              onClick={e => e.stopPropagation()}
+                              style={{ display: 'flex', gap: 4, alignItems: 'center', background: 'var(--surface)', padding: 2, borderRadius: 20 }}
+                            >
+                              <span style={{ fontSize: 10, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>Delete permanently?</span>
+                              <button
+                                onClick={async () => {
+                                  setDeletingProjectId(p.id);
+                                  try {
+                                    await deleteProject(p.id);
+                                    setDetail(d => ({ ...d, projects: d.projects.filter(proj => proj.id !== p.id) }));
+                                  } catch (e) {
+                                    alert('Error deleting project: ' + e.message);
+                                  } finally {
+                                    setDeletingProjectId(null);
+                                    setConfirmDeleteProjectId(null);
+                                  }
+                                }}
+                                disabled={deletingProjectId === p.id}
+                                style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 20, border: 'none', background: '#ef4444', color: '#fff', cursor: deletingProjectId === p.id ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap' }}
+                              >
+                                {deletingProjectId === p.id ? 'Deleting…' : 'Yes'}
+                              </button>
+                              <button
+                                onClick={() => setConfirmDeleteProjectId(null)}
+                                style={{ fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 20, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text-muted)', cursor: 'pointer' }}
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              onClick={e => { e.stopPropagation(); setConfirmDeleteProjectId(p.id); }}
+                              style={{ width: 70, textAlign: 'center', opacity: hoveredProjectId === p.id ? 1 : 0, transition: 'opacity .15s', fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 20, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text-muted)', cursor: 'pointer' }}
+                            >
+                              Delete
+                            </button>
+                          )}
+                        </div>
+                      )}
                     </div>
-                  ))}
+                  );})}
                 </div>
               )}
 
@@ -830,7 +1043,7 @@ export default function ClientsPage({ onNavigate, refreshKey, icp }) {
                       </div>
                     </div>
                   ) : (
-                    <button onClick={() => setAddingItem(true)} style={{ alignSelf: 'flex-start', fontSize: 12, fontWeight: 700, padding: '8px 16px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-muted)', cursor: 'pointer' }}>+ Add Note or Link</button>
+                    <button onClick={() => setAddingItem(true)} style={{ alignSelf: 'flex-start', fontSize: 12, fontWeight: 700, padding: '8px 16px', borderRadius: 8, border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff', cursor: 'pointer' }}>+ Add Note or Link</button>
                   )}
                   {detail.items.length === 0 && !addingItem && (
                     <div style={{ fontSize: 13, color: 'var(--text-faint)', textAlign: 'center', padding: '32px 0' }}>No research saved yet. Add notes, links, or articles.</div>
@@ -1063,6 +1276,69 @@ export default function ClientsPage({ onNavigate, refreshKey, icp }) {
           </div>
         )}
       </div>
+
+      {/* New client modal */}
+      {showNewClient && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 800, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.35)' }} onClick={() => setShowNewClient(false)} />
+          <div style={{ position: 'relative', zIndex: 1, background: 'var(--bg)', borderRadius: 12, padding: 28, width: 440, maxWidth: '95vw', boxShadow: '0 16px 48px rgba(0,0,0,0.15)' }}>
+            <h3 style={{ fontSize: 16, fontWeight: 800, marginBottom: 6 }}>New Client</h3>
+            <p style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 20 }}>
+              Creates a client record with full Quick Scan, Build Thesis, and contact-discovery support — exactly like a client created from a won deal.
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 4 }}>Company Name *</label>
+                <input
+                  autoFocus
+                  value={newClientDraft.name}
+                  onChange={e => setNewClientDraft(d => ({ ...d, name: e.target.value }))}
+                  onKeyDown={e => { if (e.key === 'Enter') handleCreateClient(); }}
+                  placeholder="Acme Inc."
+                  style={{ width: '100%', fontSize: 13, padding: '7px 10px' }}
+                />
+              </div>
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 4 }}>Website</label>
+                <input
+                  value={newClientDraft.website}
+                  onChange={e => setNewClientDraft(d => ({ ...d, website: e.target.value }))}
+                  placeholder="https://acme.com"
+                  style={{ width: '100%', fontSize: 13, padding: '7px 10px' }}
+                />
+              </div>
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 4 }}>LinkedIn URL</label>
+                <input
+                  value={newClientDraft.linkedin_url}
+                  onChange={e => setNewClientDraft(d => ({ ...d, linkedin_url: e.target.value }))}
+                  placeholder="linkedin.com/company/acme"
+                  style={{ width: '100%', fontSize: 13, padding: '7px 10px' }}
+                />
+              </div>
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 4 }}>Notes</label>
+                <textarea
+                  rows={3}
+                  value={newClientDraft.notes}
+                  onChange={e => setNewClientDraft(d => ({ ...d, notes: e.target.value }))}
+                  placeholder="Optional internal notes…"
+                  style={{ width: '100%', fontSize: 13, padding: '7px 10px', resize: 'vertical' }}
+                />
+              </div>
+              {newClientError && <div style={{ fontSize: 12, color: '#ef4444' }}>{newClientError}</div>}
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 4 }}>
+                <button onClick={() => setShowNewClient(false)} style={{ fontSize: 12, padding: '7px 14px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', cursor: 'pointer' }}>Cancel</button>
+                <button
+                  onClick={handleCreateClient}
+                  disabled={creatingClient || !newClientDraft.name.trim()}
+                  style={{ fontSize: 12, fontWeight: 700, padding: '7px 18px', borderRadius: 7, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer', opacity: creatingClient || !newClientDraft.name.trim() ? 0.6 : 1 }}
+                >{creatingClient ? 'Creating…' : 'Create Client'}</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

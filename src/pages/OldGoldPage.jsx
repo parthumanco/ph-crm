@@ -163,6 +163,13 @@ export default function OldGoldPage({ isActive = false, onNavigate }) {
   const [allMeetings,    setAllMeetings]    = useState([]);   // all old_gold_meetings, newest first
   const [expandedMtgIds, setExpandedMtgIds] = useState(new Set());
 
+  // Archived contacts (soft-delete) — "Delete contact" archives rather than
+  // permanently deletes, and can be restored from this section.
+  const [archivedProspects, setArchivedProspects] = useState([]);
+  const [loadingArchived,   setLoadingArchived]   = useState(false);
+  const [showArchived,      setShowArchived]      = useState(false);
+  const [restoringId,       setRestoringId]       = useState(null);
+
   // Persist active panel state
   useEffect(() => {
     if (quickSaved) {
@@ -383,9 +390,21 @@ export default function OldGoldPage({ isActive = false, onNavigate }) {
     const { data } = await supabase
       .from('old_gold_prospects')
       .select('*')
+      .is('archived_at', null)
       .order('created_at', { ascending: false });
     setProspects(data || []);
     setLoading(false);
+  }, []);
+
+  const loadArchivedProspects = useCallback(async () => {
+    setLoadingArchived(true);
+    const { data } = await supabase
+      .from('old_gold_prospects')
+      .select('*')
+      .not('archived_at', 'is', null)
+      .order('archived_at', { ascending: false });
+    setArchivedProspects(data || []);
+    setLoadingArchived(false);
   }, []);
 
   const loadDetail = useCallback(async (prospect) => {
@@ -479,11 +498,27 @@ export default function OldGoldPage({ isActive = false, onNavigate }) {
     setProspectDraft(BLANK_PROSPECT);
   };
 
-  const handleDeleteProspect = async () => {
-    if (!active || !window.confirm(`Delete ${active.name}? This removes all meetings and tasks for this contact.`)) return;
-    await supabase.from('old_gold_prospects').delete().eq('id', active.id);
+  // Archives (never permanently deletes) a contact — hides it from the active
+  // list and meeting feed, but it stays fully intact and restorable from the
+  // "Archived contacts" section. Meetings/tasks are untouched either way.
+  const handleArchiveProspect = async () => {
+    if (!active || !window.confirm(`Archive ${active.name}? Their meetings and tasks stay intact, and you can restore them anytime from the Archived contacts section.`)) return;
+    const archived_at = new Date().toISOString();
+    await supabase.from('old_gold_prospects').update({ archived_at }).eq('id', active.id);
     setProspects(prev => prev.filter(p => p.id !== active.id));
+    setArchivedProspects(prev => [{ ...active, archived_at }, ...prev]);
     setActive(null);
+  };
+
+  const handleRestoreProspect = async (prospect) => {
+    setRestoringId(prospect.id);
+    try {
+      await supabase.from('old_gold_prospects').update({ archived_at: null }).eq('id', prospect.id);
+      setArchivedProspects(prev => prev.filter(p => p.id !== prospect.id));
+      setProspects(prev => [{ ...prospect, archived_at: null }, ...prev]);
+    } finally {
+      setRestoringId(null);
+    }
   };
 
   // ── Transcript import + AI ────────────────────────────────────────────────
@@ -971,6 +1006,41 @@ export default function OldGoldPage({ isActive = false, onNavigate }) {
             })}
           </div>
         )}
+
+        {/* ── Archived contacts (soft-deleted, restorable) ── */}
+        <div style={{ marginTop: 28, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
+          <button
+            onClick={() => { const next = !showArchived; setShowArchived(next); if (next && archivedProspects.length === 0) loadArchivedProspects(); }}
+            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 700, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 6, padding: 0 }}
+          >
+            📦 Archived contacts {archivedProspects.length > 0 ? `(${archivedProspects.length})` : ''} {showArchived ? '▲' : '▼'}
+          </button>
+          {showArchived && (
+            loadingArchived ? (
+              <div style={{ padding: '16px 0' }}><div className="spinner" /></div>
+            ) : archivedProspects.length === 0 ? (
+              <div style={{ fontSize: 12, color: 'var(--text-faint)', padding: '12px 0' }}>No archived contacts.</div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 12 }}>
+                {archivedProspects.map(p => (
+                  <div key={p.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '10px 14px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8 }}>
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>{p.name}</div>
+                      {p.company && <div style={{ fontSize: 11, color: 'var(--text-faint)' }}>{p.company}</div>}
+                    </div>
+                    <button
+                      onClick={() => handleRestoreProspect(p)}
+                      disabled={restoringId === p.id}
+                      style={{ fontSize: 11, fontWeight: 700, padding: '4px 12px', borderRadius: 20, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text-muted)', cursor: restoringId === p.id ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap' }}
+                    >
+                      {restoringId === p.id ? 'Restoring…' : 'Restore'}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )
+          )}
+        </div>
       </div>
     );
   }
@@ -1068,10 +1138,10 @@ export default function OldGoldPage({ isActive = false, onNavigate }) {
             </div>
           )}
 
-          {/* Danger zone */}
+          {/* Archive — never a permanent delete; restorable from "Archived contacts" */}
           {!editingProspect && (
-            <button onClick={handleDeleteProspect} style={{ fontSize: 11, color: '#ef4444', background: 'none', border: '1px solid #fecaca', borderRadius: 6, padding: '5px 10px', cursor: 'pointer', alignSelf: 'flex-start' }}>
-              Delete contact
+            <button onClick={handleArchiveProspect} style={{ fontSize: 11, color: '#ef4444', background: 'none', border: '1px solid #fecaca', borderRadius: 6, padding: '5px 10px', cursor: 'pointer', alignSelf: 'flex-start' }}>
+              Archive contact
             </button>
           )}
         </div>
@@ -1086,7 +1156,7 @@ export default function OldGoldPage({ isActive = false, onNavigate }) {
                 Next Steps
                 {openTaskCount > 0 && <span style={{ fontSize: 11, fontWeight: 600, color: '#f59e0b', marginLeft: 8 }}>{openTaskCount} open</span>}
               </div>
-              <button onClick={() => setAddingTask(v => !v)} style={{ fontSize: 11, fontWeight: 700, padding: '4px 12px', borderRadius: 6, border: '1px solid var(--border)', background: addingTask ? 'var(--accent)' : 'none', color: addingTask ? '#fff' : 'var(--text-muted)', cursor: 'pointer' }}>
+              <button onClick={() => setAddingTask(v => !v)} style={{ fontSize: 11, fontWeight: 700, padding: '4px 12px', borderRadius: 6, border: addingTask ? '1px solid var(--border)' : '1px solid var(--accent)', background: addingTask ? 'none' : 'var(--accent)', color: addingTask ? 'var(--text-muted)' : '#fff', cursor: 'pointer' }}>
                 {addingTask ? '✕ Cancel' : '+ Add Task'}
               </button>
             </div>
@@ -1150,7 +1220,7 @@ export default function OldGoldPage({ isActive = false, onNavigate }) {
               </div>
               <button
                 onClick={() => { setShowImport(v => !v); setImportError(''); }}
-                style={{ fontSize: 11, fontWeight: 700, padding: '4px 12px', borderRadius: 6, border: '1px solid var(--border)', background: showImport ? 'var(--accent)' : 'none', color: showImport ? '#fff' : 'var(--text-muted)', cursor: 'pointer' }}
+                style={{ fontSize: 11, fontWeight: 700, padding: '4px 12px', borderRadius: 6, border: showImport ? '1px solid var(--border)' : '1px solid var(--accent)', background: showImport ? 'none' : 'var(--accent)', color: showImport ? 'var(--text-muted)' : '#fff', cursor: 'pointer' }}
               >{showImport ? '✕ Cancel' : '+ Import Transcript'}</button>
             </div>
 

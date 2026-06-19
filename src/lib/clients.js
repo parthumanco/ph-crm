@@ -28,7 +28,7 @@ export async function fetchClients() {
     .select('*, projects(id, name, status, archived_at, start_date, end_date)')
     .order('name');
   if (error) throw new Error(error.message);
-  return (data || []).filter(c => (c.projects || []).length > 0);
+  return data || [];
 }
 
 export async function findOrCreateClient(name) {
@@ -118,7 +118,7 @@ export async function findOrCreateCompany(name) {
   if (existing) return existing;
   const { data: created, error } = await supabase
     .from('companies')
-    .insert({ name: name.trim(), added_at: new Date().toISOString() })
+    .insert({ name: name.trim() })
     .select()
     .single();
   if (error) throw new Error(error.message);
@@ -327,6 +327,38 @@ export async function runBuildThesis(companyId, company, icp, detail = {}, onPro
   }
 
   return { ...company, ...update };
+}
+
+// Background/no-UI thesis refresh — reusable by DealDetailModal, ClientsPage,
+// and ProjectsPage so that adding a meeting, file, link, note, etc. anywhere
+// downstream of a client keeps that client's AI thesis/next-steps current,
+// without requiring the user to manually hit "Build Thesis" again.
+//
+// Mirrors DealDetailModal's local `silentRefreshThesis`, generalized here so
+// it isn't duplicated per page. Only refreshes a thesis that already exists
+// (gated on `intel?.id`) — it never auto-builds one from scratch, matching
+// the original deal-side behavior.
+export async function silentRefreshThesis(companyName, detailOverrides = {}, clientId = null) {
+  if (!companyName?.trim()) return null;
+  try {
+    const intel = await fetchCompanyIntel(companyName);
+    if (!intel?.id) return null; // nothing to refresh yet — user hasn't run a scan/thesis on this client
+    const { loadIcp } = await import('./settings');
+    const [icp, company] = await Promise.all([
+      loadIcp(),
+      findOrCreateCompany(companyName),
+    ]);
+    const result = await runBuildThesis(company.id, company, icp, detailOverrides, () => {}, clientId);
+    const { _thesisSaveError, ...clean } = result;
+    if (_thesisSaveError) {
+      console.warn('[silentRefreshThesis] thesis save error:', _thesisSaveError);
+      return null;
+    }
+    return clean;
+  } catch (e) {
+    console.warn('[silentRefreshThesis] failed:', e.message);
+    return null;
+  }
 }
 
 // ── Contact dossier helpers ───────────────────────────────────────────────────

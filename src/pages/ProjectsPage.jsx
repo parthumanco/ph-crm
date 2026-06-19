@@ -14,7 +14,7 @@ import {
   daysBetween, addDays, projectProgress, fmtDate,
 } from '../lib/projects';
 import { fetchDeals, fetchActivities, addActivity, fetchTasks, ACTIVITY_TYPES } from '../lib/deals';
-import { fetchCompanyIntel } from '../lib/clients';
+import { fetchCompanyIntel, silentRefreshThesis, fetchClients } from '../lib/clients';
 import ProposalImporter from '../components/ProposalImporter';
 import TranscriptImporter from '../components/TranscriptImporter';
 
@@ -287,7 +287,7 @@ function GanttChart({ milestones, projectStart, projectEnd, onMilestoneClick }) 
 
 // ── Project list card ─────────────────────────────────────────────────────────
 
-function ProjectCard({ project, tasks, files, onClick, onUpload, onImport, uploading }) {
+function ProjectCard({ project, tasks, files, onClick }) {
   const pct    = projectProgress(tasks);
   const color  = projColor(project.status);
   const active = !['completed', 'cancelled'].includes(project.status);
@@ -326,40 +326,12 @@ function ProjectCard({ project, tasks, files, onClick, onUpload, onImport, uploa
 
       {/* File count badge */}
       {files?.length > 0 && (
-        <div style={{ marginBottom: 10 }}>
+        <div>
           <span style={{ fontSize: 11, color: 'var(--text-faint)', fontWeight: 600 }}>
             📎 {files.length} file{files.length !== 1 ? 's' : ''}
           </span>
         </div>
       )}
-
-      {/* Action buttons */}
-      <div style={{ display: 'flex', gap: 6, marginTop: 'auto', paddingTop: 10, borderTop: '1px solid var(--border-light)' }}>
-        <button
-          onClick={e => { e.stopPropagation(); onImport(project.id); }}
-          style={{
-            flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4,
-            padding: '5px 8px', borderRadius: 5, border: '1px solid var(--border)',
-            background: 'var(--surface-2)', cursor: 'pointer',
-            fontSize: 11, fontWeight: 600, color: 'var(--text-muted)',
-          }}
-        >
-          📋 Import Proposal
-        </button>
-        <button
-          onClick={e => { e.stopPropagation(); onUpload(project.id, null, e); }}
-          disabled={uploading}
-          title="Upload a file"
-          style={{
-            flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4,
-            padding: '5px 8px', borderRadius: 5, border: '1px solid var(--border)',
-            background: 'var(--surface-2)', cursor: uploading ? 'default' : 'pointer',
-            fontSize: 11, fontWeight: 600, color: 'var(--text-muted)',
-          }}
-        >
-          {uploading ? '⏳ Uploading…' : '📎 Upload File'}
-        </button>
-      </div>
     </div>
   );
 }
@@ -453,14 +425,16 @@ function MeetingCard({ mtg, tasks, isExpanded, onToggleExpanded, onEdit, onDelet
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 
-export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = [] }) {
+export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = [], targetProjectId = null, onTargetProjectConsumed }) {
   // Dynamic owner list from Settings — falls back to hardcoded OWNERS if not configured
   const owners = teamMembers.length ? teamMembers.map(m => m.name) : OWNERS;
   const [view, setView]             = useState('list');   // 'list' | 'detail'
   const [projects, setProjects]     = useState([]);
+  const consumedProjectIdRef        = useRef(null); // deep-link: avoid re-opening same project repeatedly
   const [allTasks, setAllTasks]     = useState({});       // { projectId: tasks[] }
   const [loading, setLoading]       = useState(true);
-  const [wonDeals, setWonDeals]     = useState([]);
+  const [allDeals, setAllDeals]     = useState([]);   // every pipeline deal, any stage
+  const [allClients, setAllClients] = useState([]);   // clients table rows
   const [archivedProjects, setArchivedProjects] = useState([]);
   const [showArchived, setShowArchived]         = useState(false);
   const [loadingArchived, setLoadingArchived]   = useState(false);
@@ -511,6 +485,26 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
   const [expandedRejections, setExpandedRejections] = useState(new Set());
   const [expandedCoC, setExpandedCoC]               = useState(new Set()); // manual expand after approval
   const [expandedTranscripts, setExpandedTranscripts] = useState(new Set()); // meeting ids with full transcript open in mentions panel
+  const [showFullThesis, setShowFullThesis]           = useState(false); // Research tab — "Update Research" pill
+
+  // Background thesis auto-refresh — fires after any add (file/link/note/meeting/task)
+  // so the client's AI thesis stays current, mirroring the deal-card behavior.
+  const autoRefreshingThesisRef = useRef(false);
+  const triggerProjectThesisRefresh = (overrides = {}) => {
+    if (!activeProject?.client_name || autoRefreshingThesisRef.current) return;
+    autoRefreshingThesisRef.current = true;
+    const detail = {
+      projects: [activeProject],
+      meetings,
+      items: (projectNotes || []).map(n => ({ type: 'note', body: n.text })),
+      files: projectFiles,
+      ...overrides,
+    };
+    silentRefreshThesis(activeProject.client_name, detail, activeProject.client_id || null)
+      .then(updated => { if (updated) setProjectCompany(prev => prev ? { ...prev, ...updated } : prev); })
+      .catch(e => console.warn('[ProjectsPage] thesis auto-refresh failed:', e.message))
+      .finally(() => { autoRefreshingThesisRef.current = false; });
+  };
   const [transcriptHighlight, setTranscriptHighlight] = useState({});       // { meetingId: searchTerm } for per-meeting highlight phrase
   const [generatingResponse, setGeneratingResponse] = useState(null); // taskId
   const [resendEmail, setResendEmail]             = useState(null);   // { task, project }
@@ -572,7 +566,8 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
   const [cardFiles, setCardFiles]               = useState({});   // { projectId: files[] } for list view
   const [uploadingFor, setUploadingFor]         = useState(null);
   const [dragOverTask, setDragOverTask]         = useState(null); // taskId being hovered over
-  const [showImporterForProject, setShowImporterForProject] = useState(null); // projectId | null
+  const [draggedTaskId, setDraggedTaskId]       = useState(null); // task currently being dragged between milestones
+  const [dragOverMsId, setDragOverMsId]         = useState(null); // milestone id (or '__unassigned__') being dragged over
   const fileInputRef                             = useRef(null);
   const pendingUpload                            = useRef({ projectId: null, milestoneId: null });
 
@@ -586,9 +581,10 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
   const loadAll = useCallback(async () => {
     setLoading(true);
     try {
-      const [ps, deals] = await Promise.all([fetchProjects(), fetchDeals()]);
+      const [ps, deals, clientsList] = await Promise.all([fetchProjects(), fetchDeals(), fetchClients()]);
       setProjects(ps);
-      setWonDeals(deals.filter(d => d.stage === 'won'));
+      setAllDeals(deals);
+      setAllClients(clientsList);
       const taskMap = {};
       const fileMap = {};
       await Promise.all(ps.map(async p => {
@@ -773,6 +769,18 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
     }
   };
 
+  // Deep-link: open a specific project when targetProjectId is set — fire once per id
+  useEffect(() => {
+    if (!targetProjectId || !projects.length) return;
+    if (consumedProjectIdRef.current === targetProjectId) return; // already handled
+    const proj = projects.find(p => p.id === targetProjectId);
+    if (proj) {
+      consumedProjectIdRef.current = targetProjectId;
+      openProject(proj);
+      onTargetProjectConsumed?.();
+    }
+  }, [targetProjectId, projects]);
+
   const refreshDetail = async (projId) => {
     try {
       const [ms, ts, files] = await Promise.all([
@@ -831,6 +839,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
     setNewNoteText('');
     setAddingNote(false);
     await saveNotes(updated);
+    triggerProjectThesisRefresh({ items: updated.map(n => ({ type: 'note', body: n.text })) });
   };
   const handleSaveNoteEdit = async (id) => {
     if (!editNoteText.trim()) return;
@@ -838,6 +847,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
     setProjectNotes(updated);
     setEditingNoteId(null);
     await saveNotes(updated);
+    triggerProjectThesisRefresh({ items: updated.map(n => ({ type: 'note', body: n.text })) });
   };
   const handleDeleteNote = async (id) => {
     const updated = projectNotes.filter(n => n.id !== id);
@@ -854,8 +864,10 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
         .update({ ...editMeetingDraft, updated_at: new Date().toISOString() })
         .eq('id', editingMeeting);
       if (error) throw new Error(error.message);
-      setMeetings(prev => prev.map(m => m.id === editingMeeting ? { ...m, ...editMeetingDraft } : m));
+      const updatedMeetings = meetings.map(m => m.id === editingMeeting ? { ...m, ...editMeetingDraft } : m);
+      setMeetings(updatedMeetings);
       setEditingMeeting(null);
+      triggerProjectThesisRefresh({ meetings: updatedMeetings });
     } catch (e) {
       alert('Error saving meeting: ' + e.message);
     } finally {
@@ -1305,6 +1317,31 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
     setNewTaskMs(null);
   };
 
+  // Drag-and-drop a task between milestones (or into/out of Unassigned Tasks).
+  // newMilestoneId is null to unassign.
+  const handleMoveTaskToMilestone = async (taskId, newMilestoneId) => {
+    const task = tasks.find(t => t.id === taskId);
+    if (!task || (task.milestone_id || null) === (newMilestoneId || null)) return;
+    const updated = { ...task, milestone_id: newMilestoneId };
+    setTasks(prev => prev.map(t => t.id === taskId ? updated : t));
+    setAllTasks(prev => ({
+      ...prev,
+      [activeProject.id]: (prev[activeProject.id] || []).map(t => t.id === taskId ? updated : t),
+    }));
+    if (newMilestoneId) setExpanded(prev => ({ ...prev, [newMilestoneId]: true }));
+    try {
+      await upsertProjectTask(updated);
+    } catch (e) {
+      console.error('Failed to move task:', e.message);
+      // Roll back on failure
+      setTasks(prev => prev.map(t => t.id === taskId ? task : t));
+      setAllTasks(prev => ({
+        ...prev,
+        [activeProject.id]: (prev[activeProject.id] || []).map(t => t.id === taskId ? task : t),
+      }));
+    }
+  };
+
   const handleDeleteTask = async (id) => {
     const task = tasks.find(t => t.id === id);
     // Optimistically remove from UI immediately so the row disappears on click
@@ -1595,9 +1632,15 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
       const updatedMeetings = await fetchProjectMeetings(activeProject.id);
       setMeetings(updatedMeetings);
       if (updatedMeetings.length > 0) setMeetingsExpanded(true);
+      triggerProjectThesisRefresh({ meetings: updatedMeetings });
     } catch {
       // Fallback to optimistic insert
-      if (meeting) { setMeetings(prev => [meeting, ...prev]); setMeetingsExpanded(true); }
+      if (meeting) {
+        const fallbackMeetings = [meeting, ...meetings];
+        setMeetings(fallbackMeetings);
+        setMeetingsExpanded(true);
+        triggerProjectThesisRefresh({ meetings: fallbackMeetings });
+      }
     }
 
     // Queue suggested updates for review (if any)
@@ -1700,6 +1743,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
       const saved = await uploadProjectFile(projectId, file, milestoneId, taskId);
       if (activeProject?.id === projectId) {
         setProjectFiles(prev => [saved, ...prev]);
+        triggerProjectThesisRefresh({ files: [saved, ...projectFiles] });
       }
       setCardFiles(prev => ({ ...prev, [projectId]: [saved, ...(prev[projectId] || [])] }));
       // Notify client if email is set
@@ -1731,6 +1775,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
       );
       setProjectFiles(prev => [...saved, ...prev]);
       setCardFiles(prev => ({ ...prev, [activeProject.id]: [...saved, ...(prev[activeProject.id] || [])] }));
+      triggerProjectThesisRefresh({ files: [...saved, ...projectFiles] });
     } catch (err) {
       console.error('Drop upload failed:', err.message);
       alert(`Upload failed: ${err.message}`);
@@ -1781,6 +1826,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
     setProjectFiles(prev => [saved, ...prev]);
     setCardFiles(prev => ({ ...prev, [projectId]: [saved, ...(prev[projectId] || [])] }));
     setShowLinkModal(null);
+    if (activeProject?.id === projectId) triggerProjectThesisRefresh({ files: [saved, ...projectFiles] });
   };
 
   // ── Stats ─────────────────────────────────────────────────────────────────
@@ -1788,6 +1834,28 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
   const completedCount = projects.filter(p => p.status === 'completed').length;
   const totalTasks     = Object.values(allTasks).flat();
   const doneTasks      = totalTasks.filter(t => t.completed).length;
+
+  // Unified "client" picker for the New Project modal — any company from
+  // Pipeline (deals, any stage), Clients, or existing Projects, deduped by name.
+  const clientOptions = useMemo(() => {
+    const map = new Map(); // lowercased name → option
+    allDeals.forEach(d => {
+      if (!d.company_name?.trim()) return;
+      const key = d.company_name.trim().toLowerCase();
+      if (!map.has(key)) map.set(key, { name: d.company_name.trim(), contact_name: d.contact_name || '', source_deal_id: d.id });
+    });
+    allClients.forEach(c => {
+      if (!c.name?.trim()) return;
+      const key = c.name.trim().toLowerCase();
+      if (!map.has(key)) map.set(key, { name: c.name.trim(), contact_name: '', source_deal_id: '' });
+    });
+    projects.forEach(p => {
+      if (!p.client_name?.trim()) return;
+      const key = p.client_name.trim().toLowerCase();
+      if (!map.has(key)) map.set(key, { name: p.client_name.trim(), contact_name: p.contact_name || '', source_deal_id: p.source_deal_id || '' });
+    });
+    return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
+  }, [allDeals, allClients, projects]);
 
   // Pre-compute per-task mention presence once (not on every row render).
   // Must be declared here — before any early returns — to satisfy Rules of Hooks.
@@ -2139,9 +2207,6 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                   tasks={allTasks[p.id] || []}
                   files={cardFiles[p.id] || []}
                   onClick={() => openProject(p)}
-                  onUpload={triggerFileUpload}
-                  onImport={id => setShowImporterForProject(id)}
-                  uploading={uploadingFor === p.id}
                 />
               ))}
             </div>
@@ -2217,16 +2282,6 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
       {/* Global file input */}
       <input ref={fileInputRef} type="file" accept="*/*" style={{ display: 'none' }} onChange={handleFileSelected} />
 
-      {/* Proposal importer from card */}
-      {showImporterForProject && (
-        <ProposalImporter
-          projectId={showImporterForProject}
-          projectStart={projects.find(p => p.id === showImporterForProject)?.start_date}
-          onImported={(payload) => handleImported(payload, showImporterForProject)}
-          onClose={() => setShowImporterForProject(null)}
-        />
-      )}
-
       {/* New project modal */}
       {showNewProject && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 800, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -2238,18 +2293,18 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                 <Lbl>Project Name</Lbl>
                 <input type="text" value={newProj.name} onChange={e => setNewProj(p => ({ ...p, name: e.target.value }))} placeholder="e.g. Rebrand & Website Redesign" autoFocus />
               </div>
-              {wonDeals.length > 0 && (
+              {clientOptions.length > 0 && (
                 <div>
-                  <Lbl>Client (from won deals)</Lbl>
+                  <Lbl>Client</Lbl>
                   <select
                     defaultValue=""
                     onChange={e => {
-                      const d = wonDeals.find(x => x.id === e.target.value);
-                      if (d) setNewProj(p => ({ ...p, client_name: d.company_name || '', contact_name: d.contact_name || '', source_deal_id: e.target.value }));
+                      const opt = clientOptions.find(x => x.name === e.target.value);
+                      if (opt) setNewProj(p => ({ ...p, client_name: opt.name, contact_name: opt.contact_name || '', source_deal_id: opt.source_deal_id || '' }));
                     }}
                   >
                     <option value="">Select client…</option>
-                    {wonDeals.map(d => <option key={d.id} value={d.id}>{d.company_name}{d.contact_name ? ` — ${d.contact_name}` : ''}</option>)}
+                    {clientOptions.map(opt => <option key={opt.name} value={opt.name}>{opt.name}{opt.contact_name ? ` — ${opt.contact_name}` : ''}</option>)}
                   </select>
                 </div>
               )}
@@ -2304,11 +2359,15 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
       <div
         key={task.id}
         className="task-row"
+        draggable
+        onDragStart={e => { e.dataTransfer.setData('text/plain', task.id); setDraggedTaskId(task.id); }}
+        onDragEnd={() => { setDraggedTaskId(null); setDragOverMsId(null); }}
         style={{
           borderBottom: '1px solid #fde68a',
           background: hasOpenRejection ? '#fffbeb' : 'var(--bg)',
           borderLeft:  hasOpenRejection ? '3px solid #f59e0b' : 'none',
           position: 'relative',
+          cursor: 'grab',
         }}
       >
         {isEditingThis ? (
@@ -2597,9 +2656,9 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
               <button
                 key={label}
                 onClick={action}
-                style={{ fontSize: 11, fontWeight: 700, padding: '5px 12px', borderRadius: 20, border: '1px solid var(--accent)', background: 'transparent', color: 'var(--accent)', cursor: 'pointer', whiteSpace: 'nowrap', transition: 'background .12s, color .12s' }}
-                onMouseEnter={e => { e.currentTarget.style.background = 'var(--accent)'; e.currentTarget.style.color = '#fff'; }}
-                onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--accent)'; }}
+                style={{ fontSize: 11, fontWeight: 700, padding: '5px 12px', borderRadius: 20, border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff', cursor: 'pointer', whiteSpace: 'nowrap', transition: 'opacity .12s' }}
+                onMouseEnter={e => { e.currentTarget.style.opacity = '0.85'; }}
+                onMouseLeave={e => { e.currentTarget.style.opacity = '1'; }}
               >{label}</button>
             ))}
           </div>
@@ -2668,7 +2727,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
               <div style={{ fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--text-faint)' }}>👤 Contacts</div>
               {!addingContact && (
-                <button onClick={() => { setAddingContact(true); setNewContactDraft({ name: '', title: '', email: '' }); }} style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 5, border: '1px solid var(--border)', background: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}>+ New</button>
+                <button onClick={() => { setAddingContact(true); setNewContactDraft({ name: '', title: '', email: '' }); }} style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 5, border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff', cursor: 'pointer' }}>+ New</button>
               )}
             </div>
 
@@ -2844,26 +2903,50 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
           <div className="empty-state"><div className="spinner" /><p style={{ marginTop: 12 }}>Loading timeline…</p></div>
         ) : milestones.length === 0 ? (
           <>
-            {/* Unassigned tasks even when no milestones exist yet */}
+            {/* Unassigned tasks even when no milestones exist yet — always rendered so there's a place to add a standalone task */}
             {(() => {
               const unassigned = tasks.filter(t => !t.milestone_id && !t.deleted_at);
-              if (!unassigned.length) return null;
               return (
                 <div style={{ border: '1px solid #fde68a', borderRadius: 10, overflow: 'hidden', background: '#fffbeb', marginBottom: 16 }}>
                   <div style={{ padding: '12px 18px', display: 'flex', alignItems: 'center', gap: 8 }}>
                     <span style={{ fontSize: 12, fontWeight: 700, color: '#92400e', textTransform: 'uppercase', letterSpacing: '.04em' }}>Unassigned Tasks</span>
-                    <span style={{ fontSize: 11, color: '#b45309', marginLeft: 4 }}>{unassigned.length} task{unassigned.length !== 1 ? 's' : ''} — not yet placed in a milestone</span>
+                    {unassigned.length > 0 && <span style={{ fontSize: 11, color: '#b45309', marginLeft: 4 }}>{unassigned.length} task{unassigned.length !== 1 ? 's' : ''} — not yet placed in a milestone</span>}
                   </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
-                    {/* Column header row */}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 16px 6px 48px', borderTop: '1px solid #fde68a', background: '#fef9c3' }}>
-                      <div style={{ flex: 1, fontSize: 9, fontWeight: 700, color: '#92400e', textTransform: 'uppercase', letterSpacing: '.06em' }}>Task</div>
-                      <div style={{ width: 110, fontSize: 9, fontWeight: 700, color: '#92400e', textTransform: 'uppercase', letterSpacing: '.06em', flexShrink: 0 }}>Assigned To</div>
-                      <div style={{ width: 52, fontSize: 9, fontWeight: 700, color: '#92400e', textTransform: 'uppercase', letterSpacing: '.06em', flexShrink: 0 }}>Hrs</div>
-                      <div style={{ minWidth: 64, fontSize: 9, fontWeight: 700, color: '#92400e', textTransform: 'uppercase', letterSpacing: '.06em', flexShrink: 0, textAlign: 'center' }}>Due Date</div>
+                  {unassigned.length > 0 && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+                      {/* Column header row */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 16px 6px 48px', borderTop: '1px solid #fde68a', background: '#fef9c3' }}>
+                        <div style={{ flex: 1, fontSize: 9, fontWeight: 700, color: '#92400e', textTransform: 'uppercase', letterSpacing: '.06em' }}>Task</div>
+                        <div style={{ width: 110, fontSize: 9, fontWeight: 700, color: '#92400e', textTransform: 'uppercase', letterSpacing: '.06em', flexShrink: 0 }}>Assigned To</div>
+                        <div style={{ width: 52, fontSize: 9, fontWeight: 700, color: '#92400e', textTransform: 'uppercase', letterSpacing: '.06em', flexShrink: 0 }}>Hrs</div>
+                        <div style={{ minWidth: 64, fontSize: 9, fontWeight: 700, color: '#92400e', textTransform: 'uppercase', letterSpacing: '.06em', flexShrink: 0, textAlign: 'center' }}>Due Date</div>
+                      </div>
+                      {unassigned.map(task => renderUnassignedTaskRow(task))}
                     </div>
-                    {unassigned.map(task => renderUnassignedTaskRow(task))}
-                  </div>
+                  )}
+                  {/* Add task row — creates a task with no milestone */}
+                  {newTaskMs === '__standalone__' ? (
+                    <div style={{ display: 'flex', gap: 8, padding: '8px 16px 8px 18px', alignItems: 'center', borderTop: '1px solid #fde68a' }}>
+                      <input
+                        type="text"
+                        value={newTaskTitle}
+                        onChange={e => setNewTaskTitle(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter') handleAddTask(null); if (e.key === 'Escape') { setNewTaskMs(null); setNewTaskTitle(''); } }}
+                        placeholder="Task name… (Enter to add)"
+                        autoFocus
+                        style={{ flex: 1, fontSize: 13, padding: '5px 10px' }}
+                      />
+                      <button className="btn btn-primary" onClick={() => handleAddTask(null)} style={{ fontSize: 12 }}>Add</button>
+                      <button onClick={() => { setNewTaskMs(null); setNewTaskTitle(''); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-faint)' }}>✕</button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => { setNewTaskMs('__standalone__'); setNewTaskTitle(''); setEditingTask(null); setConfirmDeleteTask(null); }}
+                      style={{ display: 'block', width: '100%', padding: '8px 18px', background: 'none', border: 'none', borderTop: '1px solid #fde68a', cursor: 'pointer', fontSize: 12, color: '#92400e', textAlign: 'left' }}
+                    >
+                      + Add task
+                    </button>
+                  )}
                 </div>
               );
             })()}
@@ -2906,8 +2989,26 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
               const isEditing = editingMs === ms.id;
               const color     = msColor(ms.status);
 
+              const isDropTargetMs = dragOverMsId === ms.id;
               return (
-                <div key={ms.id} id={`ms-${ms.id}`} style={{ border: `1px solid var(--border)`, borderRadius: 10, overflow: 'hidden', background: 'var(--surface)' }}>
+                <div
+                  key={ms.id}
+                  id={`ms-${ms.id}`}
+                  onDragOver={e => { if (draggedTaskId) { e.preventDefault(); setDragOverMsId(ms.id); } }}
+                  onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget)) setDragOverMsId(null); }}
+                  onDrop={e => {
+                    if (!draggedTaskId) return;
+                    e.preventDefault();
+                    setDragOverMsId(null);
+                    handleMoveTaskToMilestone(draggedTaskId, ms.id);
+                  }}
+                  style={{
+                    border: `1px solid ${isDropTargetMs ? 'var(--accent)' : 'var(--border)'}`,
+                    borderRadius: 10, overflow: 'hidden', background: 'var(--surface)',
+                    boxShadow: isDropTargetMs ? '0 0 0 3px rgba(249, 115, 22, 0.15)' : 'none',
+                    transition: 'border-color .1s, box-shadow .1s',
+                  }}
+                >
 
                   {/* Milestone header */}
                   <div
@@ -3046,15 +3147,27 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                           <div
                             key={task.id}
                             className="task-row"
+                            draggable
+                            onDragStart={e => { e.dataTransfer.setData('text/plain', task.id); setDraggedTaskId(task.id); }}
+                            onDragEnd={() => { setDraggedTaskId(null); setDragOverMsId(null); }}
                             onDragOver={e => { e.preventDefault(); e.stopPropagation(); setDragOverTask(task.id); }}
                             onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget)) setDragOverTask(null); }}
-                            onDrop={e => handleDropOnTask(e, task)}
+                            onDrop={e => {
+                              if (draggedTaskId && draggedTaskId !== task.id) {
+                                e.preventDefault(); e.stopPropagation();
+                                setDragOverTask(null);
+                                handleMoveTaskToMilestone(draggedTaskId, ms.id);
+                                return;
+                              }
+                              handleDropOnTask(e, task);
+                            }}
                             style={{
                               borderBottom: '1px solid var(--border-light)',
                               background: isDroppingOnTask ? '#eff6ff' : hasOpenRejection ? '#fffbeb' : 'var(--surface)',
                               borderLeft: isDroppingOnTask ? '3px solid var(--accent)' : hasOpenRejection ? '3px solid #f59e0b' : 'none',
                               transition: 'background .1s, border-left .1s',
                               position: 'relative',
+                              cursor: 'grab',
                             }}
                           >
                             {isDroppingOnTask && uploadingFor !== task.id && (
@@ -3519,26 +3632,66 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
               );
             })}
 
-            {/* Unassigned tasks — tasks with no milestone (e.g. from meeting imports) */}
+            {/* Unassigned tasks — tasks with no milestone (e.g. from meeting imports), always rendered so there's a place to add one */}
             {(() => {
               const unassigned = tasks.filter(t => !t.milestone_id && !t.deleted_at);
-              if (!unassigned.length) return null;
+              const isDropTargetUnassigned = dragOverMsId === '__unassigned__';
               return (
-                <div style={{ border: '1px solid #fde68a', borderRadius: 10, overflow: 'hidden', background: '#fffbeb', marginBottom: 16 }}>
+                <div
+                  onDragOver={e => { if (draggedTaskId) { e.preventDefault(); setDragOverMsId('__unassigned__'); } }}
+                  onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget)) setDragOverMsId(null); }}
+                  onDrop={e => {
+                    if (!draggedTaskId) return;
+                    e.preventDefault();
+                    setDragOverMsId(null);
+                    handleMoveTaskToMilestone(draggedTaskId, null);
+                  }}
+                  style={{
+                    border: `1px solid ${isDropTargetUnassigned ? 'var(--accent)' : '#fde68a'}`,
+                    borderRadius: 10, overflow: 'hidden', background: '#fffbeb', marginBottom: 16,
+                    boxShadow: isDropTargetUnassigned ? '0 0 0 3px rgba(249, 115, 22, 0.15)' : 'none',
+                    transition: 'border-color .1s, box-shadow .1s',
+                  }}
+                >
                   <div style={{ padding: '12px 18px', display: 'flex', alignItems: 'center', gap: 8 }}>
                     <span style={{ fontSize: 12, fontWeight: 700, color: '#92400e', textTransform: 'uppercase', letterSpacing: '.04em' }}>Unassigned Tasks</span>
-                    <span style={{ fontSize: 11, color: '#b45309', marginLeft: 4 }}>{unassigned.length} task{unassigned.length !== 1 ? 's' : ''} — not yet placed in a milestone</span>
+                    {unassigned.length > 0 && <span style={{ fontSize: 11, color: '#b45309', marginLeft: 4 }}>{unassigned.length} task{unassigned.length !== 1 ? 's' : ''} — not yet placed in a milestone</span>}
                   </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
-                    {/* Column header row */}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 16px 6px 48px', borderTop: '1px solid #fde68a', background: '#fef9c3' }}>
-                      <div style={{ flex: 1, fontSize: 9, fontWeight: 700, color: '#92400e', textTransform: 'uppercase', letterSpacing: '.06em' }}>Task</div>
-                      <div style={{ width: 110, fontSize: 9, fontWeight: 700, color: '#92400e', textTransform: 'uppercase', letterSpacing: '.06em', flexShrink: 0 }}>Assigned To</div>
-                      <div style={{ width: 52, fontSize: 9, fontWeight: 700, color: '#92400e', textTransform: 'uppercase', letterSpacing: '.06em', flexShrink: 0 }}>Hrs</div>
-                      <div style={{ minWidth: 64, fontSize: 9, fontWeight: 700, color: '#92400e', textTransform: 'uppercase', letterSpacing: '.06em', flexShrink: 0, textAlign: 'center' }}>Due Date</div>
+                  {unassigned.length > 0 && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+                      {/* Column header row */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 16px 6px 48px', borderTop: '1px solid #fde68a', background: '#fef9c3' }}>
+                        <div style={{ flex: 1, fontSize: 9, fontWeight: 700, color: '#92400e', textTransform: 'uppercase', letterSpacing: '.06em' }}>Task</div>
+                        <div style={{ width: 110, fontSize: 9, fontWeight: 700, color: '#92400e', textTransform: 'uppercase', letterSpacing: '.06em', flexShrink: 0 }}>Assigned To</div>
+                        <div style={{ width: 52, fontSize: 9, fontWeight: 700, color: '#92400e', textTransform: 'uppercase', letterSpacing: '.06em', flexShrink: 0 }}>Hrs</div>
+                        <div style={{ minWidth: 64, fontSize: 9, fontWeight: 700, color: '#92400e', textTransform: 'uppercase', letterSpacing: '.06em', flexShrink: 0, textAlign: 'center' }}>Due Date</div>
+                      </div>
+                      {unassigned.map(task => renderUnassignedTaskRow(task))}
                     </div>
-                    {unassigned.map(task => renderUnassignedTaskRow(task))}
-                  </div>
+                  )}
+                  {/* Add task row — creates a task with no milestone */}
+                  {newTaskMs === '__standalone__' ? (
+                    <div style={{ display: 'flex', gap: 8, padding: '8px 16px 8px 18px', alignItems: 'center', borderTop: '1px solid #fde68a' }}>
+                      <input
+                        type="text"
+                        value={newTaskTitle}
+                        onChange={e => setNewTaskTitle(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter') handleAddTask(null); if (e.key === 'Escape') { setNewTaskMs(null); setNewTaskTitle(''); } }}
+                        placeholder="Task name… (Enter to add)"
+                        autoFocus
+                        style={{ flex: 1, fontSize: 13, padding: '5px 10px' }}
+                      />
+                      <button className="btn btn-primary" onClick={() => handleAddTask(null)} style={{ fontSize: 12 }}>Add</button>
+                      <button onClick={() => { setNewTaskMs(null); setNewTaskTitle(''); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-faint)' }}>✕</button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => { setNewTaskMs('__standalone__'); setNewTaskTitle(''); setEditingTask(null); setConfirmDeleteTask(null); }}
+                      style={{ display: 'block', width: '100%', padding: '8px 18px', background: 'none', border: 'none', borderTop: '1px solid #fde68a', cursor: 'pointer', fontSize: 12, color: '#92400e', textAlign: 'left' }}
+                    >
+                      + Add task
+                    </button>
+                  )}
                 </div>
               );
             })()}
@@ -3611,7 +3764,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                   </span>
                   <button
                     onClick={e => { e.stopPropagation(); setTranscriptDefaultMs(null); setShowTranscriptImporter(true); }}
-                    style={{ fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text-muted)', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}
+                    style={{ fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 6, border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}
                   >+ Add meeting</button>
                   <span style={{ fontSize: 12, color: 'var(--text-faint)' }}>{meetingsExpanded ? '▲' : '▼'}</span>
                 </button>
@@ -3727,7 +3880,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
             <div style={{ marginBottom: 24 }}>
               <div style={{ display: 'flex', alignItems: 'center', marginBottom: 10 }}>
                 <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', flex: 1 }}>Project Notes</div>
-                <button onClick={() => { setAddingNote(true); setNewNoteText(''); }} style={{ fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 20, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-muted)', cursor: 'pointer' }}>+ Add Note</button>
+                <button onClick={() => { setAddingNote(true); setNewNoteText(''); }} style={{ fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 20, border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff', cursor: 'pointer' }}>+ Add Note</button>
               </div>
 
               {/* New note input */}
@@ -3810,7 +3963,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
               <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em' }}>
                 Meeting Log {meetings.length > 0 && <span style={{ fontWeight: 500, color: 'var(--text-faint)' }}>({meetings.length})</span>}
               </span>
-              <button className="btn btn-secondary btn-xs" onClick={() => { setTranscriptDefaultMs(null); setShowTranscriptImporter(true); }}>+ Add Meeting</button>
+              <button className="btn btn-primary btn-xs" onClick={() => { setTranscriptDefaultMs(null); setShowTranscriptImporter(true); }}>+ Add Meeting</button>
             </div>
             {meetings.length === 0 ? (
               <p style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 20, textAlign: 'center', padding: '12px 0' }}>No meetings logged yet.</p>
@@ -3882,7 +4035,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
               <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em' }}>Activity Log</span>
               {activeProject.source_deal_id && (
-                <button className="btn btn-secondary btn-xs" onClick={() => setAddingDealAct(a => !a)}>+ Log Activity</button>
+                <button className="btn btn-primary btn-xs" onClick={() => setAddingDealAct(a => !a)}>+ Log Activity</button>
               )}
             </div>
 
@@ -3948,11 +4101,11 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
             <div style={{ display: 'flex', gap: 8 }}>
               <button
                 onClick={() => triggerFileUpload(activeProject.id)}
-                style={{ fontSize: 12, fontWeight: 700, padding: '7px 16px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-muted)', cursor: 'pointer' }}
+                style={{ fontSize: 12, fontWeight: 700, padding: '7px 16px', borderRadius: 8, border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff', cursor: 'pointer' }}
               >📎 Upload File</button>
               <button
                 onClick={() => openLinkModal(activeProject.id)}
-                style={{ fontSize: 12, fontWeight: 700, padding: '7px 16px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-muted)', cursor: 'pointer' }}
+                style={{ fontSize: 12, fontWeight: 700, padding: '7px 16px', borderRadius: 8, border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff', cursor: 'pointer' }}
               >🔗 Add Link</button>
             </div>
 
@@ -4094,7 +4247,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                 <div style={{ fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--text-faint)' }}>📋 Proposals</div>
                 <button
                   onClick={() => setShowImporter(true)}
-                  style={{ fontSize: 11, fontWeight: 700, padding: '4px 12px', borderRadius: 20, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-muted)', cursor: 'pointer' }}
+                  style={{ fontSize: 11, fontWeight: 700, padding: '4px 12px', borderRadius: 20, border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff', cursor: 'pointer' }}
                 >+ Import Proposal</button>
               </div>
               {(activeProject.proposals || []).length === 0 && !activeProject.proposal_text && !activeProject.proposal_pdf_url ? (
@@ -4188,8 +4341,8 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                 </span>
                 <button
                   onClick={() => { setAddingContact(v => !v); setNewContactDraft({ name: '', title: '', email: '', linkedin: '' }); }}
-                  style={{ fontSize: 11, fontWeight: 700, padding: '4px 12px', borderRadius: 6, border: '1px solid var(--border)', background: addingContact ? 'var(--accent)' : 'var(--surface)', color: addingContact ? '#fff' : 'var(--text-muted)', cursor: 'pointer' }}
-                >{addingContact ? '✕ Cancel' : '+ Add Contact'}</button>
+                  style={{ fontSize: 12, fontWeight: 700, padding: '7px 16px', borderRadius: 8, border: addingContact ? '1px solid var(--border)' : '1px solid var(--accent)', background: addingContact ? 'var(--surface)' : 'var(--accent)', color: addingContact ? 'var(--text-muted)' : '#fff', cursor: 'pointer' }}
+                >{addingContact ? '✕ Cancel' : '👤 Add Contact'}</button>
               </div>
 
               {/* Add contact form */}
@@ -4326,7 +4479,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                               const isFirst = contacts.length === 0;
                               await saveProjectContacts([...contacts, { ...c, is_primary: isFirst }]);
                             }}
-                            style={{ fontSize: 10, fontWeight: 700, padding: '3px 10px', borderRadius: 20, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-muted)', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}
+                            style={{ fontSize: 10, fontWeight: 700, padding: '3px 10px', borderRadius: 20, border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}
                           >+ Add</button>
                         </div>
                       ))}
@@ -4347,9 +4500,53 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
               <>
                 {dealCompanyIntel.summary && (
                   <div style={{ padding: '14px 16px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10 }}>
-                    <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 6 }}>Company</div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8, marginBottom: 6 }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em' }}>Company</div>
+                      {dealCompanyIntel.thesis_built && dealCompanyIntel.thesis && (
+                        <button
+                          onClick={() => setShowFullThesis(v => !v)}
+                          style={{ fontSize: 10, fontWeight: 700, padding: '3px 10px', borderRadius: 20, border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}
+                        >
+                          {showFullThesis ? 'Hide Research' : 'Update Research'}
+                        </button>
+                      )}
+                    </div>
                     <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 4 }}>{dealCompanyIntel.name}</div>
                     <p style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6, margin: 0 }}>{dealCompanyIntel.summary}</p>
+                  </div>
+                )}
+
+                {/* ── Full Thesis (toggled via "Update Research" pill above) ── */}
+                {showFullThesis && dealCompanyIntel.thesis_built && dealCompanyIntel.thesis && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 12, border: '2px solid var(--accent)', borderRadius: 10, padding: '16px 16px 14px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--text)' }}>🧠 Full Thesis</span>
+                      {dealCompanyIntel.thesis_date && <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>Built {fmtDate(dealCompanyIntel.thesis_date.slice(0, 10))}</span>}
+                    </div>
+                    <div style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.8, whiteSpace: 'pre-wrap', padding: '14px 16px', background: 'var(--surface)', borderRadius: 10, border: '1px solid var(--border)' }}>
+                      {dealCompanyIntel.thesis}
+                    </div>
+                    {(() => {
+                      const entry = (dealCompanyIntel.contact_angles || []).find(ca => ca.is_primary);
+                      if (!entry) return null;
+                      return (
+                        <div style={{ padding: '14px 16px', background: '#f0fdf4', borderRadius: 10, border: '1px solid #bbf7d0' }}>
+                          <div style={{ fontSize: 10, fontWeight: 700, color: '#059669', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 8 }}>Primary Entry Point</div>
+                          <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>{entry.name} {entry.title && <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>· {entry.title}</span>}</div>
+                          {entry.linkedin && <a href={entry.linkedin} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: '#0077b5', textDecoration: 'none', display: 'block', marginTop: 2 }}>↗ LinkedIn</a>}
+                          {entry.angle && <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 6, lineHeight: 1.5, fontStyle: 'italic' }}>"{entry.angle}"</div>}
+                          {entry.hook && <div style={{ fontSize: 12, color: '#059669', marginTop: 6, lineHeight: 1.5 }}>Hook: {entry.hook}</div>}
+                        </div>
+                      );
+                    })()}
+                    {(dealCompanyIntel.thesis_risks || []).length > 0 && (
+                      <div style={{ padding: '12px 16px', background: '#fff7ed', borderRadius: 9, border: '1px solid #fed7aa' }}>
+                        <div style={{ fontSize: 10, fontWeight: 700, color: '#c2410c', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 8 }}>Risks & Sensitivities</div>
+                        <ul style={{ margin: 0, paddingLeft: 16, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                          {dealCompanyIntel.thesis_risks.map((r, i) => <li key={i} style={{ fontSize: 12, color: '#78350f', lineHeight: 1.5 }}>{r}</li>)}
+                        </ul>
+                      </div>
+                    )}
                   </div>
                 )}
                 {dealCompanyIntel.recommended_angle && (
@@ -4417,7 +4614,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 32, paddingBottom: 8 }}>
           <button
             onClick={handleArchiveProject}
-            style={{ fontSize: 11, fontWeight: 700, padding: '5px 14px', borderRadius: 20, border: `1px solid ${confirmDeleteProj ? '#ef4444' : 'var(--border)'}`, background: confirmDeleteProj ? '#fef2f2' : 'var(--surface)', color: confirmDeleteProj ? '#ef4444' : 'var(--text-faint)', cursor: 'pointer', transition: 'all .15s' }}
+            style={{ fontSize: 11, fontWeight: 700, padding: '5px 14px', borderRadius: 20, border: `1px solid ${confirmDeleteProj ? '#ef4444' : 'var(--accent)'}`, background: confirmDeleteProj ? '#fef2f2' : 'var(--accent)', color: confirmDeleteProj ? '#ef4444' : '#fff', cursor: 'pointer', transition: 'all .15s' }}
           >
             {confirmDeleteProj ? '⚠️ Confirm archive' : '📦 Archive project'}
           </button>

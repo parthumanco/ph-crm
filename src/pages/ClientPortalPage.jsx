@@ -229,10 +229,7 @@ function PasswordGate({ token, password, onSuccess }) {
         display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0,
         textAlign: 'center',
       }}>
-        <div style={{
-          fontFamily: '"Playfair Display", serif', fontWeight: 700,
-          fontSize: 24, color: ACCENT, marginBottom: 24, letterSpacing: '-0.02em',
-        }}>Part Human</div>
+        <img src="/ph-logo-black.svg" alt="Part Human" style={{ height: 64, marginBottom: 24 }} />
 
         <div style={{ fontSize: 36, marginBottom: 16 }}>🔒</div>
 
@@ -832,14 +829,11 @@ export default function ClientPortalPage({ token }) {
       {/* Top bar */}
       <div style={{
         background: '#fff', borderBottom: '1px solid #e5e7eb',
-        padding: '0 32px', height: 56,
+        padding: '0 32px', height: 170,
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         position: 'sticky', top: 0, zIndex: 100,
       }}>
-        <div style={{
-          fontFamily: '"Playfair Display", serif', fontWeight: 700,
-          fontSize: 20, color: ACCENT, letterSpacing: '-0.02em',
-        }}>Part Human</div>
+        <img src="/ph-logo-black.svg" alt="Part Human" style={{ height: 150 }} />
         <div style={{ fontSize: 14, fontWeight: 600, color: '#6b7280' }}>
           {project.name}
         </div>

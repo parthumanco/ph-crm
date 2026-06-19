@@ -70,6 +70,7 @@ export default function App() {
   const [icp, setIcp]                 = useState(DEFAULT_ICP);
   const [teamMembers, setTeamMembers] = useState(DEFAULT_TEAM_MEMBERS);
   const [targetDealId, setTargetDealId] = useState(null); // deep-link into a specific deal card
+  const [targetProjectId, setTargetProjectId] = useState(null); // deep-link into a specific project card
   const projectsGoHome                = useRef(null); // ProjectsPage registers its goHome fn here
 
   useEffect(() => {
@@ -100,10 +101,11 @@ export default function App() {
   // Increment the refresh key for a page every time the user navigates to it,
   // so each page's load useEffect re-runs on every tab switch.
   // Optional second arg: dealId to deep-link into a specific deal card on DealsPage.
-  function handleSetPage(newPage, dealId = null) {
+  function handleSetPage(newPage, dealId = null, projectId = null) {
     setPageKeys(prev => ({ ...prev, [newPage]: (prev[newPage] || 0) + 1 }));
     setPage(newPage);
     if (dealId) setTargetDealId(dealId);
+    if (projectId) setTargetProjectId(projectId);
     localStorage.setItem('ph_current_page', newPage);
     window.history.pushState({ page: newPage }, '', '#' + newPage);
   }
@@ -164,7 +166,7 @@ export default function App() {
           <SupportPage teamMembers={teamMembers} />
         </PageSlot>
         <PageSlot active={page === 'projects'}>
-          <ProjectsPage goHomeRef={projectsGoHome} refreshKey={pageKeys.projects || 0} teamMembers={teamMembers} />
+          <ProjectsPage goHomeRef={projectsGoHome} refreshKey={pageKeys.projects || 0} teamMembers={teamMembers} targetProjectId={targetProjectId} onTargetProjectConsumed={() => setTargetProjectId(null)} />
         </PageSlot>
         <PageSlot active={page === 'discover'}>
           <DiscoverPage icp={icp} refreshKey={pageKeys.discover || 0} />

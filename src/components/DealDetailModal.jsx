@@ -250,11 +250,20 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
           .from('pipeline_entries')
           .select('id, status')
           .eq('company_id', deal.company_id)
+          .order('updated_at', { ascending: false })
           .limit(1);
         if (existing?.length) {
           await supabase.from('pipeline_entries')
             .update({ status: 'watch_list', updated_at: new Date().toISOString() })
             .eq('id', existing[0].id);
+        } else {
+          await supabase.from('pipeline_entries').insert({
+            company_id: deal.company_id,
+            status: 'watch_list',
+            notes: deal.notes || null,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          });
         }
       }
       onClose();
@@ -317,16 +326,21 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
     setUploadingTaskId(taskId);
     try {
       const saved = await uploadDealTaskFile(taskId, file);
-      const updatedTaskFiles = { ...taskFiles, [taskId]: [...(taskFiles[taskId] || []), saved] };
-      setTaskFiles(updatedTaskFiles);
-      // Build fresh merged list so the thesis refresh sees the new file immediately
-      const freshFiles = [
-        ...Object.entries(updatedTaskFiles).flatMap(([tid, fls]) => {
-          const task = tasks.find(t => t.id === tid);
-          return fls.map(f => ({ ...f, _source: 'task', task_title: task?.title || null }));
-        }),
-        ...dealFiles.map(f => ({ ...f, _source: 'deal', task_title: null })),
-      ].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+      // Compute the merged file list inside the setState updater so concurrent
+      // uploads (multi-file select/drop) each see the latest state instead of
+      // racing on a stale `taskFiles` closure and clobbering each other.
+      let freshFiles;
+      setTaskFiles(prev => {
+        const updatedTaskFiles = { ...prev, [taskId]: [...(prev[taskId] || []), saved] };
+        freshFiles = [
+          ...Object.entries(updatedTaskFiles).flatMap(([tid, fls]) => {
+            const task = tasks.find(t => t.id === tid);
+            return fls.map(f => ({ ...f, _source: 'task', task_title: task?.title || null }));
+          }),
+          ...dealFiles.map(f => ({ ...f, _source: 'deal', task_title: null })),
+        ].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+        return updatedTaskFiles;
+      });
       silentRefreshThesis(undefined, undefined, freshFiles);
     } catch (e) {
       alert('Upload failed: ' + e.message);
@@ -340,16 +354,19 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
     setUploadingDealFile(true);
     try {
       const saved = await uploadDealFile(deal.id, file);
-      const newDealFiles = [saved, ...dealFiles];
-      setDealFiles(newDealFiles);
-      // Build fresh merged list so the thesis refresh sees the new file immediately
-      const freshFiles = [
-        ...Object.entries(taskFiles).flatMap(([tid, fls]) => {
-          const task = tasks.find(t => t.id === tid);
-          return fls.map(f => ({ ...f, _source: 'task', task_title: task?.title || null }));
-        }),
-        ...newDealFiles.map(f => ({ ...f, _source: 'deal', task_title: null })),
-      ].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+      // Same race-safe pattern as handleTaskFileUpload above.
+      let freshFiles;
+      setDealFiles(prev => {
+        const newDealFiles = [saved, ...prev];
+        freshFiles = [
+          ...Object.entries(taskFiles).flatMap(([tid, fls]) => {
+            const task = tasks.find(t => t.id === tid);
+            return fls.map(f => ({ ...f, _source: 'task', task_title: task?.title || null }));
+          }),
+          ...newDealFiles.map(f => ({ ...f, _source: 'deal', task_title: null })),
+        ].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+        return newDealFiles;
+      });
       silentRefreshThesis(undefined, undefined, freshFiles);
     } catch (e) {
       alert('Upload failed: ' + e.message);
@@ -1201,7 +1218,7 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
                 <div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
                     <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em' }}>Activity Log</span>
-                    <button className="btn btn-secondary btn-xs" onClick={() => setAddingAct(a => !a)}>+ Log Activity</button>
+                    <button className="btn btn-primary btn-xs" onClick={() => setAddingAct(a => !a)}>+ Log Activity</button>
                   </div>
 
                   {addingAct && (
@@ -1293,7 +1310,7 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
                           Updating AI insights…
                         </span>
                       )}
-                      <button className="btn btn-secondary btn-xs" onClick={() => setAddingTask(a => !a)}>+ Add Step</button>
+                      <button className="btn btn-primary btn-xs" onClick={() => setAddingTask(a => !a)}>+ Add Step</button>
                     </div>
                   </div>
 
@@ -1767,7 +1784,7 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
                       {meetings.length > 0 && (
                         <button className="btn btn-primary btn-xs" onClick={() => setShowProposalDraft(true)}>✦ Draft Proposal</button>
                       )}
-                      <button className="btn btn-secondary btn-xs" onClick={() => { setInitialTranscript(''); setShowTranscriptImporter(true); }}>+ Add Meeting</button>
+                      <button className="btn btn-primary btn-xs" onClick={() => { setInitialTranscript(''); setShowTranscriptImporter(true); }}>+ Add Meeting</button>
                     </div>
                   </div>
 
@@ -1792,7 +1809,7 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
                     <div style={{ textAlign: 'center', padding: '24px 0' }}>
                       <p style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 6 }}>No meetings logged yet.</p>
                       <p style={{ fontSize: 11, color: 'var(--text-faint)', marginBottom: 10 }}>Drag a transcript file here or click below</p>
-                      <button className="btn btn-secondary btn-sm" onClick={() => { setInitialTranscript(''); setShowTranscriptImporter(true); }}>📝 Add first meeting</button>
+                      <button className="btn btn-primary btn-sm" onClick={() => { setInitialTranscript(''); setShowTranscriptImporter(true); }}>📝 Add first meeting</button>
                     </div>
                   )}
 
@@ -2012,7 +2029,7 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
                           {!addingItem && (
                             <button
                               onClick={() => setAddingItem(true)}
-                              style={{ fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-muted)', cursor: 'pointer' }}
+                              style={{ fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 6, border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff', cursor: 'pointer' }}
                             >
                               + Add
                             </button>
@@ -2128,8 +2145,8 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
                       {buildingThesis
                         ? <><span style={{ display: 'inline-block', width: 10, height: 10, border: '2px solid var(--text-muted)', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} /> Running…</>
                         : companyIntel?.thesis_built
-                          ? '↺ Expand Thesis'
-                          : '🔬 Build Thesis'
+                          ? 'Update Research'
+                          : 'Build Thesis'
                       }
                     </button>
                   </div>
@@ -2327,7 +2344,7 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
                         onClick={handleBuildThesis}
                         style={{ background: 'linear-gradient(135deg, #7c3aed, #4f46e5)', color: '#fff', border: 'none', borderRadius: 8, padding: '9px 20px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
                       >
-                        {companyIntel?.thesis_built ? '↺ Expand Thesis' : '🔬 Build Thesis'}
+                        {companyIntel?.thesis_built ? 'Update Research' : 'Build Thesis'}
                       </button>
                     </div>
                   )}
@@ -2365,7 +2382,7 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
                       </span>
                       <button
                         onClick={() => setAddingContact(v => !v)}
-                        style={{ fontSize: 11, fontWeight: 700, padding: '4px 12px', borderRadius: 6, border: '1px solid var(--border)', background: addingContact ? 'var(--accent)' : 'var(--surface)', color: addingContact ? '#fff' : 'var(--text-muted)', cursor: 'pointer' }}
+                        style={{ fontSize: 11, fontWeight: 700, padding: '4px 12px', borderRadius: 6, border: addingContact ? '1px solid var(--border)' : '1px solid var(--accent)', background: addingContact ? 'var(--surface)' : 'var(--accent)', color: addingContact ? 'var(--text-muted)' : '#fff', cursor: 'pointer' }}
                       >
                         {addingContact ? '✕ Cancel' : '+ Add Contact'}
                       </button>
@@ -2603,7 +2620,7 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
                       setDeleting(true);
                       try {
                         await deleteDeal(deal.id);
-                        onSaved(null);
+                        onSaved?.(null);
                         onClose();
                       } catch (e) {
                         alert('Error deleting deal: ' + e.message);

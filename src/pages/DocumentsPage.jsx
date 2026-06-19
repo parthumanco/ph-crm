@@ -224,7 +224,7 @@ export default function DocumentsPage({ refreshKey = 0 }) {
           <label style={{ display: 'block', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.06em', color: '#9ca3af', marginBottom: 10 }}>
             Document Type
           </label>
-          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: `repeat(${DOC_TYPES.length}, 1fr)`, gap: 10 }}>
             {DOC_TYPES.map(t => (
               <button
                 key={t.id}
@@ -235,20 +235,16 @@ export default function DocumentsPage({ refreshKey = 0 }) {
                   border: `2px solid ${selectedType === t.id ? t.color : '#e5e7eb'}`,
                   background: selectedType === t.id ? t.bg : '#fff',
                   cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 7,
+                  textAlign: 'left',
                   transition: 'all .12s',
                   boxShadow: selectedType === t.id ? `0 0 0 3px ${t.color}22` : 'none',
+                  minWidth: 0,
                 }}
                 onMouseEnter={e => { if (selectedType !== t.id) { e.currentTarget.style.borderColor = t.color; e.currentTarget.style.background = t.bg; } }}
                 onMouseLeave={e => { if (selectedType !== t.id) { e.currentTarget.style.borderColor = '#e5e7eb'; e.currentTarget.style.background = '#fff'; } }}
               >
-                <span style={{ fontSize: 18 }}>{t.icon}</span>
-                <div style={{ textAlign: 'left' }}>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: '#111', lineHeight: 1.2 }}>{t.label}</div>
-                  <div style={{ fontSize: 11, color: '#9ca3af' }}>{TYPE_DESCRIPTIONS[t.id]}</div>
-                </div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: '#111', lineHeight: 1.2 }}>{t.label}</div>
+                <div style={{ fontSize: 11, color: '#9ca3af' }}>{TYPE_DESCRIPTIONS[t.id]}</div>
               </button>
             ))}
           </div>
