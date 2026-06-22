@@ -14,9 +14,11 @@ import {
   daysBetween, addDays, projectProgress, fmtDate,
 } from '../lib/projects';
 import { fetchDeals, fetchActivities, addActivity, fetchTasks, ACTIVITY_TYPES } from '../lib/deals';
-import { fetchCompanyIntel, silentRefreshThesis, fetchClients } from '../lib/clients';
+import { fetchCompanyIntel, silentRefreshThesis, fetchClients, findOrCreateClient } from '../lib/clients';
 import ProposalImporter from '../components/ProposalImporter';
 import TranscriptImporter from '../components/TranscriptImporter';
+import CompanyIntelPanel from '../components/CompanyIntelPanel';
+import ContactsPanel from '../components/ContactsPanel';
 
 async function sendPortalNotification(toEmail, subject, bodyHtml, ccEmails = []) {
   const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
@@ -446,6 +448,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
   const [loadingDetail, setLoadingDetail]   = useState(false);
   const [expanded, setExpanded]             = useState({});          // milestone expansion
   const [editingMs, setEditingMs]           = useState(null);        // inline edit milestone id
+  const [editingProjectName, setEditingProjectName] = useState(false); // click-to-edit project title
   const [showImporter, setShowImporter]     = useState(false);
   const [newTaskMs, setNewTaskMs]           = useState(null);        // ms id for new task row
   const [newTaskTitle, setNewTaskTitle]     = useState('');
@@ -477,6 +480,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
   const [showContactDropdown, setShowContactDropdown] = useState(false);
   const [showShareModal, setShowShareModal]       = useState(false);
   const [projectCompany, setProjectCompany]       = useState(null);
+  const [clientRecord, setClientRecord]           = useState(null); // clients row — canonical contacts list, shared with ClientsPage
   const [addingContact, setAddingContact]         = useState(false);
   const [newContactDraft, setNewContactDraft]     = useState({ name: '', title: '', email: '' });
   const [editingContactIdx, setEditingContactIdx] = useState(null);
@@ -485,7 +489,6 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
   const [expandedRejections, setExpandedRejections] = useState(new Set());
   const [expandedCoC, setExpandedCoC]               = useState(new Set()); // manual expand after approval
   const [expandedTranscripts, setExpandedTranscripts] = useState(new Set()); // meeting ids with full transcript open in mentions panel
-  const [showFullThesis, setShowFullThesis]           = useState(false); // Research tab — "Update Research" pill
 
   // Background thesis auto-refresh — fires after any add (file/link/note/meeting/task)
   // so the client's AI thesis stays current, mirroring the deal-card behavior.
@@ -709,12 +712,15 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
     setSharePassword(project.portal_password || '');
     setShareClientEmail(project.client_email || '');
     setProjectCompany(null);
+    setClientRecord(null);
     setAddingContact(false);
     // Load matching company by client_name
     if (project.client_name) {
       supabase.from('companies').select('*').ilike('name', project.client_name).limit(1).then(({ data }) => {
         if (data?.[0]) setProjectCompany(data[0]);
       });
+      // Resolve (or create) the clients row — same canonical contacts list ContactsPanel uses on ClientsPage
+      findOrCreateClient(project.client_name).then(setClientRecord).catch(() => setClientRecord(null));
     }
     try {
       const [ms, ts, files, archivedF, mtgs] = await Promise.all([
@@ -2629,13 +2635,26 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
       <div className="page-header">
         <div className="page-header-left">
           <h2 style={{ marginBottom: 2 }}>
-            <input
-              type="text"
-              value={activeProject.name}
-              onChange={e => setActiveProject(p => ({ ...p, name: e.target.value }))}
-              onBlur={handleSaveProject}
-              style={{ fontSize: 22, fontWeight: 800, border: 'none', outline: 'none', background: 'transparent', padding: 0, width: '100%' }}
-            />
+            {editingProjectName ? (
+              <input
+                type="text"
+                autoFocus
+                value={activeProject.name}
+                onChange={e => setActiveProject(p => ({ ...p, name: e.target.value }))}
+                onBlur={() => { handleSaveProject(); setEditingProjectName(false); }}
+                onKeyDown={e => { if (e.key === 'Enter') { handleSaveProject(); setEditingProjectName(false); } }}
+                style={{ fontSize: 22, fontWeight: 800, border: 'none', outline: 'none', background: 'transparent', padding: 0, width: '100%' }}
+              />
+            ) : (
+              <span
+                onClick={() => setEditingProjectName(true)}
+                title="Click to edit"
+                style={{ fontSize: 22, fontWeight: 800, cursor: 'pointer', wordBreak: 'break-word', display: 'inline-flex', alignItems: 'baseline', gap: 8 }}
+              >
+                {activeProject.name}
+                <span style={{ fontSize: 13, color: 'var(--text-faint)', fontWeight: 600 }}>✏️</span>
+              </span>
+            )}
           </h2>
           <p style={{ color: 'var(--text-muted)', fontSize: 13 }}>
             {activeProject.client_name && <span>{activeProject.client_name} · </span>}
@@ -4331,283 +4350,37 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
         )}
 
         {/* ── Contacts tab ── */}
-        {projectTab === 'contacts' && (() => {
-          const contacts = activeProject.contacts || [];
-          return (
-            <div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
-                <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em' }}>
-                  Contacts{contacts.length > 0 ? ` (${contacts.length})` : ''}
-                </span>
-                <button
-                  onClick={() => { setAddingContact(v => !v); setNewContactDraft({ name: '', title: '', email: '', linkedin: '' }); }}
-                  style={{ fontSize: 12, fontWeight: 700, padding: '7px 16px', borderRadius: 8, border: addingContact ? '1px solid var(--border)' : '1px solid var(--accent)', background: addingContact ? 'var(--surface)' : 'var(--accent)', color: addingContact ? 'var(--text-muted)' : '#fff', cursor: 'pointer' }}
-                >{addingContact ? '✕ Cancel' : '👤 Add Contact'}</button>
-              </div>
+        {projectTab === 'contacts' && (
+          <ContactsPanel
+            clientId={clientRecord?.id}
+            companyName={activeProject.client_name}
+            contacts={clientRecord?.contacts || []}
+            discovered={(() => {
+              const addedNames = new Set((clientRecord?.contacts || []).map(c => c.name?.trim().toLowerCase()));
+              const pool = new Map();
+              (projectCompany?.contact_angles || []).forEach(c => {
+                if (!c.name?.trim()) return;
+                const key = c.name.trim().toLowerCase();
+                if (!addedNames.has(key)) pool.set(key, { name: c.name.trim(), title: c.title || '', email: c.email || '', linkedin: c.linkedinUrl || c.linkedin || '' });
+              });
+              (dealCompanyIntel?.contact_angles || []).forEach(c => {
+                if (!c.name?.trim()) return;
+                const key = c.name.trim().toLowerCase();
+                if (!addedNames.has(key) && !pool.has(key)) pool.set(key, { name: c.name.trim(), title: c.title || '', email: c.email || '', linkedin: c.linkedinUrl || c.linkedin || '' });
+              });
+              return Array.from(pool.values());
+            })()}
+            onContactsChange={updated => { setClientRecord(cr => cr ? { ...cr, contacts: updated } : cr); triggerProjectThesisRefresh(); }}
+          />
+        )}
 
-              {/* Add contact form */}
-              {addingContact && (
-                <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: 14, marginBottom: 14 }}>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
-                    <div>
-                      <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 3 }}>Name *</label>
-                      <input type="text" value={newContactDraft.name} onChange={e => setNewContactDraft(d => ({ ...d, name: e.target.value }))} placeholder="Full name" style={{ width: '100%', fontSize: 12 }} />
-                    </div>
-                    <div>
-                      <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 3 }}>Title</label>
-                      <input type="text" value={newContactDraft.title} onChange={e => setNewContactDraft(d => ({ ...d, title: e.target.value }))} placeholder="Job title" style={{ width: '100%', fontSize: 12 }} />
-                    </div>
-                    <div>
-                      <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 3 }}>Email</label>
-                      <input type="email" value={newContactDraft.email} onChange={e => setNewContactDraft(d => ({ ...d, email: e.target.value }))} placeholder="email@company.com" style={{ width: '100%', fontSize: 12 }} />
-                    </div>
-                    <div>
-                      <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 3 }}>LinkedIn URL</label>
-                      <input type="url" value={newContactDraft.linkedin || ''} onChange={e => setNewContactDraft(d => ({ ...d, linkedin: e.target.value }))} placeholder="linkedin.com/in/…" style={{ width: '100%', fontSize: 12 }} />
-                    </div>
-                  </div>
-                  <button
-                    onClick={handleAddProjectContact}
-                    disabled={!newContactDraft.name.trim()}
-                    style={{ fontSize: 11, fontWeight: 700, padding: '5px 14px', borderRadius: 6, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer' }}
-                  >Add Contact</button>
-                </div>
-              )}
-
-              {contacts.length === 0 && !addingContact && (
-                <p style={{ fontSize: 12, color: 'var(--text-faint)', textAlign: 'center', padding: '32px 0' }}>No contacts yet. Add one above or select from the contacts widget.</p>
-              )}
-
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                {contacts.map((c, i) => (
-                  <div key={i} style={{ background: 'var(--surface)', border: `1px solid ${editingContactIdx === i ? 'var(--accent)' : c.is_primary ? '#bbf7d0' : 'var(--border)'}`, borderRadius: 10, overflow: 'hidden' }}>
-                    {editingContactIdx === i ? (
-                      /* ── Inline edit form ── */
-                      <div style={{ padding: '14px 16px' }}>
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 10 }}>
-                          <div>
-                            <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 3 }}>Name *</label>
-                            <input autoFocus type="text" value={editContactDraft.name} onChange={e => setEditContactDraft(d => ({ ...d, name: e.target.value }))} style={{ width: '100%', fontSize: 12 }} />
-                          </div>
-                          <div>
-                            <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 3 }}>Title</label>
-                            <input type="text" value={editContactDraft.title} onChange={e => setEditContactDraft(d => ({ ...d, title: e.target.value }))} style={{ width: '100%', fontSize: 12 }} />
-                          </div>
-                          <div>
-                            <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 3 }}>Email</label>
-                            <input type="email" value={editContactDraft.email} onChange={e => setEditContactDraft(d => ({ ...d, email: e.target.value }))} style={{ width: '100%', fontSize: 12 }} />
-                          </div>
-                          <div>
-                            <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 3 }}>LinkedIn URL</label>
-                            <input type="url" value={editContactDraft.linkedin || ''} onChange={e => setEditContactDraft(d => ({ ...d, linkedin: e.target.value }))} style={{ width: '100%', fontSize: 12 }} />
-                          </div>
-                        </div>
-                        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-                          <button onClick={() => { setEditingContactIdx(null); setEditContactDraft({ name: '', title: '', email: '', linkedin: '' }); }} style={{ fontSize: 11, padding: '4px 12px', borderRadius: 6, border: '1px solid var(--border)', background: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}>Cancel</button>
-                          <button onClick={handleSaveEditContact} disabled={!editContactDraft.name.trim()} style={{ fontSize: 11, fontWeight: 700, padding: '4px 14px', borderRadius: 6, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer' }}>Save</button>
-                        </div>
-                      </div>
-                    ) : (
-                      /* ── Display mode ── */
-                      <div style={{ padding: '14px 16px', display: 'flex', alignItems: 'flex-start', gap: 12 }}>
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 2 }}>
-                            <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--text)' }}>{c.name}</span>
-                            {c.is_primary && (
-                              <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 10, background: '#dcfce7', color: '#166534' }}>Primary</span>
-                            )}
-                          </div>
-                          {c.title && <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{c.title}</div>}
-                          {c.email && <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 2 }}>{c.email}</div>}
-                          {c.linkedin && <a href={c.linkedin} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: 'var(--accent)', marginTop: 3, display: 'inline-block' }}>LinkedIn ↗</a>}
-                        </div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-                          {!c.is_primary && (
-                            <button
-                              onClick={() => handleSetPrimary(i)}
-                              style={{ fontSize: 10, fontWeight: 700, padding: '3px 10px', borderRadius: 20, border: '1px solid #bbf7d0', background: '#f0fdf4', color: '#166534', cursor: 'pointer', whiteSpace: 'nowrap' }}
-                            >Set as Primary</button>
-                          )}
-                          <button
-                            onClick={() => { setEditingContactIdx(i); setEditContactDraft({ name: c.name || '', title: c.title || '', email: c.email || '', linkedin: c.linkedin || '' }); }}
-                            style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 13, padding: '3px 5px', borderRadius: 4 }}
-                            title="Edit contact"
-                          >✏️</button>
-                          <button
-                            onClick={() => handleRemoveProjectContact(i)}
-                            style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 14, padding: '3px 5px', borderRadius: 4 }}
-                            title="Remove contact"
-                          >✕</button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-
-              {/* ── Discovered contacts from research / company intel ── */}
-              {(() => {
-                const addedNames = new Set(contacts.map(c => c.name?.trim().toLowerCase()));
-                const pool = new Map();
-                (projectCompany?.contacts || []).forEach(c => {
-                  if (c.name?.trim()) pool.set(c.name.trim().toLowerCase(), { name: c.name.trim(), title: c.title || '', email: c.email || '', linkedin: c.linkedin || '' });
-                });
-                (dealCompanyIntel?.contact_angles || []).forEach(c => {
-                  if (!c.name?.trim()) return;
-                  const key = c.name.trim().toLowerCase();
-                  const existing = pool.get(key) || {};
-                  pool.set(key, { ...existing, ...c, name: c.name.trim(), email: c.email || existing.email || '', linkedin: c.linkedin || existing.linkedin || '' });
-                });
-                const discovered = Array.from(pool.values()).filter(c => !addedNames.has(c.name.toLowerCase()));
-                if (discovered.length === 0) return null;
-                return (
-                  <div style={{ marginTop: 24 }}>
-                    <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 10 }}>
-                      Discovered from research ({discovered.length})
-                    </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                      {discovered.map((c, i) => (
-                        <div key={i} style={{ padding: '12px 14px', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 8, display: 'flex', alignItems: 'flex-start', gap: 12 }}>
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>{c.name}</div>
-                            {c.title && <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 1 }}>{c.title}</div>}
-                            {c.email && <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 2 }}>{c.email}</div>}
-                            {c.linkedin && <a href={c.linkedin} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: 'var(--accent)', marginTop: 2, display: 'inline-block' }}>LinkedIn ↗</a>}
-                          </div>
-                          <button
-                            onClick={async () => {
-                              const isFirst = contacts.length === 0;
-                              await saveProjectContacts([...contacts, { ...c, is_primary: isFirst }]);
-                            }}
-                            style={{ fontSize: 10, fontWeight: 700, padding: '3px 10px', borderRadius: 20, border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}
-                          >+ Add</button>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                );
-              })()}
-            </div>
-          );
-        })()}
 
         {/* ── Research tab ── */}
         {projectTab === 'research' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-            {!dealCompanyIntel ? (
-              <p style={{ fontSize: 12, color: 'var(--text-faint)', textAlign: 'center', padding: '24px 0' }}>No research found for {activeProject.client_name || 'this client'}.</p>
-            ) : (
-              <>
-                {dealCompanyIntel.summary && (
-                  <div style={{ padding: '14px 16px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8, marginBottom: 6 }}>
-                      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em' }}>Company</div>
-                      {dealCompanyIntel.thesis_built && dealCompanyIntel.thesis && (
-                        <button
-                          onClick={() => setShowFullThesis(v => !v)}
-                          style={{ fontSize: 10, fontWeight: 700, padding: '3px 10px', borderRadius: 20, border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}
-                        >
-                          {showFullThesis ? 'Hide Research' : 'Update Research'}
-                        </button>
-                      )}
-                    </div>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 4 }}>{dealCompanyIntel.name}</div>
-                    <p style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6, margin: 0 }}>{dealCompanyIntel.summary}</p>
-                  </div>
-                )}
-
-                {/* ── Full Thesis (toggled via "Update Research" pill above) ── */}
-                {showFullThesis && dealCompanyIntel.thesis_built && dealCompanyIntel.thesis && (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 12, border: '2px solid var(--accent)', borderRadius: 10, padding: '16px 16px 14px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--text)' }}>🧠 Full Thesis</span>
-                      {dealCompanyIntel.thesis_date && <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>Built {fmtDate(dealCompanyIntel.thesis_date.slice(0, 10))}</span>}
-                    </div>
-                    <div style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.8, whiteSpace: 'pre-wrap', padding: '14px 16px', background: 'var(--surface)', borderRadius: 10, border: '1px solid var(--border)' }}>
-                      {dealCompanyIntel.thesis}
-                    </div>
-                    {(() => {
-                      const entry = (dealCompanyIntel.contact_angles || []).find(ca => ca.is_primary);
-                      if (!entry) return null;
-                      return (
-                        <div style={{ padding: '14px 16px', background: '#f0fdf4', borderRadius: 10, border: '1px solid #bbf7d0' }}>
-                          <div style={{ fontSize: 10, fontWeight: 700, color: '#059669', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 8 }}>Primary Entry Point</div>
-                          <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>{entry.name} {entry.title && <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>· {entry.title}</span>}</div>
-                          {entry.linkedin && <a href={entry.linkedin} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: '#0077b5', textDecoration: 'none', display: 'block', marginTop: 2 }}>↗ LinkedIn</a>}
-                          {entry.angle && <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 6, lineHeight: 1.5, fontStyle: 'italic' }}>"{entry.angle}"</div>}
-                          {entry.hook && <div style={{ fontSize: 12, color: '#059669', marginTop: 6, lineHeight: 1.5 }}>Hook: {entry.hook}</div>}
-                        </div>
-                      );
-                    })()}
-                    {(dealCompanyIntel.thesis_risks || []).length > 0 && (
-                      <div style={{ padding: '12px 16px', background: '#fff7ed', borderRadius: 9, border: '1px solid #fed7aa' }}>
-                        <div style={{ fontSize: 10, fontWeight: 700, color: '#c2410c', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 8 }}>Risks & Sensitivities</div>
-                        <ul style={{ margin: 0, paddingLeft: 16, display: 'flex', flexDirection: 'column', gap: 4 }}>
-                          {dealCompanyIntel.thesis_risks.map((r, i) => <li key={i} style={{ fontSize: 12, color: '#78350f', lineHeight: 1.5 }}>{r}</li>)}
-                        </ul>
-                      </div>
-                    )}
-                  </div>
-                )}
-                {dealCompanyIntel.recommended_angle && (
-                  <div style={{ padding: '12px 14px', background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 8 }}>
-                    <div style={{ fontSize: 11, fontWeight: 700, color: '#c2410c', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 3 }}>Positioning Angle</div>
-                    <p style={{ fontSize: 12, color: '#7c2d12', lineHeight: 1.6, margin: 0 }}>{dealCompanyIntel.recommended_angle}</p>
-                  </div>
-                )}
-                {dealCompanyIntel.thesis_next_step && (
-                  <div style={{ padding: '12px 14px', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8 }}>
-                    <div style={{ fontSize: 11, fontWeight: 700, color: '#15803d', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 3 }}>Next Action</div>
-                    <p style={{ fontSize: 12, color: '#14532d', lineHeight: 1.6, margin: 0 }}>{dealCompanyIntel.thesis_next_step}</p>
-                  </div>
-                )}
-                {dealCompanyIntel.research_items?.length > 0 && (
-                  <div>
-                    <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 8 }}>Research Materials</div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                      {dealCompanyIntel.research_items.map((item, i) => (
-                        <div key={i} style={{ padding: '10px 12px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8 }}>
-                          <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)' }}>{{ link: '🔗', document: '📄', note: '📝' }[item.type] || '📎'} {item.title}</div>
-                          {item.url && <a href={item.url} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: 'var(--accent)', display: 'block', marginTop: 3 }}>{item.url}</a>}
-                          {item.body && <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '4px 0 0', lineHeight: 1.5 }}>{item.body}</p>}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                {dealCompanyIntel.triggers?.length > 0 && (
-                  <div>
-                    <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 8 }}>Signals & Triggers</div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                      {(Array.isArray(dealCompanyIntel.triggers) ? dealCompanyIntel.triggers : []).map((tr, i) => {
-                        // Triggers may arrive as JSON strings — parse them
-                        let t = tr;
-                        if (typeof tr === 'string') {
-                          try { t = JSON.parse(tr); } catch { t = { detail: tr }; }
-                        }
-                        const urgencyColor = t.urgency === 'high' ? '#dc2626' : t.urgency === 'medium' ? '#d97706' : 'var(--text-faint)';
-                        return (
-                          <div key={i} style={{ padding: '10px 14px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8 }}>
-                            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: t.detail ? 5 : 0 }}>
-                              <div style={{ flex: 1, fontSize: 12, fontWeight: 700, color: 'var(--text)', lineHeight: 1.4 }}>
-                                {t.headline || t.title || t.text || '—'}
-                              </div>
-                              <div style={{ display: 'flex', gap: 5, flexShrink: 0, alignItems: 'center' }}>
-                                {t.date && <span style={{ fontSize: 10, color: 'var(--text-faint)', whiteSpace: 'nowrap' }}>{t.date}</span>}
-                                {t.urgency && <span style={{ fontSize: 10, fontWeight: 700, color: urgencyColor, textTransform: 'uppercase', letterSpacing: '.03em' }}>{t.urgency}</span>}
-                                {t.category && <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 10, background: 'var(--bg)', border: '1px solid var(--border-light)', color: 'var(--text-muted)', textTransform: 'capitalize' }}>{t.category}</span>}
-                              </div>
-                            </div>
-                            {t.detail && <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.55 }}>{t.detail}</div>}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
-              </>
-            )}
-          </div>
+          <CompanyIntelPanel
+            intel={dealCompanyIntel}
+            emptyMessage={`No research found for ${activeProject.client_name || 'this client'}.`}
+          />
         )}
 
         {/* ── Archive pill — bottom right ── */}

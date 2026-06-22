@@ -1,12 +1,14 @@
 import { useState, useEffect, useRef } from 'react';
 import {
   fetchClients, fetchClientDetail, fetchCompanyIntel, runClientDeepScan, runBuildThesis,
-  upsertClient, upsertClientContacts, enrichClientContact, findOrCreateCompany,
+  upsertClient, findOrCreateCompany,
   addClientItem, deleteClientItem, askClientQuestion, silentRefreshThesis,
 } from '../lib/clients';
-import { fetchDocuments, fetchCompanyFiles, docType } from '../lib/documents';
+import { fetchDocuments, fetchCompanyFiles, docType, deleteCompanyFile } from '../lib/documents';
 import { deleteProject, restoreProject, upsertProject } from '../lib/projects';
 import DocumentEditor from '../components/DocumentEditor';
+import CompanyIntelPanel from '../components/CompanyIntelPanel';
+import ContactsPanel from '../components/ContactsPanel';
 
 const STATUS_COLOR = { active: '#10b981', completed: '#6366f1', on_hold: '#f59e0b', cancelled: '#ef4444', archived: '#9ca3af' };
 const projStatus = p => p.archived_at ? 'archived' : (p.status || 'active');
@@ -29,6 +31,13 @@ const scoreColor = s => s >= 7 ? '#10b981' : s >= 4 ? '#f59e0b' : '#ef4444';
 function fmtDate(d) {
   if (!d) return '';
   return new Date(d + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+// Compact "mm/dd/yy" formatter for "Last scanned" labels next to scan/thesis actions.
+function ddmyy(d) {
+  if (!d) return '';
+  const dt = new Date(d);
+  return `${String(dt.getMonth() + 1).padStart(2, '0')}/${String(dt.getDate()).padStart(2, '0')}/${String(dt.getFullYear()).slice(-2)}`;
 }
 
 export default function ClientsPage({ onNavigate, refreshKey, icp }) {
@@ -72,11 +81,10 @@ export default function ClientsPage({ onNavigate, refreshKey, icp }) {
   const [scanning, setScanning]     = useState(false);
   const [scanStatus, setScanStatus] = useState('');
 
-  // Contact dossiers
-  const [enrichingContact, setEnrichingContact] = useState(null); // contact name
-  const [expandedContact, setExpandedContact]   = useState(null); // contact name
-  const [addingContact, setAddingContact]       = useState(false);
-  const [contactDraft, setContactDraft]         = useState({ name: '', title: '', email: '', linkedin: '' });
+  // Contact dossiers — card UI, edit/primary/enrich/delete now all live in <ContactsPanel>
+  const [hoveredClientFile, setHoveredClientFile] = useState(null); // file id — hover-reveal delete pill
+  const [confirmDeleteClientFile, setConfirmDeleteClientFile] = useState(null); // file id awaiting confirm
+  const [deletingClientFile, setDeletingClientFile] = useState(null); // file id
 
   // Build Thesis
   const [buildingThesis, setBuildingThesis] = useState(false);
@@ -306,6 +314,109 @@ export default function ClientsPage({ onNavigate, refreshKey, icp }) {
     }
   };
 
+  // Export the Overview tab's intelligence (summary, positioning, contacts, thesis)
+  // as a printable PDF — same "open blank tab, write HTML, trigger print" pattern
+  // used by the deal card's Export PDF button.
+  const handleExportPdf = () => {
+    if (!detail?.client) return;
+    const client = detail.client;
+    const esc = s => (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const fmtDateLong = d => d ? new Date(d).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : '—';
+    const entry = (intel?.contact_angles || []).find(ca => ca.is_primary);
+
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8">
+<title>${esc(client.name)} — Part Human</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 13px; color: #1a1a1a; line-height: 1.5; padding: 40px 48px; max-width: 820px; margin: 0 auto; }
+  h1 { font-size: 26px; font-weight: 800; color: #111; margin-bottom: 4px; }
+  h2 { font-size: 13px; font-weight: 800; text-transform: uppercase; letter-spacing: .06em; color: #6b7280; margin: 28px 0 10px; padding-bottom: 6px; border-bottom: 1.5px solid #e5e7eb; }
+  .meta { display: flex; gap: 10px; flex-wrap: wrap; margin: 8px 0 6px; }
+  .badge { display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 10px; border-radius: 20px; }
+  .badge-green { background: #f0fdf4; color: #15803d; }
+  .summary { font-size: 13px; color: #374151; line-height: 1.65; margin-bottom: 10px; }
+  .triggers { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+  .trigger { font-size: 11px; padding: 3px 10px; border-radius: 20px; background: #f3f4f6; color: #374151; border: 1px solid #e5e7eb; }
+  .block { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px 14px; margin-bottom: 8px; }
+  .block-title { font-size: 13px; font-weight: 700; color: #111; margin-bottom: 4px; }
+  .block-body { font-size: 12px; color: #374151; line-height: 1.6; white-space: pre-wrap; }
+  .contact-row { display: flex; justify-content: space-between; gap: 10px; padding: 8px 0; border-top: 1px solid #f3f4f6; font-size: 12px; }
+  .contact-row:first-child { border-top: none; }
+  .risks { margin-top: 10px; }
+  .risk { padding: 8px 12px; background: #fffbeb; border: 1px solid #fde68a; border-radius: 6px; margin-bottom: 6px; font-size: 12px; color: #92400e; }
+  .thesis-text { font-size: 13px; color: #374151; line-height: 1.7; white-space: pre-wrap; }
+  .next-action { padding: 10px 12px; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; margin-bottom: 10px; font-size: 12px; color: #14532d; }
+  .footer { margin-top: 40px; padding-top: 14px; border-top: 1px solid #e5e7eb; font-size: 10px; color: #9ca3af; display: flex; justify-content: space-between; }
+  @media print { body { padding: 24px 32px; } }
+</style></head><body>
+
+<h1>${esc(client.name)}</h1>
+${client.website ? `<div style="font-size:12px;color:#9ca3af;margin-bottom:6px;">${esc(client.website)}</div>` : ''}
+<div class="meta">
+  ${intel?.icp_tier ? `<span class="badge badge-green">${esc(intel.icp_tier)}</span>` : ''}
+  ${intel?.icp_score != null ? `<span style="font-size:12px;font-weight:700;color:#374151;">ICP ${intel.icp_score}/10</span>` : ''}
+  ${intel?.hq ? `<span style="font-size:12px;color:#6b7280;">📍 ${esc(intel.hq)}</span>` : ''}
+  ${intel?.industry ? `<span style="font-size:12px;color:#6b7280;">${esc(intel.industry)}</span>` : ''}
+</div>
+
+${intel?.summary ? `<h2>Company</h2><div class="summary">${esc(intel.summary)}</div>` : ''}
+
+${intel?.recommended_angle ? `<h2>Positioning Angle</h2><div class="block"><div class="block-body">${esc(intel.recommended_angle)}</div></div>` : ''}
+
+${intel?.thesis_built && intel.thesis ? `
+<h2>Full Thesis</h2>
+<div class="thesis-text">${esc(intel.thesis)}</div>
+${entry ? `<div class="block" style="margin-top:10px;"><div class="block-title">Primary Entry Point — ${esc(entry.name)}${entry.title ? ` (${esc(entry.title)})` : ''}</div>${entry.angle ? `<div class="block-body" style="font-style:italic;">"${esc(entry.angle)}"</div>` : ''}${entry.hook ? `<div class="block-body">Hook: ${esc(entry.hook)}</div>` : ''}</div>` : ''}
+${(intel.thesis_risks || []).length ? `<div class="risks">${intel.thesis_risks.map(r => `<div class="risk">${esc(r)}</div>`).join('')}</div>` : ''}
+` : ''}
+
+${intel?.thesis_next_step ? `<h2>Recommended Next Step</h2><div class="next-action">${esc(intel.thesis_next_step)}</div>` : ''}
+
+${(intel?.triggers || []).length ? `
+<h2>Signals & Triggers (${intel.triggers.length})</h2>
+${intel.triggers.map(t => {
+  let tt = t;
+  if (typeof t === 'string') { try { tt = JSON.parse(t); } catch { tt = { detail: t }; } }
+  const color = catColor(tt.category);
+  return `<div class="block" style="border-left:3px solid ${color};">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+      ${tt.category ? `<span style="font-size:10px;font-weight:700;padding:2px 7px;border-radius:10px;background:${color}22;color:${color};">${esc(catLabel(tt.category))}</span>` : ''}
+      ${tt.urgency === 'high' ? `<span style="font-size:10px;font-weight:700;color:#ef4444;">↑ High</span>` : ''}
+      ${tt.date ? `<span style="font-size:10px;color:#9ca3af;margin-left:auto;">${esc(tt.date)}</span>` : ''}
+    </div>
+    <div class="block-title">${esc(tt.headline || tt.title || tt.text || '—')}</div>
+    ${tt.detail ? `<div class="block-body">${esc(tt.detail)}</div>` : ''}
+  </div>`;
+}).join('')}
+` : ''}
+
+${(intel?.contact_angles || []).length ? `
+<h2>Contact Angles (${intel.contact_angles.length})</h2>
+${intel.contact_angles.map(ca => `<div class="block">
+    <div class="block-title">${esc(ca.name)}${ca.title ? ` <span style="font-weight:400;color:#6b7280;">· ${esc(ca.title)}</span>` : ''}</div>
+    ${ca.angle ? `<div class="block-body" style="font-style:italic;">"${esc(ca.angle)}"</div>` : ''}
+    ${ca.hook ? `<div class="block-body">Hook: ${esc(ca.hook)}</div>` : ''}
+  </div>`).join('')}
+` : ''}
+
+${allContacts.length ? `
+<h2>Contacts (${allContacts.length})</h2>
+${allContacts.map(c => `<div class="contact-row"><div><strong>${esc(c.name)}</strong>${c.title ? ` — ${esc(c.title)}` : ''}</div><div style="color:#9ca3af;">${esc(c.email || '')}</div></div>`).join('')}
+` : ''}
+
+<div class="footer">
+  <span>Part Human · Sales Intelligence</span>
+  <span>Exported ${fmtDateLong(new Date())}</span>
+</div>
+
+<script>window.onload = () => { window.print(); }</script>
+</body></html>`;
+
+    const win = window.open('', '_blank');
+    win.document.write(html);
+    win.document.close();
+  };
+
   const handleAsk = async () => {
     if (!aiQ.trim() || aiLoading || !detail) return;
     const question = aiQ.trim();
@@ -361,27 +472,32 @@ export default function ClientsPage({ onNavigate, refreshKey, icp }) {
     return Array.from(map.values());
   })() : [];
 
-  const handleEnrichContact = async (contact) => {
-    if (!selected || enrichingContact) return;
-    setEnrichingContact(contact.name);
-    try {
-      const updated = await enrichClientContact(selected, contact, detail?.client?.name || '');
-      setDetail(d => ({ ...d, client: { ...d.client, contacts: updated } }));
-      setExpandedContact(contact.name);
-      triggerThesisRefresh();
-    } catch (e) { console.error('Enrich failed:', e); }
-    finally { setEnrichingContact(null); }
-  };
+  // Candidates not yet in clients.contacts — shown in ContactsPanel's "Discovered"
+  // section with a one-click "+ Add" to promote them into the canonical list.
+  const discoveredContacts = detail ? (() => {
+    const addedNames = new Set((detail.client?.contacts || []).map(c => c.name?.trim().toLowerCase()));
+    const pool = new Map();
+    (intel?.contact_angles || []).forEach(c => {
+      if (!c.name?.trim()) return;
+      const key = c.name.trim().toLowerCase();
+      if (!addedNames.has(key)) pool.set(key, { name: c.name.trim(), title: c.title || '', email: c.email || '', linkedin: c.linkedinUrl || c.linkedin || '' });
+    });
+    return Array.from(pool.values());
+  })() : [];
 
-  const handleAddManualContact = async () => {
-    if (!contactDraft.name.trim() || !selected) return;
-    const newContact = { ...contactDraft, id: crypto.randomUUID(), source: 'manual', created_at: new Date().toISOString() };
-    const updated = await upsertClientContacts(selected, [newContact]);
-    setDetail(d => ({ ...d, client: { ...d.client, contacts: updated } }));
-    setContactDraft({ name: '', title: '', email: '', linkedin: '' });
-    setAddingContact(false);
-    setExpandedContact(newContact.name);
-    triggerThesisRefresh();
+
+  const handleDeleteClientFile = async (file) => {
+    if (deletingClientFile) return;
+    setDeletingClientFile(file.id);
+    try {
+      await deleteCompanyFile(file.id, file.storage_path);
+      setClientFiles(prev => prev.filter(f => f.id !== file.id));
+      setConfirmDeleteClientFile(null);
+    } catch (e) {
+      alert('Error deleting file: ' + e.message);
+    } finally {
+      setDeletingClientFile(null);
+    }
   };
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -465,15 +581,21 @@ export default function ClientsPage({ onNavigate, refreshKey, icp }) {
                     {detail.client.linkedin_url && <a href={detail.client.linkedin_url} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: '#0077b5', textDecoration: 'none' }}>in LinkedIn</a>}
                   </div>
                 </div>
-                <div style={{ display: 'flex', gap: 8, flexShrink: 0, flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', gap: 8, flexShrink: 0, flexWrap: 'wrap', alignItems: 'center' }}>
+                  {intel?.scan_date && (
+                    <span style={{ fontSize: 10, color: 'var(--text-faint)', whiteSpace: 'nowrap' }}>
+                      Last scanned: {ddmyy(intel.scan_date)}
+                    </span>
+                  )}
                   {intel?.id && (
                     <>
                       <button
                         onClick={handleDeepScan}
                         disabled={scanning || buildingThesis}
-                        style={{ fontSize: 11, fontWeight: 700, padding: '6px 12px', borderRadius: 20, border: '1px solid var(--accent)', background: (scanning || buildingThesis) ? 'var(--surface)' : 'var(--accent)', color: (scanning || buildingThesis) ? 'var(--text-faint)' : '#fff', cursor: (scanning || buildingThesis) ? 'default' : 'pointer', display: 'flex', alignItems: 'center', gap: 5 }}
+                        title={intel?.deep_scanned && intel?.scan_date ? `Deep scanned ${fmtDate(intel.scan_date.slice(0,10))} — click to rescan` : 'Run a deep scan'}
+                        style={{ fontSize: 11, fontWeight: 700, padding: '6px 12px', borderRadius: 20, border: `1px solid ${intel?.deep_scanned && !scanning && !buildingThesis ? '#86efac' : 'var(--accent)'}`, background: scanning || buildingThesis ? 'var(--surface)' : intel?.deep_scanned ? '#dcfce7' : 'var(--accent)', color: scanning || buildingThesis ? 'var(--text-faint)' : intel?.deep_scanned ? '#15803d' : '#fff', cursor: scanning || buildingThesis ? 'default' : 'pointer', display: 'flex', alignItems: 'center', gap: 5 }}
                       >
-                        {scanning ? <><span style={{ display: 'inline-block', width: 10, height: 10, border: '2px solid var(--accent)', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} /> {scanStatus || 'Scanning…'}</> : 'Quick Scan'}
+                        {scanning ? <><span style={{ display: 'inline-block', width: 10, height: 10, border: '2px solid var(--accent)', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} /> {scanStatus || 'Scanning…'}</> : intel?.deep_scanned ? '✓ Scanned — Rescan' : 'Quick Scan'}
                       </button>
                       <button
                         onClick={handleBuildThesis}
@@ -487,6 +609,7 @@ export default function ClientsPage({ onNavigate, refreshKey, icp }) {
                     </>
                   )}
                   <button onClick={() => { setEditing(true); setTab('contacts'); }} style={{ fontSize: 11, fontWeight: 700, padding: '6px 12px', borderRadius: 20, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-muted)', cursor: 'pointer' }}>Edit</button>
+                  <button onClick={handleExportPdf} style={{ fontSize: 11, fontWeight: 700, padding: '6px 12px', borderRadius: 20, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-muted)', cursor: 'pointer' }}>Share</button>
                 </div>
               </div>
 
@@ -511,138 +634,13 @@ export default function ClientsPage({ onNavigate, refreshKey, icp }) {
 
               {/* ── Overview (Intelligence) ── */}
               {tab === 'overview' && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 20, maxWidth: 720 }}>
-                  {!intel ? (
-                    <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--text-faint)' }}>
-                      <div style={{ fontSize: 24, marginBottom: 8 }}>🔍</div>
-                      <div style={{ fontSize: 13, marginBottom: 16 }}>No intelligence data yet for {detail.client.name}.</div>
-                      <p style={{ fontSize: 12, color: 'var(--text-faint)', maxWidth: 320, margin: '0 auto' }}>This client doesn't have a matching entry in Watch List. Add them there first to enable deep scanning.</p>
-                    </div>
-                  ) : (
-                    <>
-                      {/* Score + meta row */}
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 10 }}>
-                        {[
-                          intel.icp_score     != null && { label: 'ICP Score',    value: `${intel.icp_score}/10`,     color: scoreColor(intel.icp_score) },
-                          intel.overall_score != null && { label: 'Overall Score', value: `${intel.overall_score}/10`, color: scoreColor(intel.overall_score) },
-                          intel.icp_tier              && { label: 'Tier',          value: intel.icp_tier },
-                          intel.funding_stage         && { label: 'Funding',       value: intel.funding_stage },
-                          intel.employee_count        && { label: 'Employees',     value: intel.employee_count },
-                          intel.engagement_type       && { label: 'Engagement',    value: intel.engagement_type },
-                          intel.hq                    && { label: 'HQ',            value: intel.hq },
-                          intel.industry              && { label: 'Industry',      value: intel.industry },
-                        ].filter(Boolean).map((item, i) => (
-                          <div key={i} style={{ padding: '12px 14px', background: 'var(--surface)', borderRadius: 9, border: '1px solid var(--border)' }}>
-                            <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 4 }}>{item.label}</div>
-                            <div style={{ fontSize: 14, fontWeight: 800, color: item.color || 'var(--text)' }}>{item.value}</div>
-                          </div>
-                        ))}
-                      </div>
-
-                      {/* AI Summary */}
-                      {intel.summary && (
-                        <div style={{ padding: '14px 16px', background: 'var(--surface)', borderRadius: 10, border: '1px solid var(--border)' }}>
-                          <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 6 }}>Summary</div>
-                          <p style={{ fontSize: 13, color: 'var(--text)', margin: 0, lineHeight: 1.7 }}>{intel.summary}</p>
-                        </div>
-                      )}
-
-                      {/* Recommended angle */}
-                      {intel.recommended_angle && (
-                        <div style={{ padding: '14px 16px', background: '#fefce8', borderRadius: 10, border: '1px solid #fef08a' }}>
-                          <div style={{ fontSize: 10, fontWeight: 700, color: '#a16207', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 6 }}>Recommended Angle</div>
-                          <p style={{ fontSize: 13, color: '#78350f', margin: 0, lineHeight: 1.6, fontStyle: 'italic' }}>"{intel.recommended_angle}"</p>
-                        </div>
-                      )}
-
-                      {/* Triggers */}
-                      {(intel.triggers || []).length > 0 && (
-                        <div>
-                          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 10 }}>Signal Triggers ({intel.triggers.length})</div>
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                            {intel.triggers.map((t, i) => (
-                              <div key={i} style={{ padding: '12px 14px', background: 'var(--surface)', borderRadius: 9, border: '1px solid var(--border)', borderLeft: `3px solid ${catColor(t.category)}` }}>
-                                <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 4 }}>
-                                  <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 10, background: catColor(t.category) + '22', color: catColor(t.category) }}>{catLabel(t.category)}</span>
-                                  {t.urgency === 'high' && <span style={{ fontSize: 10, fontWeight: 700, color: '#ef4444' }}>↑ High</span>}
-                                  {t.date && <span style={{ fontSize: 10, color: 'var(--text-faint)', marginLeft: 'auto' }}>{t.date}</span>}
-                                </div>
-                                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 2 }}>{t.headline}</div>
-                                {t.detail && <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.5 }}>{t.detail}</div>}
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Contact angles */}
-                      {(intel.contact_angles || []).length > 0 && (
-                        <div>
-                          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 10 }}>Contact Angles</div>
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                            {intel.contact_angles.map((ca, i) => (
-                              <div key={i} style={{ padding: '12px 14px', background: 'var(--surface)', borderRadius: 9, border: '1px solid var(--border)' }}>
-                                <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)', marginBottom: 3 }}>{ca.name} {ca.title ? <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>· {ca.title}</span> : null}</div>
-                                <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.5, fontStyle: 'italic' }}>"{ca.angle}"</div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-
-                      {/* ── Full Thesis (only if thesis_built) ── */}
-                      {intel.thesis_built && intel.thesis && (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 12, borderTop: '2px solid var(--accent)', paddingTop: 20, marginTop: 4 }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                            <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--text)' }}>🧠 Full Thesis</span>
-                            {intel.thesis_date && <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>Built {fmtDate(intel.thesis_date.slice(0,10))}</span>}
-                          </div>
-                          <div style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.8, whiteSpace: 'pre-wrap', padding: '14px 16px', background: 'var(--surface)', borderRadius: 10, border: '1px solid var(--border)' }}>
-                            {intel.thesis}
-                          </div>
-                          {/* Entry contact */}
-                          {(() => {
-                            const entry = (intel.contact_angles || []).find(ca => ca.is_primary);
-                            if (!entry) return null;
-                            return (
-                              <div style={{ padding: '14px 16px', background: '#f0fdf4', borderRadius: 10, border: '1px solid #bbf7d0' }}>
-                                <div style={{ fontSize: 10, fontWeight: 700, color: '#059669', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 8 }}>Primary Entry Point</div>
-                                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>{entry.name} {entry.title && <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>· {entry.title}</span>}</div>
-                                {entry.linkedin && <a href={entry.linkedin} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: '#0077b5', textDecoration: 'none', display: 'block', marginTop: 2 }}>↗ LinkedIn</a>}
-                                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 6, lineHeight: 1.5, fontStyle: 'italic' }}>"{entry.angle}"</div>
-                                {entry.hook && <div style={{ fontSize: 12, color: '#059669', marginTop: 6, lineHeight: 1.5 }}>Hook: {entry.hook}</div>}
-                              </div>
-                            );
-                          })()}
-                          {/* Risks */}
-                          {(intel.thesis_risks || []).length > 0 && (
-                            <div style={{ padding: '12px 16px', background: '#fff7ed', borderRadius: 9, border: '1px solid #fed7aa' }}>
-                              <div style={{ fontSize: 10, fontWeight: 700, color: '#c2410c', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 8 }}>Risks & Sensitivities</div>
-                              <ul style={{ margin: 0, paddingLeft: 16, display: 'flex', flexDirection: 'column', gap: 4 }}>
-                                {intel.thesis_risks.map((r, i) => <li key={i} style={{ fontSize: 12, color: '#78350f', lineHeight: 1.5 }}>{r}</li>)}
-                              </ul>
-                            </div>
-                          )}
-                          {/* Next step */}
-                          {intel.thesis_next_step && (
-                            <div style={{ padding: '10px 14px', background: 'var(--surface)', borderRadius: 9, border: '1px solid var(--border)' }}>
-                              <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 4 }}>Recommended Next Step</div>
-                              <div style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.5 }}>{intel.thesis_next_step}</div>
-                            </div>
-                          )}
-                        </div>
-                      )}
-
-                      {/* Scan date */}
-                      {intel.scan_date && (
-                        <div style={{ fontSize: 11, color: 'var(--text-faint)', textAlign: 'right' }}>
-                          Last scanned {fmtDate(intel.scan_date.slice(0,10))} · {intel.thesis_built ? 'Full thesis ✓' : intel.deep_scanned ? 'Deep scan ✓' : 'Surface scan only'}
-                        </div>
-                      )}
-                    </>
-                  )}
-                </div>
+                <CompanyIntelPanel
+                  intel={intel}
+                  extraSources={detail.items}
+                  emptyMessage={`No intelligence data yet for ${detail.client.name}. This client doesn't have a matching entry in Watch List. Add them there first to enable deep scanning.`}
+                />
               )}
+
 
               {/* ── Contacts ── */}
               {tab === 'contacts' && (
@@ -674,194 +672,16 @@ export default function ClientsPage({ onNavigate, refreshKey, icp }) {
                     </div>
                   ) : null}
 
-                  {/* Header row */}
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em' }}>
-                      {allContacts.length} Contact{allContacts.length !== 1 ? 's' : ''}
-                    </div>
-                    <button onClick={() => setAddingContact(true)} style={{ fontSize: 11, fontWeight: 700, padding: '5px 12px', borderRadius: 7, border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff', cursor: 'pointer' }}>+ Add Contact</button>
-                  </div>
-
-                  {/* Add contact form */}
-                  {addingContact && (
-                    <div style={{ padding: '14px 16px', background: 'var(--surface)', borderRadius: 10, border: '1px solid var(--accent)', display: 'flex', flexDirection: 'column', gap: 10 }}>
-                      <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)' }}>New Contact</div>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                        {[['name','Name *'],['title','Title'],['email','Email'],['linkedin','LinkedIn URL']].map(([k, lbl]) => (
-                          <input key={k} value={contactDraft[k]} onChange={e => setContactDraft(d => ({...d, [k]: e.target.value}))} placeholder={lbl} style={{ fontSize: 12, padding: '6px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)' }} />
-                        ))}
-                      </div>
-                      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-                        <button onClick={() => setAddingContact(false)} style={{ fontSize: 12, padding: '5px 12px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', cursor: 'pointer' }}>Cancel</button>
-                        <button onClick={handleAddManualContact} disabled={!contactDraft.name.trim()} style={{ fontSize: 12, fontWeight: 700, padding: '5px 16px', borderRadius: 7, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer', opacity: contactDraft.name.trim() ? 1 : 0.5 }}>Save</button>
-                      </div>
-                    </div>
-                  )}
-
-                  {allContacts.length === 0 && !addingContact && (
-                    <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--text-faint)' }}>
-                      <div style={{ fontSize: 24, marginBottom: 8 }}>👤</div>
-                      <div style={{ fontSize: 13 }}>No contacts yet. Run a Quick Scan or Build Thesis to auto-discover the leadership team, or add contacts manually.</div>
-                    </div>
-                  )}
-
-                  {/* Contact cards */}
-                  {allContacts.map((c, i) => {
-                    const isExpanded = expandedContact === c.name;
-                    const isEnriching = enrichingContact === c.name;
-                    const isEnriched = !!(c.enriched_at || c.job_history?.length || c.education?.length || c.posts?.length);
-                    const initials = c.name.split(' ').map(w => w[0]).slice(0,2).join('').toUpperCase();
-                    const SOURCE_COLORS = { thesis: '#8b5cf6', scan: '#3b82f6', manual: '#10b981', project: '#f59e0b', deal: '#f59e0b' };
-                    const srcColor = SOURCE_COLORS[c.source] || '#94a3b8';
-
-                    return (
-                      <div key={c.id || c.name + i} style={{ background: 'var(--surface)', borderRadius: 11, border: `1px solid ${isExpanded ? 'var(--accent)' : 'var(--border)'}`, overflow: 'hidden', transition: 'border-color .2s' }}>
-
-                        {/* Card header */}
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px' }}>
-                          <div style={{ width: 40, height: 40, borderRadius: '50%', background: `linear-gradient(135deg, var(--accent), #6366f1)`, color: '#fff', fontSize: 14, fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{initials}</div>
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                              <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>{c.name}</span>
-                              {c.is_primary && <span style={{ fontSize: 9, fontWeight: 800, padding: '2px 6px', borderRadius: 8, background: '#fef9c3', color: '#a16207', border: '1px solid #fde68a' }}>PRIMARY</span>}
-                              {c.source && <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 8, background: srcColor + '18', color: srcColor }}>{c.source}</span>}
-                              {isEnriched && <span style={{ fontSize: 9, fontWeight: 700, color: '#10b981' }}>✓ enriched</span>}
-                            </div>
-                            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 1 }}>
-                              {[c.title, c.location].filter(Boolean).join(' · ')}
-                            </div>
-                            <div style={{ display: 'flex', gap: 10, marginTop: 4, flexWrap: 'wrap' }}>
-                              {c.email    && <a href={`mailto:${c.email}`} style={{ fontSize: 11, color: 'var(--accent)', textDecoration: 'none' }}>{c.email}</a>}
-                              {c.linkedin && <a href={c.linkedin} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: '#0077b5', textDecoration: 'none', fontWeight: 600 }}>in LinkedIn</a>}
-                              {c.twitter  && <a href={c.twitter}  target="_blank" rel="noreferrer" style={{ fontSize: 11, color: '#1da1f2', textDecoration: 'none', fontWeight: 600 }}>𝕏 Twitter</a>}
-                            </div>
-                          </div>
-                          <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
-                            <button
-                              onClick={() => handleEnrichContact(c)}
-                              disabled={!!enrichingContact}
-                              title="Enrich with AI — builds full dossier from web search"
-                              style={{ fontSize: 10, fontWeight: 700, padding: '4px 10px', borderRadius: 6, border: '1px solid var(--accent)', background: isEnriching ? 'var(--surface-2)' : 'var(--accent)', color: isEnriching ? 'var(--accent)' : '#fff', cursor: enrichingContact ? 'default' : 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}
-                            >
-                              {isEnriching ? <><span style={{ display: 'inline-block', width: 8, height: 8, border: '1.5px solid var(--accent)', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} /> enriching…</> : '🔬 Enrich'}
-                            </button>
-                            <button onClick={() => setExpandedContact(isExpanded ? null : c.name)} style={{ fontSize: 10, fontWeight: 700, padding: '4px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-muted)', cursor: 'pointer' }}>
-                              {isExpanded ? '▲ Less' : '▼ Dossier'}
-                            </button>
-                          </div>
-                        </div>
-
-                        {/* Expanded dossier */}
-                        {isExpanded && (
-                          <div style={{ borderTop: '1px solid var(--border)', padding: '16px', display: 'flex', flexDirection: 'column', gap: 16 }}>
-
-                            {/* Angle/hook from scan/thesis */}
-                            {(c.angle || c.hook) && (
-                              <div style={{ padding: '10px 14px', background: '#fefce8', borderRadius: 8, border: '1px solid #fef08a' }}>
-                                {c.angle && <div style={{ fontSize: 12, color: '#78350f', fontWeight: 600, marginBottom: c.hook ? 4 : 0 }}>{c.angle}</div>}
-                                {c.hook  && <div style={{ fontSize: 12, color: '#92400e', fontStyle: 'italic' }}>"{c.hook}"</div>}
-                              </div>
-                            )}
-
-                            {/* Bio summary */}
-                            {c.bio_summary && (
-                              <div>
-                                <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 5 }}>Bio</div>
-                                <p style={{ fontSize: 12, color: 'var(--text)', margin: 0, lineHeight: 1.65 }}>{c.bio_summary}</p>
-                              </div>
-                            )}
-
-                            {/* Job history */}
-                            {(c.job_history || []).length > 0 && (
-                              <div>
-                                <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 8 }}>Career History</div>
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                                  {c.job_history.map((j, ji) => (
-                                    <div key={ji} style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
-                                      <div style={{ width: 6, height: 6, borderRadius: '50%', background: j.is_current ? 'var(--accent)' : 'var(--border)', marginTop: 5, flexShrink: 0 }} />
-                                      <div>
-                                        <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)' }}>{j.title}</span>
-                                        <span style={{ fontSize: 12, color: 'var(--text-muted)' }}> · {j.company}</span>
-                                        {(j.from || j.to) && <span style={{ fontSize: 11, color: 'var(--text-faint)', marginLeft: 6 }}>{j.from}{j.to ? ` – ${j.to}` : j.is_current ? ' – present' : ''}</span>}
-                                      </div>
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
-                            )}
-
-                            {/* Education */}
-                            {(c.education || []).length > 0 && (
-                              <div>
-                                <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 8 }}>Education</div>
-                                {c.education.map((e, ei) => (
-                                  <div key={ei} style={{ fontSize: 12, color: 'var(--text)', marginBottom: 3 }}>
-                                    {e.school}{e.degree ? ` — ${e.degree}` : ''}{e.years ? ` (${e.years})` : ''}
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-
-                            {/* Recent posts */}
-                            {(c.posts || []).length > 0 && (
-                              <div>
-                                <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 8 }}>Recent Posts & Activity</div>
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                                  {c.posts.map((p, pi) => (
-                                    <div key={pi} style={{ padding: '10px 12px', background: 'var(--bg)', borderRadius: 8, border: '1px solid var(--border)' }}>
-                                      <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 4 }}>
-                                        <span style={{ fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 8, background: p.platform === 'linkedin' ? '#e0f2fe' : '#f0f9ff', color: p.platform === 'linkedin' ? '#0369a1' : '#0284c7' }}>{p.platform}</span>
-                                        {p.date && <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>{p.date}</span>}
-                                        {p.url && <a href={p.url} target="_blank" rel="noreferrer" style={{ fontSize: 10, color: 'var(--accent)', marginLeft: 'auto' }}>↗</a>}
-                                      </div>
-                                      <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)', marginBottom: 3 }}>{p.headline}</div>
-                                      {p.summary && <div style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.5 }}>{p.summary}</div>}
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
-                            )}
-
-                            {/* Articles & talks */}
-                            {(c.articles_talks || []).length > 0 && (
-                              <div>
-                                <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 8 }}>Articles & Talks</div>
-                                {c.articles_talks.map((a, ai) => (
-                                  <div key={ai} style={{ fontSize: 12, color: 'var(--text)', marginBottom: 5 }}>
-                                    {a.url ? <a href={a.url} target="_blank" rel="noreferrer" style={{ color: 'var(--accent)', fontWeight: 600, textDecoration: 'none' }}>{a.title}</a> : <span style={{ fontWeight: 600 }}>{a.title}</span>}
-                                    {a.outlet && <span style={{ color: 'var(--text-muted)' }}> · {a.outlet}</span>}
-                                    {a.date   && <span style={{ color: 'var(--text-faint)', fontSize: 11 }}> ({a.date})</span>}
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-
-                            {/* Interests & fun facts */}
-                            {((c.interests || []).length > 0 || (c.fun_facts || []).length > 0) && (
-                              <div>
-                                <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 8 }}>Interests & Background</div>
-                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                                  {[...(c.interests || []), ...(c.fun_facts || [])].map((item, ii) => (
-                                    <span key={ii} style={{ fontSize: 11, padding: '3px 9px', borderRadius: 12, background: 'var(--surface-2, var(--bg))', border: '1px solid var(--border)', color: 'var(--text-muted)' }}>{item}</span>
-                                  ))}
-                                </div>
-                              </div>
-                            )}
-
-                            {!isEnriched && (
-                              <div style={{ fontSize: 12, color: 'var(--text-faint)', textAlign: 'center', padding: '8px 0' }}>
-                                No dossier data yet. Click <strong>🔬 Enrich</strong> to run a deep search on this person.
-                              </div>
-                            )}
-
-                            {c.enriched_at && <div style={{ fontSize: 10, color: 'var(--text-faint)', textAlign: 'right' }}>Enriched {fmtDate(c.enriched_at.slice(0,10))}</div>}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
+                  <ContactsPanel
+                    clientId={selected}
+                    companyName={detail.client.name}
+                    contacts={detail.client.contacts || []}
+                    discovered={discoveredContacts}
+                    onContactsChange={updated => { setDetail(d => ({ ...d, client: { ...d.client, contacts: updated } })); triggerThesisRefresh(); }}
+                  />
                 </div>
               )}
+
 
               {/* ── Projects ── */}
               {tab === 'projects' && (
@@ -1116,25 +936,54 @@ export default function ClientsPage({ onNavigate, refreshKey, icp }) {
                           </div>
                           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                             {clientFiles.map(f => (
-                              <a
+                              <div
                                 key={f.id}
-                                href={f.url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                style={{ padding: '12px 14px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, display: 'flex', gap: 10, alignItems: 'center', textDecoration: 'none', color: 'inherit' }}
-                                onMouseEnter={e => e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,.08)'}
-                                onMouseLeave={e => e.currentTarget.style.boxShadow = 'none'}
+                                onMouseEnter={e => { setHoveredClientFile(f.id); e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,.08)'; }}
+                                onMouseLeave={e => { setHoveredClientFile(null); e.currentTarget.style.boxShadow = 'none'; }}
+                                style={{ padding: '12px 14px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, display: 'flex', gap: 10, alignItems: 'center' }}
                               >
-                                <span style={{ fontSize: 18 }}>🌐</span>
-                                <div style={{ flex: 1, minWidth: 0 }}>
-                                  <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</div>
-                                  <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 2 }}>
-                                    HTML Snapshot · {f.created_at ? new Date(f.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}
-                                    {f.size ? ` · ${Math.round(f.size / 1024)}KB` : ''}
+                                <a
+                                  href={f.url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  style={{ flex: 1, minWidth: 0, display: 'flex', gap: 10, alignItems: 'center', textDecoration: 'none', color: 'inherit' }}
+                                >
+                                  <span style={{ fontSize: 18 }}>🌐</span>
+                                  <div style={{ flex: 1, minWidth: 0 }}>
+                                    <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</div>
+                                    <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 2 }}>
+                                      HTML Snapshot · {f.created_at ? new Date(f.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}
+                                      {f.size ? ` · ${Math.round(f.size / 1024)}KB` : ''}
+                                    </div>
                                   </div>
-                                </div>
-                                <span style={{ fontSize: 11, color: '#3b82f6' }}>Open ↗</span>
-                              </a>
+                                  <span style={{ fontSize: 11, color: '#3b82f6' }}>Open ↗</span>
+                                </a>
+                                {confirmDeleteClientFile === f.id ? (
+                                  <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0 }}>
+                                    <span style={{ fontSize: 11, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>Delete?</span>
+                                    <button
+                                      onClick={() => handleDeleteClientFile(f)}
+                                      disabled={deletingClientFile === f.id}
+                                      style={{ fontSize: 10, fontWeight: 700, padding: '3px 10px', borderRadius: 20, border: 'none', background: '#ef4444', color: '#fff', cursor: deletingClientFile === f.id ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap' }}
+                                    >
+                                      {deletingClientFile === f.id ? 'Deleting…' : 'Yes'}
+                                    </button>
+                                    <button
+                                      onClick={() => setConfirmDeleteClientFile(null)}
+                                      style={{ fontSize: 10, fontWeight: 600, padding: '3px 10px', borderRadius: 20, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text-muted)', cursor: 'pointer' }}
+                                    >
+                                      Cancel
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <button
+                                    onClick={() => setConfirmDeleteClientFile(f.id)}
+                                    style={{ opacity: hoveredClientFile === f.id ? 1 : 0, transition: 'opacity .15s', fontSize: 10, fontWeight: 600, padding: '3px 10px', borderRadius: 20, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text-muted)', cursor: 'pointer', flexShrink: 0, whiteSpace: 'nowrap' }}
+                                  >
+                                    Delete
+                                  </button>
+                                )}
+                              </div>
                             ))}
                           </div>
                         </div>

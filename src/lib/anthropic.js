@@ -654,7 +654,7 @@ Write a full thesis covering:
 5. Risks or sensitivities to avoid
 6. Recommended next action
 
-RULES: Never use em dashes (—). Use commas or "and" instead. Only include LinkedIn URLs you actually found in the research data above — never construct them.
+RULES: Never use em dashes (—). Use commas or "and" instead. Only include LinkedIn URLs you actually found in the research data above — never construct them. For each trigger in your output, carry forward the matching "url" from the TRIGGER EVENTS data above if that event has one, and always fill "source" with where the trigger came from (the publication, press release, or platform named in the research above — never leave it blank if the underlying data names a source).
 
 Return JSON only:
 {
@@ -672,7 +672,7 @@ Return JSON only:
   "recommended_angle": "the primary positioning hook in 1-2 sentences",
   "entry_contact": {"name":"str","title":"str","linkedin":"url_or_null","angle":"str","hook":"1-2 sentences referencing a specific post, news item, or signal"},
   "contact_angles": [{"name":"str","title":"str","linkedin":"url_or_null","angle":"str","hook":"str"}],
-  "triggers": [{"headline":"str","detail":"str","category":"str","urgency":"str","date":"str_or_null"}],
+  "triggers": [{"headline":"str","detail":"str","category":"str","urgency":"str","date":"str_or_null","source":"str_or_null","url":"str_or_null"}],
   "risks": ["str"],
   "next_step": "str",
   "thesis_built": true

@@ -398,6 +398,14 @@ export default function PipelinePage({ icp = {}, refreshKey = 0, onNavigate }) {
                               </span>
                             )}
                             {company.icp_tier && <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>{company.icp_tier}</span>}
+                            {company.deep_scanned && (
+                              <span
+                                title={company.scan_date ? `Deep scanned ${new Date(company.scan_date).toLocaleDateString()}` : 'Deep scanned'}
+                                style={{ fontSize: 9, fontWeight: 700, padding: '2px 7px', borderRadius: 10, background: '#dcfce7', color: '#15803d', border: '1px solid #86efac', whiteSpace: 'nowrap', alignSelf: 'flex-start' }}
+                              >
+                                ✓ Scanned
+                              </span>
+                            )}
                           </div>
                         </td>
                         <td>
@@ -489,6 +497,16 @@ export default function PipelinePage({ icp = {}, refreshKey = 0, onNavigate }) {
                               </div>
                               {/* Right: scan intel */}
                               <div>
+                                <div style={{ marginBottom: 12 }}>
+                                  <span
+                                    title={company.scan_date ? `Deep scanned ${new Date(company.scan_date).toLocaleDateString()}` : 'Not yet deep scanned'}
+                                    style={company.deep_scanned
+                                      ? { fontSize: 10, fontWeight: 700, padding: '3px 10px', borderRadius: 20, background: '#dcfce7', color: '#15803d', border: '1px solid #86efac' }
+                                      : { fontSize: 10, fontWeight: 600, padding: '3px 10px', borderRadius: 20, background: 'var(--surface)', color: 'var(--text-faint)', border: '1px solid var(--border)' }}
+                                  >
+                                    {company.deep_scanned ? '✓ Deep Scanned' : 'Not Deep Scanned'}
+                                  </span>
+                                </div>
                                 {company.recommended_angle && (
                                   <div style={{ marginBottom: 12 }}>
                                     <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 4 }}>Recommended Angle</div>

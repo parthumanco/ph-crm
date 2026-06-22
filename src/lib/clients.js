@@ -393,6 +393,39 @@ export async function upsertClientContacts(clientId, newContacts = []) {
   return contacts;
 }
 
+// Remove a contact from clients.contacts by name (case-insensitive).
+export async function deleteClientContact(clientId, contactName) {
+  const { data: row } = await supabase.from('clients').select('contacts').eq('id', clientId).single();
+  const updated = (row?.contacts || []).filter(c => c.name?.trim().toLowerCase() !== contactName?.trim().toLowerCase());
+  const { error } = await supabase.from('clients').update({ contacts: updated, updated_at: new Date().toISOString() }).eq('id', clientId);
+  if (error) throw new Error(error.message);
+  return updated;
+}
+
+// Edit an existing contact in place, matched by its original name (case-insensitive)
+// — same identification convention as deleteClientContact. Used by the shared
+// ContactsPanel so edits made from any page land on the one canonical row.
+export async function updateClientContact(clientId, originalName, patch) {
+  const { data: row } = await supabase.from('clients').select('contacts').eq('id', clientId).single();
+  const existing = row?.contacts || [];
+  const key = originalName?.trim().toLowerCase();
+  const updated = existing.map(c => c.name?.trim().toLowerCase() === key ? { ...c, ...patch } : c);
+  const { error } = await supabase.from('clients').update({ contacts: updated, updated_at: new Date().toISOString() }).eq('id', clientId);
+  if (error) throw new Error(error.message);
+  return updated;
+}
+
+// Mark one contact as primary (by name), clearing the flag on every other contact for this client.
+export async function setPrimaryClientContact(clientId, contactName) {
+  const { data: row } = await supabase.from('clients').select('contacts').eq('id', clientId).single();
+  const existing = row?.contacts || [];
+  const key = contactName?.trim().toLowerCase();
+  const updated = existing.map(c => ({ ...c, is_primary: c.name?.trim().toLowerCase() === key }));
+  const { error } = await supabase.from('clients').update({ contacts: updated, updated_at: new Date().toISOString() }).eq('id', clientId);
+  if (error) throw new Error(error.message);
+  return updated;
+}
+
 // Run enrichContactDossier for one contact and merge results back into clients.contacts
 export async function enrichClientContact(clientId, contact, companyName) {
   const { enrichContactDossier } = await import('./anthropic.js');

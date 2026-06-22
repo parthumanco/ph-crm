@@ -18,6 +18,13 @@ import DealProposalDraft from './DealProposalDraft';
 
 const ACTIVITY_ICONS = { email:'✉️', call:'📞', meeting:'🤝', note:'📝', proposal:'📄', contract:'✍️' };
 
+// Compact "mm/dd/yy" formatter for "Last scanned" labels next to scan/thesis actions.
+function ddmyy(d) {
+  if (!d) return '';
+  const dt = new Date(d);
+  return `${String(dt.getMonth() + 1).padStart(2, '0')}/${String(dt.getDate()).padStart(2, '0')}/${String(dt.getFullYear()).slice(-2)}`;
+}
+
 const THESIS_PHASES = [
   { id: 'discovery',  label: 'Discovery'  },
   { id: 'contacts',   label: 'Contacts'   },
@@ -2127,10 +2134,26 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
 
                   {/* Header row */}
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-                    <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em' }}>
-                      Company Research
-                    </span>
-                    <button
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em' }}>
+                        Company Research
+                      </span>
+                      {companyIntel?.deep_scanned && (
+                        <span
+                          title={companyIntel.scan_date ? `Deep scanned ${new Date(companyIntel.scan_date).toLocaleDateString()}` : 'Deep scanned'}
+                          style={{ fontSize: 10, fontWeight: 700, padding: '3px 10px', borderRadius: 20, background: '#dcfce7', color: '#15803d', border: '1px solid #86efac', whiteSpace: 'nowrap' }}
+                        >
+                          ✓ Scanned
+                        </span>
+                      )}
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      {companyIntel?.scan_date && (
+                        <span style={{ fontSize: 10, color: 'var(--text-faint)', whiteSpace: 'nowrap' }}>
+                          Last scanned: {ddmyy(companyIntel.scan_date)}
+                        </span>
+                      )}
+                      <button
                       onClick={handleBuildThesis}
                       disabled={buildingThesis}
                       style={{
@@ -2148,7 +2171,8 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
                           ? 'Update Research'
                           : 'Build Thesis'
                       }
-                    </button>
+                      </button>
+                    </div>
                   </div>
 
                   {intelLoading && (
@@ -2265,19 +2289,36 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
                       )}
                       {/* Summary */}
                       {companyIntel.summary && (
-                        <p style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.65, margin: '0 0 12px' }}>{companyIntel.summary}</p>
+                        <>
+                          {companyIntel.scan_date && (
+                            <div style={{ fontSize: 10, color: 'var(--text-faint)', marginBottom: 4 }}>Last scanned: {ddmyy(companyIntel.scan_date)}</div>
+                          )}
+                          <p style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.65, margin: '0 0 12px' }}>{companyIntel.summary}</p>
+                        </>
                       )}
                       {/* Triggers */}
                       {companyIntel.triggers?.length > 0 && (
                         <div style={{ marginBottom: 12 }}>
-                          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 6 }}>Triggers</div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8, marginBottom: 6 }}>
+                            <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em' }}>Triggers</div>
+                            {companyIntel.scan_date && <span style={{ fontSize: 10, color: 'var(--text-faint)', whiteSpace: 'nowrap' }}>Last scanned: {ddmyy(companyIntel.scan_date)}</span>}
+                          </div>
                           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                            {companyIntel.triggers.slice(0, 3).map((t, i) => (
+                            {companyIntel.triggers.slice(0, 3).map((t, i) => {
+                              const link = t.url || (typeof t.source === 'string' && /^https?:\/\//.test(t.source) ? t.source : null);
+                              return (
                               <div key={i} style={{ padding: '8px 10px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 6 }}>
                                 <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 2 }}>{t.headline}</div>
                                 {t.detail && <div style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.5 }}>{t.detail}</div>}
+                                {(t.source || link) && (
+                                  <div style={{ fontSize: 10, color: 'var(--text-faint)', marginTop: 3, display: 'flex', gap: 6, alignItems: 'center' }}>
+                                    {t.source && <span>Source: {t.source}</span>}
+                                    {link && <a href={link} target="_blank" rel="noreferrer" style={{ color: 'var(--accent)' }}>↗ View source</a>}
+                                  </div>
+                                )}
                               </div>
-                            ))}
+                              );
+                            })}
                           </div>
                         </div>
                       )}
@@ -2321,6 +2362,19 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
                         <div style={{ padding: '10px 14px', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8 }}>
                           <div style={{ fontSize: 11, fontWeight: 700, color: '#15803d', marginBottom: 4 }}>RECOMMENDED NEXT STEP</div>
                           <div style={{ fontSize: 13, color: '#14532d', lineHeight: 1.55 }}>{companyIntel.thesis_next_step}</div>
+                        </div>
+                      )}
+
+                      {(companyIntel.research_items || []).filter(it => it.url).length > 0 && (
+                        <div style={{ padding: '10px 14px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, marginTop: 10 }}>
+                          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', marginBottom: 6 }}>SOURCE MATERIALS USED</div>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                            {companyIntel.research_items.filter(it => it.url).map((it, i) => (
+                              <a key={i} href={it.url} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: 'var(--accent)', textDecoration: 'none' }}>
+                                ↗ {it.title || it.url}
+                              </a>
+                            ))}
+                          </div>
                         </div>
                       )}
 

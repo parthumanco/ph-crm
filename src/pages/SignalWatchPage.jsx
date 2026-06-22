@@ -34,6 +34,13 @@ function haversineDistance(lat1, lng1, lat2, lng2) {
 
 // Client-side engagement type correction — baseline from headcount, uplift from need-state triggers
 const TIERS = ['Sprint', 'Foundation', 'Growth', 'Acceleration', 'Enterprise'];
+// Compact "mm/dd/yy" formatter for "Last scanned" labels next to scan actions.
+function ddmyy(d) {
+  if (!d) return '';
+  const dt = new Date(d);
+  return `${String(dt.getMonth() + 1).padStart(2, '0')}/${String(dt.getDate()).padStart(2, '0')}/${String(dt.getFullYear()).slice(-2)}`;
+}
+
 function tierIndex(t) { return TIERS.indexOf(t) === -1 ? 0 : TIERS.indexOf(t); }
 function tierAt(i)    { return TIERS[Math.min(Math.max(i, 0), TIERS.length - 1)]; }
 
@@ -158,6 +165,7 @@ export default function SignalWatchPage({ onNavigate, icp, refreshKey = 0, isAct
     industry: 'all',
     engagement: 'all',
     deepScan: 'all',
+    scanDate: 'all',
   });
   const [autoDeepQueue, setAutoDeepQueue]           = useState([]);
   const [autoDeepProgress, setAutoDeepProgress]     = useState({ done: 0, total: 0 });
@@ -920,118 +928,6 @@ export default function SignalWatchPage({ onNavigate, icp, refreshKey = 0, isAct
     URL.revokeObjectURL(url);
   }, [companies]);
 
-  // ── Clear all ────────────────────────────────────────────────────────────────
-
-  const clearAll = useCallback(async () => {
-    if (!window.confirm(`Clear all companies from Signal Watch? Companies already in your pipeline will not be deleted.`)) return;
-    try {
-      const CHUNK = 100;
-      const chunk = (arr) => { const out = []; for (let i = 0; i < arr.length; i += CHUNK) out.push(arr.slice(i, i + CHUNK)); return out; };
-
-      // Fetch ALL company IDs from DB (not from React state, which may be capped)
-      let allIds = [];
-      let from = 0;
-      while (true) {
-        const { data, error } = await supabase.from('companies').select('id').range(from, from + 999);
-        if (error || !data?.length) break;
-        allIds = allIds.concat(data.map(c => c.id));
-        if (data.length < 1000) break;
-        from += 1000;
-      }
-      if (!allIds.length) { setCompanies([]); return; }
-
-      // Find which are in the pipeline
-      const pipelinedIds = new Set();
-      for (const batch of chunk(allIds)) {
-        const { data } = await supabase.from('pipeline_entries').select('company_id').in('company_id', batch);
-        (data || []).forEach(e => pipelinedIds.add(e.company_id));
-      }
-
-      const toDelete = allIds.filter(id => !pipelinedIds.has(id));
-      const toReset  = allIds.filter(id =>  pipelinedIds.has(id));
-
-      for (const batch of chunk(toDelete)) {
-        const { error } = await supabase.from('companies').delete().in('id', batch);
-        if (error) throw error;
-      }
-
-      for (const batch of chunk(toReset)) {
-        await supabase.from('companies').update({
-          scan_date: null, icp_score: null, overall_score: null, icp_tier: null,
-          funding_stage: null, employee_count_num: null, summary: null,
-          triggers: [], recommended_angle: null, contact_angles: [],
-        }).in('id', batch);
-      }
-
-      setCompanies(prev =>
-        prev
-          .filter(c => pipelinedIds.has(c.id))
-          .map(c => ({ ...c, scan_date: null, icp_score: null, overall_score: null, icp_tier: null, funding_stage: null, employee_count_num: null, summary: null, triggers: [], recommended_angle: null, contact_angles: [], _error: undefined }))
-      );
-
-      if (toReset.length) {
-        alert(`Cleared. ${toReset.length} compan${toReset.length === 1 ? 'y' : 'ies'} in your pipeline were kept but their scan data was reset.`);
-      }
-    } catch (e) {
-      alert('Clear failed: ' + e.message);
-    }
-  }, []);
-
-  // ── Start fresh (wipe everything) ───────────────────────────────────────────
-
-  const startFresh = useCallback(async () => {
-    if (!window.confirm('Clear all companies from Signal Watch and start over? Companies in your pipeline will not be deleted.')) return;
-    try {
-      cancelRef.current.cancelled = true;
-      setScanningAll(false);
-      localStorage.removeItem('ph_scan_active');
-
-      const CHUNK = 100;
-      const chunk = (arr) => { const out = []; for (let i = 0; i < arr.length; i += CHUNK) out.push(arr.slice(i, i + CHUNK)); return out; };
-
-      let allIds = [];
-      let from = 0;
-      while (true) {
-        const { data, error } = await supabase.from('companies').select('id').range(from, from + 999);
-        if (error || !data?.length) break;
-        allIds = allIds.concat(data.map(c => c.id));
-        if (data.length < 1000) break;
-        from += 1000;
-      }
-      if (!allIds.length) { setCompanies([]); return; }
-
-      const pipelinedIds = new Set();
-      for (const batch of chunk(allIds)) {
-        const { data } = await supabase.from('pipeline_entries').select('company_id').in('company_id', batch);
-        (data || []).forEach(e => pipelinedIds.add(e.company_id));
-      }
-
-      const toDelete = allIds.filter(id => !pipelinedIds.has(id));
-      const toReset  = allIds.filter(id =>  pipelinedIds.has(id));
-
-      for (const batch of chunk(toDelete)) {
-        const { error } = await supabase.from('companies').delete().in('id', batch);
-        if (error) throw error;
-      }
-      for (const batch of chunk(toReset)) {
-        await supabase.from('companies').update({
-          scan_date: null, icp_score: null, overall_score: null, icp_tier: null,
-          funding_stage: null, employee_count_num: null, summary: null,
-          triggers: [], recommended_angle: null, contact_angles: [],
-        }).in('id', batch);
-      }
-
-      setCompanies(prev =>
-        prev.filter(c => pipelinedIds.has(c.id))
-          .map(c => ({ ...c, scan_date: null, icp_score: null, overall_score: null, icp_tier: null, funding_stage: null, employee_count_num: null, summary: null, triggers: [], recommended_angle: null, contact_angles: [], _error: undefined }))
-      );
-      setAddedToPipeline({});
-      setScanStatus({});
-    } catch (e) {
-      alert('Start Fresh failed: ' + e.message);
-    }
-  }, []);
-
   // ── Filtering ────────────────────────────────────────────────────────────────
 
   const applyFilters = (list, pinId = null) => {
@@ -1081,6 +977,13 @@ export default function SignalWatchPage({ onNavigate, icp, refreshKey = 0, isAct
       if (filters.deepScan === 'yes' && !c.deep_scanned) return false;
       if (filters.deepScan === 'no'  &&  c.deep_scanned) return false;
 
+      if (filters.scanDate !== 'all') {
+        if (!c.scan_date) return false;
+        const days = { today: 1, week: 7, month: 30, six_months: 182 }[filters.scanDate];
+        const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+        if (new Date(c.scan_date).getTime() < cutoff) return false;
+      }
+
       return true;
     });
   };
@@ -1125,7 +1028,7 @@ export default function SignalWatchPage({ onNavigate, icp, refreshKey = 0, isAct
     const id = company.id || company._tempId;
     setExpandedCards(prev => ({ ...prev, [id]: true }));
     // Clear filters so the card is visible
-    setFilters({ series: 'all', employees: 'all', distance: 'all', icp: 'all', sig: 'all', industry: 'all', engagement: 'all', deepScan: 'all' });
+    setFilters({ series: 'all', employees: 'all', distance: 'all', icp: 'all', sig: 'all', industry: 'all', engagement: 'all', deepScan: 'all', scanDate: 'all' });
     setSearch('');
     setTimeout(() => {
       cardRefs.current[id]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -1299,11 +1202,6 @@ export default function SignalWatchPage({ onNavigate, icp, refreshKey = 0, isAct
           {companies.length > 0 && (
             <button className="btn btn-secondary" style={{ borderRadius: 20 }} onClick={exportCSV} title="Download all companies as CSV">Export CSV</button>
           )}
-          {toolbarDivider}
-          {companies.length > 0 && (
-            <button className="btn btn-ghost btn-sm" style={{ borderRadius: 20, color: 'var(--red)' }} onClick={clearAll} title="Delete Signal Watch companies (keeps pipeline)">Clear All</button>
-          )}
-          <button className="btn btn-ghost btn-sm" style={{ borderRadius: 20, color: 'var(--red)', fontWeight: 700 }} onClick={startFresh} title="Wipe everything and start over">Start Fresh</button>
         </div>
 
         <input ref={fileInputRef} type="file" accept=".csv" multiple style={{ display: 'none' }} onChange={e => handleFiles(e.target.files)} />
@@ -1567,6 +1465,14 @@ export default function SignalWatchPage({ onNavigate, icp, refreshKey = 0, isAct
                     ))}
                   </div>
                 </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', whiteSpace: 'nowrap' }}>Scanned</span>
+                  <div style={{ display: 'flex', gap: 4 }}>
+                    {[['all','All'],['today','Today'],['week','Last Week'],['month','Last Month'],['six_months','Last 6 Months']].map(([v,l]) => (
+                      <button key={v} className={`filter-btn${filters.scanDate === v ? ' active' : ''}`} onClick={() => setFilter('scanDate', v)}>{l}</button>
+                    ))}
+                  </div>
+                </div>
                 {/* Force Industry + Entry Point + Search onto their own line */}
                 <div style={{ width: '100%', height: 0 }} />
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -1609,7 +1515,7 @@ export default function SignalWatchPage({ onNavigate, icp, refreshKey = 0, isAct
               {(filters.series !== 'all' || filters.employees !== 'all' || filters.distance !== 'all' || filters.icp !== 'all' || filters.sig !== 'all' || filters.industry !== 'all' || filters.engagement !== 'all' || filters.deepScan !== 'all' || search) && (
                 <div style={{ marginTop: 8, fontSize: 12, color: 'var(--text-muted)' }}>
                   Showing {filtered.length} of {companies.length} companies &nbsp;
-                  <button className="btn btn-ghost btn-xs" onClick={() => { setFilters({ series: 'all', employees: 'all', distance: 'all', icp: 'all', sig: 'all', industry: 'all', engagement: 'all', deepScan: 'all' }); setSearch(''); }}>
+                  <button className="btn btn-ghost btn-xs" onClick={() => { setFilters({ series: 'all', employees: 'all', distance: 'all', icp: 'all', sig: 'all', industry: 'all', engagement: 'all', deepScan: 'all', scanDate: 'all' }); setSearch(''); }}>
                     Clear filters
                   </button>
                 </div>
@@ -1906,13 +1812,19 @@ function CompanyCard({ company, distMiles, status, isScanning, scanningAll, week
               <span className="spinner" />{status || 'Scanning…'}
             </span>
           )}
+          {company.scan_date && (
+            <span style={{ fontSize: 10, color: 'var(--text-faint)', whiteSpace: 'nowrap' }}>
+              Last scanned: {ddmyy(company.scan_date)}
+            </span>
+          )}
           <button
             className="btn btn-sm"
-            style={{ borderRadius: 20, ...(company.deep_scanned ? { background: '#fef08a', color: '#854d0e', border: '1px solid #fde047' } : {}) }}
+            title={company.deep_scanned && company.scan_date ? `Deep scanned ${new Date(company.scan_date).toLocaleDateString()} — click to rescan` : 'Run a deep scan'}
+            style={{ borderRadius: 20, ...(company.deep_scanned ? { background: '#dcfce7', color: '#15803d', border: '1px solid #86efac' } : {}) }}
             onClick={e => { e.stopPropagation(); onScan(); }}
             disabled={isScanning}
           >
-            {isScanning ? <><span className="spinner" /> Scanning…</> : 'Deep Scan'}
+            {isScanning ? <><span className="spinner" /> Scanning…</> : company.deep_scanned ? '✓ Scanned — Rescan' : 'Deep Scan'}
           </button>
           {hasResult && (
             isAddedToPipeline ? (
