@@ -117,7 +117,7 @@ body {
   padding: 9px 10px;
   border-radius: var(--radius-sm);
   color: var(--sidebar-muted);
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 500;
   cursor: pointer;
   transition: all .15s;
@@ -139,7 +139,7 @@ body {
   border-left-color: var(--accent);
 }
 
-.nav-item .nav-icon { font-size: 16px; width: 20px; text-align: center; }
+.nav-item .nav-icon { font-size: 19px; width: 24px; text-align: center; }
 
 .nav-badge {
   margin-left: auto;
@@ -363,7 +363,7 @@ tbody tr:hover td { background: #fdf9f7; }
 
 /* ── Forms ─────────────────────────────────────────────────────────────────── */
 
-input[type="text"], input[type="email"], input[type="url"], textarea, select {
+input[type="text"], input[type="email"], input[type="url"], input[type="date"], input[type="time"], input[type="number"], textarea, select {
   width: 100%;
   padding: 8px 10px;
   border: 1px solid var(--border);
@@ -372,7 +372,14 @@ input[type="text"], input[type="email"], input[type="url"], textarea, select {
   color: var(--text);
   background: var(--surface);
   transition: border-color .15s;
-  font-family: 'Inter', inherit;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+/* macOS Safari/Chrome ignore font-family on date/time inputs without this */
+input[type="date"], input[type="time"] {
+  -webkit-appearance: none;
+  appearance: none;
+  font-family: 'Inter', sans-serif;
 }
 
 input:focus, textarea:focus, select:focus {
@@ -573,6 +580,7 @@ label {
 
 .spinner { width: 16px; height: 16px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin .6s linear infinite; display: inline-block; }
 @keyframes spin { to { transform: rotate(360deg); } }
+@keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.4; transform: scale(0.75); } }
 
 /* ── Alerts ────────────────────────────────────────────────────────────────── */
 
@@ -735,3 +743,28 @@ label {
 .bill-fly-7       { animation: bill-fly-7 1.25s ease-out forwards; }
 .bill-fly-8       { animation: bill-fly-8 1.45s ease-out forwards; }
 .win-popup-anim   { animation: win-popup 1.75s ease-out forwards; }
+
+/* ── Make It Rain (Pipeline → Deal) ─────────────────────────────────────────── */
+
+/* Bill falls from top to bottom, spinning */
+@keyframes bill-rain {
+  0%   { transform: translateY(-60px) rotate(0deg)   scale(1);    opacity: 0.95; }
+  15%  { opacity: 1; }
+  80%  { opacity: 0.85; }
+  100% { transform: translateY(108vh) rotate(480deg) scale(0.8);  opacity: 0; }
+}
+
+/* Character coils up before throwing */
+@keyframes char-grip {
+  0%   { transform: translateY(0)    scaleX(1)    scaleY(1); }
+  30%  { transform: translateY(6px)  scaleX(1.04) scaleY(0.94); }
+  65%  { transform: translateY(-4px) scaleX(0.97) scaleY(1.03); }
+  100% { transform: translateY(0)    scaleX(1)    scaleY(1); }
+}
+
+.char-grip        { animation: char-grip 0.65s ease-in-out infinite; }
+
+/* ── Task row action buttons — dim at rest, bright on row hover ─────────────── */
+.task-actions { opacity: 0.28; transition: opacity .15s; }
+.task-row:hover .task-actions { opacity: 1; }
+.task-actions button:hover { background: var(--surface-2) !important; color: var(--text) !important; }

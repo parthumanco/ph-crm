@@ -98,7 +98,17 @@ IMPORTANT: Write recommendedAngle and all contactAngles specifically for the rec
 
 // ── ICP / Signal Watch scanning ──────────────────────────────────────────────
 
-import { buildIcpProfile, DEFAULT_ICP } from './settings';
+import { buildIcpProfile, DEFAULT_ICP, buildBrandContext, DEFAULT_BRAND_BRAIN, loadBrandBrain } from './settings';
+
+// ── Brand Brain cache ─────────────────────────────────────────────────────────
+// Loaded once per app session and reused across all AI calls.
+let _brainCache = null;
+async function getBrandContext() {
+  if (!_brainCache) _brainCache = await loadBrandBrain().catch(() => DEFAULT_BRAND_BRAIN);
+  return buildBrandContext(_brainCache);
+}
+// Call this from Settings after a save so the next scan picks up changes.
+export function invalidateBrandCache() { _brainCache = null; }
 
 const INDUSTRY_GUIDE = `industry: Classify using exactly one of these values:
 "Agriculture" (farming, forestry, fishing, hunting)
@@ -121,10 +131,10 @@ const INDUSTRY_GUIDE = `industry: Classify using exactly one of these values:
 "Other Services" (repair, personal care, religious, civic organizations)
 "Government" (public administration, military, public safety)`;
 
-function buildBatchSystem(icp) {
+function buildBatchSystem(icp, brandCtx = '') {
   const profile = buildIcpProfile(icp);
   return `Sales intelligence analyst scoring companies for Part Human outreach.
-${profile}
+${brandCtx ? `${brandCtx}\n\n` : ''}${profile}
 NEVER use em dashes (—) anywhere in your response. Use commas or periods instead.
 Return ONLY a JSON array, same order as input. Short strings only.
 Each object schema:
@@ -139,9 +149,10 @@ If unknown company: noNewsFound:true, triggers:[], overallScore:3, icpScore:3, l
 CRITICAL: JSON array only. No markdown.`;
 }
 
-function buildDeepSystem(icp) {
+function buildDeepSystem(icp, brandCtx = '') {
   const profile = buildIcpProfile(icp);
   return `B2B sales intelligence analyst. Search the web AND social media for very recent signals about this company.
+${brandCtx ? `\n${brandCtx}\n` : ''}
 
 Sources to check:
 - LinkedIn: company page posts, executive posts, job postings, follower growth
@@ -203,6 +214,7 @@ CRITICAL: JSON array only. No markdown.`,
 }
 
 export async function scanBatch(companies, icp = DEFAULT_ICP) {
+  const brandCtx = await getBrandContext();
   const list = companies.map((c, i) => {
     const contactList = (c.contacts || [])
       .map(ct => [ct.name, ct.title].filter(Boolean).join(' / '))
@@ -214,7 +226,7 @@ export async function scanBatch(companies, icp = DEFAULT_ICP) {
     callClaude({
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 10000,
-      system: buildBatchSystem(icp),
+      system: buildBatchSystem(icp, brandCtx),
       messages: [{ role: 'user', content: `Analyze for B2B trigger events:\n${list}` }],
     }),
     TIMEOUT_MS
@@ -248,10 +260,10 @@ export async function scanBatch(companies, icp = DEFAULT_ICP) {
   }
 }
 
-function buildWeeklySystem(icp) {
+function buildWeeklySystem(icp, brandCtx = '') {
   const profile = buildIcpProfile(icp);
   return `Sales intelligence analyst doing a weekly refresh scan for Part Human.
-${profile}
+${brandCtx ? `${brandCtx}\n\n` : ''}${profile}
 Focus: what has CHANGED or is NEW in the last 30 days — leadership moves, funding rounds, product launches, layoffs, expansions, key hires. Adjust scores up if new positive triggers exist.
 Return ONLY a JSON array, same order as input. Short strings only.
 Each object schema:
@@ -264,6 +276,7 @@ CRITICAL: JSON array only. No markdown.`;
 }
 
 export async function weeklyRescanBatch(companies, icp = DEFAULT_ICP) {
+  const brandCtx = await getBrandContext();
   const list = companies.map((c, i) =>
     `${i + 1}. ${c.name}${c.website ? ` (${c.website})` : ''}${c.hq ? ` — HQ: ${c.hq}` : ''} [current SIG: ${c.overall_score || '?'}, ICP: ${c.icp_score || '?'}]`
   ).join('\n');
@@ -272,7 +285,7 @@ export async function weeklyRescanBatch(companies, icp = DEFAULT_ICP) {
     callClaude({
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 8000,
-      system: buildWeeklySystem(icp),
+      system: buildWeeklySystem(icp, brandCtx),
       messages: [{ role: 'user', content: `Weekly refresh — check for new developments:\n${list}` }],
     }),
     TIMEOUT_MS
@@ -305,7 +318,8 @@ export async function weeklyRescanBatch(companies, icp = DEFAULT_ICP) {
   }
 }
 
-export async function scanDeepDive(company, icp = DEFAULT_ICP, existingEngagementType = null) {
+export async function scanDeepDive(company, icp = DEFAULT_ICP, existingEngagementType = null, clientDetail = {}) {
+  const brandCtx = await getBrandContext();
   const contacts = company.contacts || [];
   const contactStr = contacts
     .map(ct => {
@@ -326,15 +340,70 @@ export async function scanDeepDive(company, icp = DEFAULT_ICP, existingEngagemen
 
   const websiteKnown = !!company.website;
 
+  // ── Build full internal context from clientDetail ──────────────────────────
+  const ctxLines = [];
+
+  // Research notes & links
+  const items = clientDetail.items || [];
+  if (items.length > 0) {
+    ctxLines.push('RESEARCH NOTES & LINKS:');
+    items.forEach(it => {
+      if (it.type === 'note') ctxLines.push(`  - Note: ${it.body || it.title}`);
+      else ctxLines.push(`  - Link: ${it.title}${it.url ? ` (${it.url})` : ''}${it.body ? ` — ${it.body}` : ''}`);
+    });
+  }
+
+  // Projects
+  const projects = clientDetail.projects || [];
+  if (projects.length > 0) {
+    ctxLines.push('PROJECTS WE\'VE RUN FOR THEM:');
+    projects.forEach(p => {
+      ctxLines.push(`  - ${p.name} (${p.archived_at ? 'archived' : p.status}) started ${p.start_date || 'unknown'}${p.description ? `: ${p.description}` : ''}`);
+    });
+  }
+
+  // Meetings
+  const meetings = clientDetail.meetings || [];
+  if (meetings.length > 0) {
+    ctxLines.push('MEETING HISTORY:');
+    meetings.slice(0, 10).forEach(m => {
+      ctxLines.push(`  - [${m.meeting_date || 'no date'}] ${m.title || 'Meeting'}${m.summary ? `: ${m.summary}` : ''}`);
+      if (m.transcript) ctxLines.push(`    Transcript excerpt: ${m.transcript.slice(0, 400)}…`);
+    });
+  }
+
+  // Activities
+  const activities = clientDetail.activities || [];
+  if (activities.length > 0) {
+    ctxLines.push('ACTIVITY HISTORY (calls, emails, notes):');
+    activities.slice(0, 15).forEach(a => {
+      ctxLines.push(`  - [${a.activity_date}] ${a.type}${a.assigned_to ? ` (${a.assigned_to})` : ''}: ${a.summary}`);
+    });
+  }
+
+  const internalContext = ctxLines.length > 0
+    ? `\n\nINTERNAL CONTEXT (use this to inform your analysis — factor into summary, recommended angle, triggers, and contact angles):\n${ctxLines.join('\n')}`
+    : '';
+
   const data = await withTimeout(
     callClaude({
       model: 'claude-sonnet-4-6',
       max_tokens: 4000,
-      system: buildDeepSystem(icp),
-      tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 2 }],
+      system: buildDeepSystem(icp, brandCtx),
+      tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 6 }],
       messages: [{
         role: 'user',
-        content: `Search for recent signals about ${company.name}${company.website ? ` (${company.website})` : ''}. Check: company news, LinkedIn company page, Twitter/X, job boards (brand/marketing/comms roles).${linkedInClause}${nameSearchClause} Look for posts about growth, brand, team changes, or challenges. Find up to 3 trigger events from the last 90 days.${contactStr ? ` For each contact, also find their LinkedIn profile URL (linkedin.com/in/...) — include it in contactAngles.linkedinUrl if found with confidence. Contacts: ${contactStr}.` : ''} Do 1-2 searches max.${!websiteKnown ? ' Also find their website.' : ''}${existingEngagementType ? ` The engagement type is already set to "${existingEngagementType}" — write recommendedAngle and contactAngles for that engagement tier unless the company profile clearly warrants a different one.` : ''} Return JSON only.`,
+        content: `Do a deep scan on ${company.name}${company.website ? ` (${company.website})` : ''}.
+
+STEP 1 — FIND LEADERSHIP CONTACTS: Search "${company.name} leadership team" or "${company.name} about us" or their website team page. Find the CEO, CMO, VP Marketing, Head of Brand, or equivalent decision-makers. For each person found, record their name, title, and LinkedIn URL (linkedin.com/in/...). Add them to the contactAngles array with a tailored outreach angle. This step is mandatory even if we have no contacts on file.
+
+STEP 2 — TRIGGER EVENTS: Check company news, LinkedIn company page, Twitter/X, and job boards (brand/marketing/comms roles). Find up to 3 trigger events from the last 90 days — growth, brand changes, team changes, or challenges.${linkedInClause}${nameSearchClause}
+
+STEP 3 — ENRICH EXISTING CONTACTS: ${contactStr ? `For these known contacts, find/confirm their LinkedIn URL: ${contactStr}.` : 'No existing contacts — rely on Step 1 discoveries.'}
+
+${!websiteKnown ? 'Also find their website URL.' : ''}${existingEngagementType ? ` Engagement type is already "${existingEngagementType}" — keep it unless the profile clearly warrants a change.` : ''}${internalContext}
+
+Return JSON only.`,
       }],
     }),
     TIMEOUT_MS
@@ -354,6 +423,267 @@ export async function scanDeepDive(company, icp = DEFAULT_ICP, existingEngagemen
   }
   if (!jsonObj) throw new Error('No JSON found in deep scan response');
   return jsonObj;
+}
+
+// ── Build Company Thesis — multi-phase deep research ─────────────────────────
+// onProgress(phase 1-4, status 'running'|'done'|'error', data)
+// clientDetail = { projects, meetings, activities, items }
+
+function extractJsonBlock(data, type = 'object') {
+  const open = type === 'object' ? '{' : '[';
+  const close = type === 'object' ? '}' : ']';
+  const blocks = (data.content || []).filter(b => b.type === 'text');
+  for (let i = blocks.length - 1; i >= 0; i--) {
+    const raw = blocks[i]?.text || '';
+    const stripped = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
+    const s = stripped.indexOf(open);
+    const e = stripped.lastIndexOf(close);
+    if (s !== -1 && e !== -1) {
+      try { return JSON.parse(stripped.slice(s, e + 1)); } catch { /* try next */ }
+    }
+  }
+  return null;
+}
+
+function buildClientContext(clientDetail) {
+  const lines = [];
+  const { projects = [], meetings = [], activities = [], items = [], files = [] } = clientDetail;
+  if (projects.length) {
+    lines.push('PROJECTS:');
+    projects.forEach(p => lines.push(`  - ${p.name} (${p.archived_at ? 'archived' : p.status})${p.description ? ': ' + p.description : ''}`));
+  }
+  if (meetings.length) {
+    lines.push('MEETINGS:');
+    meetings.slice(0, 8).forEach(m => {
+      lines.push(`  - [${m.meeting_date || 'no date'}] ${m.title || 'Meeting'}${m.summary ? ': ' + m.summary : ''}`);
+      if (m.transcript) lines.push(`    Excerpt: ${m.transcript.slice(0, 300)}…`);
+    });
+  }
+  if (activities.length) {
+    lines.push('ACTIVITIES:');
+    activities.slice(0, 12).forEach(a => lines.push(`  - [${a.activity_date}] ${a.type}: ${a.summary}`));
+  }
+  if (items.length) {
+    lines.push('RESEARCH NOTES & LINKS:');
+    items.forEach(it => {
+      if (it.type === 'note') lines.push(`  - Note: ${it.body || it.title}`);
+      else lines.push(`  - Link: ${it.title}${it.url ? ' (' + it.url + ')' : ''}${it.body ? ' — ' + it.body : ''}`);
+    });
+  }
+  if (files.length) {
+    lines.push('SHARED DOCUMENTS (files attached to this deal):');
+    files.forEach(f => {
+      const ctx = f.task_title ? ` — sent with task: "${f.task_title}"` : '';
+      lines.push(`  - "${f.name}"${ctx}`);
+    });
+  }
+  return lines.join('\n');
+}
+
+export async function buildCompanyThesis(company, icp, clientDetail = {}, onProgress = () => {}) {
+  const PHASE_TIMEOUT = 150000; // 2.5 min per phase
+  const name = company.name;
+  const site = company.website || '';
+  const internalCtx = buildClientContext(clientDetail);
+
+  // Research materials attached by the sales team
+  const researchItems = company.research_items || [];
+  const researchLinks = researchItems.filter(i => i.url);
+  const researchDocs  = researchItems.filter(i => i.body);
+
+  // ── Phase 1: Company foundation + full leadership discovery ───────────────
+  onProgress(1, 'running', null, `Starting research on ${name}…`);
+  onProgress(1, 'log', null, `Searching "${name} team" and "${name} leadership"…`);
+  if (site) onProgress(1, 'log', null, `Checking website: ${site}/about and /team pages…`);
+  onProgress(1, 'log', null, `Looking up LinkedIn company page for ${name}…`);
+  if (researchLinks.length > 0) onProgress(1, 'log', null, `Reading ${researchLinks.length} attached link${researchLinks.length > 1 ? 's' : ''}: ${researchLinks.map(i => i.title || i.url).join(', ')}`);
+
+  const p1LinkTask = researchLinks.length > 0
+    ? `\n\nTASK C — The sales team has flagged these URLs as important context. Visit and extract key information from each:\n${researchLinks.map(i => `- ${i.title ? `"${i.title}": ` : ''}${i.url}`).join('\n')}`
+    : '';
+
+  const p1raw = await withTimeout(callClaude({
+    model: 'claude-sonnet-4-6',
+    max_tokens: 3000,
+    system: 'You are a B2B research analyst. Search thoroughly. Return only valid JSON, no markdown.',
+    tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: researchLinks.length > 0 ? 7 : 5 }],
+    messages: [{ role: 'user', content:
+`Research ${name}${site ? ` (${site})` : ''} thoroughly. Do at least 2 searches.
+
+TASK A — Company overview: Confirm website URL, HQ city/country, employee count, funding stage, industry, founding year, what they do in 2-3 sentences.
+
+TASK B — Leadership team: Search "${name} team", "${name} leadership", and their website /about or /team page AND their LinkedIn company page. Find every C-suite and VP-level person especially: CEO, CMO, VP/Director of Marketing, VP/Head of Brand, Head of Communications, Creative Director, Chief Brand Officer. For each person record their full name, exact title, and LinkedIn profile URL (only if you actually found it in search results — never construct one).${p1LinkTask}
+
+Return JSON only:
+{"website":"str","hq":"City, State/Country","employee_count_num":number_or_null,"funding_stage":"str","industry":"str","description":"str","leaders":[{"name":"str","title":"str","linkedin":"url_or_null","email":"str_or_null"}]}`
+    }],
+  }), PHASE_TIMEOUT);
+
+  const p1 = extractJsonBlock(p1raw) || {};
+  const leaders = p1.leaders || [];
+  if (p1.hq || p1.industry)
+    onProgress(1, 'log', null, `Company confirmed: ${[p1.hq, p1.industry, p1.employee_count_num ? p1.employee_count_num + ' employees' : null, p1.funding_stage].filter(Boolean).join(' · ')}`);
+  if (leaders.length > 0) {
+    onProgress(1, 'log', null, `Found ${leaders.length} leaders: ${leaders.map(l => `${l.name} (${l.title})`).join(', ')}`);
+    leaders.forEach(l => {
+      onProgress(1, 'log', null, `  ${l.linkedin ? '✓ LinkedIn found' : '  No LinkedIn'} · ${l.name}, ${l.title}`);
+    });
+  } else {
+    onProgress(1, 'log', null, `No leaders found on first pass — will search further in Phase 2`);
+  }
+  onProgress(1, 'done', { leaders: leaders.length }, `Phase 1 complete — ${leaders.length} leaders identified`);
+
+  // ── Phase 2: Per-contact signal mining ───────────────────────────────────
+  onProgress(2, 'running', null, `Mining signals for ${leaders.length} contacts…`);
+
+  const knownContacts = company.contacts || [];
+  const seenNames = new Set(knownContacts.map(c => c.name?.toLowerCase()));
+  const allContacts = [
+    ...knownContacts,
+    ...leaders.filter(l => l.name && !seenNames.has(l.name.toLowerCase())),
+  ];
+
+  allContacts.forEach(c => onProgress(2, 'log', null, `Searching LinkedIn + web for ${c.name}, ${c.title || 'unknown title'}…`));
+
+  let p2contacts = allContacts;
+  if (allContacts.length > 0) {
+    const contactList = allContacts
+      .map(c => `${c.name}${c.title ? ', ' + c.title : ''}${c.linkedin ? ' — ' + c.linkedin : ''}`)
+      .join('\n');
+    const p2raw = await withTimeout(callClaude({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 3500,
+      system: 'You are a sales intelligence researcher. Return only valid JSON, no markdown.',
+      tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 6 }],
+      messages: [{ role: 'user', content:
+`For each of these ${name} leaders, search LinkedIn and the web for recent activity (last 90 days). Find their most recent posts, interviews, podcasts, articles, or public statements about: brand, growth, company direction, team challenges, product, culture, or hiring.
+
+Also confirm or find each person's LinkedIn URL and email if publicly available.
+
+Leaders to research:
+${contactList}
+
+Return JSON only:
+{"contacts":[{"name":"str","title":"str","linkedin":"url_or_null","email":"str_or_null","signals":[{"headline":"max 12 words","summary":"2-3 sentences: what they said and why it matters for a brand conversation","date":"str_or_null","url":"str_or_null","category":"leadership|expansion|product|pain|hiring|social"}]}]}`
+      }],
+    }), PHASE_TIMEOUT);
+    p2contacts = extractJsonBlock(p2raw)?.contacts || allContacts;
+
+    // Log what was found per contact
+    p2contacts.forEach(c => {
+      const sigCount = (c.signals || []).length;
+      if (sigCount > 0) {
+        onProgress(2, 'log', null, `${c.name}: ${sigCount} signal${sigCount !== 1 ? 's' : ''} found`);
+        (c.signals || []).forEach(s => onProgress(2, 'log', null, `    "${s.headline}" (${s.category || 'signal'}${s.date ? ', ' + s.date : ''})`));
+      } else {
+        onProgress(2, 'log', null, `${c.name}: no recent public activity found`);
+      }
+    });
+  } else {
+    onProgress(2, 'log', null, `No contacts to research — skipping signal mining`);
+  }
+
+  const totalSignals = p2contacts.reduce((n, c) => n + (c.signals || []).length, 0);
+  onProgress(2, 'done', { contacts: p2contacts.length }, `Phase 2 complete — ${totalSignals} signals across ${p2contacts.length} contacts`);
+
+  // ── Phase 3: Trigger events, job postings, competitive context ────────────
+  onProgress(3, 'running', null, `Scanning news, job postings, and competitive landscape…`);
+  onProgress(3, 'log', null, `Searching "${name} news" and "${name} funding" last 90 days…`);
+  onProgress(3, 'log', null, `Checking "${name} careers" and LinkedIn Jobs for brand/marketing roles…`);
+  onProgress(3, 'log', null, `Looking up competitors and market positioning…`);
+
+  const p3raw = await withTimeout(callClaude({
+    model: 'claude-sonnet-4-6',
+    max_tokens: 3000,
+    system: 'You are a sales intelligence researcher. Return only valid JSON, no markdown.',
+    tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 4 }],
+    messages: [{ role: 'user', content:
+`Find recent intelligence for ${name}${site ? ` (${site})` : ''} — last 90 days.
+
+Search 1: Company news, press releases, funding announcements, acquisitions, product launches, rebrands, awards, conference speaking
+Search 2: Open job postings in brand, marketing, creative, or communications roles (search LinkedIn Jobs or their careers page) — rapid hiring signals investment in those areas
+Search 3: Competitive landscape — who are their top 2-3 direct competitors? How does ${name} differentiate?
+
+Return JSON only:
+{"triggers":[{"headline":"str","detail":"str","category":"leadership|funding|expansion|product|pain|hiring|social","urgency":"high|medium|low","date":"str_or_null","url":"str_or_null"}],"job_postings":[{"title":"str","signal":"why this matters for a brand agency conversation"}],"competitors":["str"],"market_position":"1-2 sentences on how they compete"}`
+    }],
+  }), PHASE_TIMEOUT);
+
+  const p3 = extractJsonBlock(p3raw) || {};
+  (p3.triggers || []).forEach(t => onProgress(3, 'log', null, `Trigger [${t.urgency || 'medium'}]: ${t.headline}`));
+  (p3.job_postings || []).forEach(j => onProgress(3, 'log', null, `Open role: ${j.title}`));
+  if ((p3.competitors || []).length > 0) onProgress(3, 'log', null, `Competitors: ${p3.competitors.join(', ')}`);
+  onProgress(3, 'done', { triggers: (p3.triggers || []).length }, `Phase 3 complete — ${(p3.triggers || []).length} triggers, ${(p3.job_postings || []).length} open roles`);
+
+  // ── Phase 4: Full thesis synthesis ───────────────────────────────────────
+  const dataPoints = leaders.length + totalSignals + (p3.triggers || []).length;
+  onProgress(4, 'running', null, `Synthesising thesis from ${dataPoints} data points…`);
+  onProgress(4, 'log', null, `Building ICP fit assessment…`);
+  onProgress(4, 'log', null, `Identifying primary entry contact and outreach hook…`);
+  onProgress(4, 'log', null, `Writing supporting contact angles…`);
+  onProgress(4, 'log', null, `Assessing risks and sensitivities…`);
+  if (internalCtx) onProgress(4, 'log', null, `Incorporating internal relationship context…`);
+  onProgress(4, 'log', null, `Composing full thesis narrative…`);
+
+  const icpProfile = buildIcpProfile(icp);
+  const brandCtx = await getBrandContext();
+  const p4raw = await withTimeout(callClaude({
+    model: 'claude-sonnet-4-6',
+    max_tokens: 6000,
+    system: `You are a senior brand strategist at Part Human, a brand strategy agency. Your job is to synthesise research into a precise sales thesis. Return only valid JSON, no markdown.\n\n${brandCtx}\n\n${icpProfile}`,
+    messages: [{ role: 'user', content:
+`Synthesise all research into a complete sales thesis for ${name}.
+
+COMPANY PROFILE:
+${JSON.stringify({ website: p1.website, hq: p1.hq, employees: p1.employee_count_num, funding: p1.funding_stage, industry: p1.industry, description: p1.description }, null, 2)}
+
+LEADERSHIP & PERSONAL SIGNALS:
+${JSON.stringify(p2contacts, null, 2)}
+
+TRIGGER EVENTS & COMPETITIVE:
+${JSON.stringify(p3, null, 2)}
+
+${internalCtx ? `OUR EXISTING RELATIONSHIP:\n${internalCtx}\n` : ''}
+${researchDocs.length > 0 ? `RESEARCH MATERIALS (provided by the sales team — treat as high-confidence primary source intel):\n${researchDocs.map(i => `[${(i.type || 'doc').toUpperCase()}${i.title ? ` — ${i.title}` : ''}]\n${i.body}`).join('\n\n')}\n` : ''}
+${researchLinks.length > 0 ? `REFERENCE LINKS (flagged by sales team):\n${researchLinks.map(i => `- ${i.title ? `${i.title}: ` : ''}${i.url}`).join('\n')}\n` : ''}
+Write a full thesis covering:
+1. Why they need brand strategy help RIGHT NOW — tie to specific signals, not generic reasons
+2. ICP fit and scoring
+3. The single best entry point: who to contact first and exactly why, with a specific hook referencing their actual posts or news
+4. Supporting angles for 2-3 other contacts
+5. Risks or sensitivities to avoid
+6. Recommended next action
+
+RULES: Never use em dashes (—). Use commas or "and" instead. Only include LinkedIn URLs you actually found in the research data above — never construct them. For each trigger in your output, carry forward the matching "url" from the TRIGGER EVENTS data above if that event has one, and always fill "source" with where the trigger came from (the publication, press release, or platform named in the research above — never leave it blank if the underlying data names a source).
+
+Return JSON only:
+{
+  "icp_score": 1-10,
+  "icp_tier": "str",
+  "overall_score": 1-10,
+  "funding_stage": "str",
+  "employee_count": "str",
+  "employee_count_num": number_or_null,
+  "hq": "str",
+  "industry": "str",
+  "website": "str_or_null",
+  "summary": "3-4 sentence company overview",
+  "thesis": "3-5 paragraph sales thesis — why Part Human, why now, why these contacts. Specific, not generic.",
+  "recommended_angle": "the primary positioning hook in 1-2 sentences",
+  "entry_contact": {"name":"str","title":"str","linkedin":"url_or_null","angle":"str","hook":"1-2 sentences referencing a specific post, news item, or signal"},
+  "contact_angles": [{"name":"str","title":"str","linkedin":"url_or_null","angle":"str","hook":"str"}],
+  "triggers": [{"headline":"str","detail":"str","category":"str","urgency":"str","date":"str_or_null","source":"str_or_null","url":"str_or_null"}],
+  "risks": ["str"],
+  "next_step": "str",
+  "thesis_built": true
+}`
+    }],
+  }), PHASE_TIMEOUT);
+
+  const synthesis = extractJsonBlock(p4raw);
+  if (!synthesis) throw new Error('Thesis synthesis returned no JSON');
+  onProgress(4, 'done', synthesis, `Thesis written — ICP ${synthesis.icp_score ?? '?'}/10, ${synthesis.icp_tier ?? ''}`);
+  return synthesis;
 }
 
 // ── LinkedIn post scan — trigger events from contact activity ─────────────────
@@ -592,13 +922,62 @@ Return JSON: {"subject":"str","body":"str"}. Body uses \\n for line breaks.`;
   },
 };
 
+// ── Contact dossier enrichment ────────────────────────────────────────────────
+// Builds a detailed personal profile for one contact via web search.
+export async function enrichContactDossier(contact, companyName) {
+  const name    = contact.name;
+  const title   = contact.title || '';
+  const linkedin = contact.linkedin || '';
+
+  const data = await withTimeout(callClaude({
+    model: 'claude-sonnet-4-6',
+    max_tokens: 3500,
+    system: `You are a professional researcher building a detailed contact dossier for B2B sales intelligence. Search thoroughly using all available public sources. Only include information you actually find — never fabricate. Return only valid JSON, no markdown.`,
+    tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 7 }],
+    messages: [{ role: 'user', content:
+`Build a comprehensive dossier on ${name}${title ? ', ' + title : ''} at ${companyName}.
+
+${linkedin ? `Start with their LinkedIn profile: ${linkedin}` : `Search for their LinkedIn profile first: "${name}" "${companyName}" LinkedIn`}
+
+Then search for:
+1. Career history: all previous employers, titles, dates — search "${name}" "${companyName}" LinkedIn career
+2. Education: schools attended, degrees, graduation years
+3. Twitter/X: find their handle and recent tweets — search "${name}" site:twitter.com OR site:x.com
+4. Location: city/state they live in (LinkedIn, company website bio, conference listings)
+5. Interests and personal details: sports teams they support, hobbies, causes they care about — check their Twitter bio, LinkedIn featured section, and personal posts
+6. Recent public activity: articles written, podcasts appeared on, conference talks, press mentions — search "${name}" "${companyName}" interview OR podcast OR "conference" OR article
+7. Recent LinkedIn posts (last 90 days): what topics they post about, key themes
+
+Only return things you actually found. Set fields to null or [] if not found.
+
+Return JSON:
+{
+  "email": "str or null",
+  "linkedin": "confirmed url or null",
+  "twitter": "https://x.com/handle or null",
+  "location": "City, State/Country or null",
+  "education": [{"school":"str","degree":"str","years":"str or null"}],
+  "job_history": [{"company":"str","title":"str","from":"str or null","to":"str or null","is_current":true/false}],
+  "posts": [{"platform":"linkedin|twitter","headline":"10-12 word summary","summary":"2-3 sentences — what they said and what it reveals","date":"str or null","url":"str or null","category":"leadership|product|culture|personal|opinion"}],
+  "articles_talks": [{"title":"str","outlet":"str or null","date":"str or null","url":"str or null"}],
+  "interests": ["specific interests, causes, sports teams, hobbies found publicly"],
+  "fun_facts": ["notable public facts — awards, alma mater mascot, volunteer work, etc."],
+  "bio_summary": "2-3 sentence professional summary based on what you found"
+}` }],
+  }), 150000);
+
+  return extractJsonBlock(data) || null;
+}
+
 export async function generateEmailDraft(touchNumber, company, contact, angle, icp = DEFAULT_ICP, t1Subject = null, engagementType = 'Sprint', linkedinPosts = []) {
+  if (touchNumber === 3) throw new Error('Touch 3 is LinkedIn — use generateLinkedInDrafts() instead of generateEmailDraft()');
   const promptFn = TOUCH_PROMPTS[touchNumber];
   if (!promptFn) throw new Error(`No prompt for touch ${touchNumber}`);
 
   const eng = ENGAGEMENT_META[engagementType] || ENGAGEMENT_META.Sprint;
   const { outreachVoice, aboutCompany } = icp;
-  const systemContext = `You are a copywriter for Part Human. ${aboutCompany ? aboutCompany.split('.')[0] + '.' : 'Brand strategy agency.'} Write in their voice: direct, warm, human, no jargon. Never use em dashes (—). Return only valid JSON as specified.${outreachVoice ? '\n\nVOICE GUIDANCE: ' + outreachVoice : ''}\n\nENGAGEMENT CONTEXT: You are writing for a ${eng.name} engagement (${eng.price}, ${eng.duration}). ${eng.hook}.`;
+  const brandCtx = await getBrandContext();
+  const systemContext = `You are a copywriter for Part Human. Write in their voice: direct, warm, human, no jargon. Never use em dashes (—). Return only valid JSON as specified.\n\n${brandCtx}${outreachVoice ? '\n\nVOICE GUIDANCE (additional): ' + outreachVoice : ''}\n\nENGAGEMENT CONTEXT: You are writing for a ${eng.name} engagement (${eng.price}, ${eng.duration}). ${eng.hook}.`;
 
   // Filter posts to just this contact
   const contactPosts = linkedinPosts.filter(p =>
@@ -621,13 +1000,17 @@ export async function generateEmailDraft(touchNumber, company, contact, angle, i
   const e = cleaned.lastIndexOf('}');
   if (s === -1 || e === -1) throw new Error('No JSON found in draft response');
   const result = JSON.parse(cleaned.slice(s, e + 1));
-  // Strip any em dashes that slipped through
-  if (result.body) result.body = result.body.replace(/—/g, ',');
-  if (result.subject) result.subject = result.subject.replace(/—/g, ',');
+  // Strip any em/en dashes that slipped through
+  if (result.body) result.body = result.body.replace(/[—–]/g, ',');
+  if (result.subject) result.subject = result.subject.replace(/[—–]/g, ',');
+  // Append ICP email signature if one is set in settings
+  if (icp.emailSignature?.trim() && result.body) {
+    result.body = result.body.trimEnd() + '\n\n' + icp.emailSignature.trim();
+  }
   return result;
 }
 
-export async function generateLinkedInDrafts(company, contact, t1Subject = null, engagementType = 'Sprint', linkedinPosts = []) {
+export async function generateLinkedInDrafts(company, contact, t1Subject = null, engagementType = 'Sprint', linkedinPosts = [], icp = DEFAULT_ICP) {
   const eng = ENGAGEMENT_META[engagementType] || ENGAGEMENT_META.Sprint;
   const contactPosts = linkedinPosts.filter(p =>
     p.contact_name?.toLowerCase().trim() === contact.name?.toLowerCase().trim()
@@ -636,7 +1019,7 @@ export async function generateLinkedInDrafts(company, contact, t1Subject = null,
     callClaude({
       model: 'claude-sonnet-4-6',
       max_tokens: 600,
-      system: `You are a copywriter for Part Human. Write in their voice: direct, warm, human, no jargon. Never use em dashes (—). Return only valid JSON.\n\nENGAGEMENT CONTEXT: ${eng.name} (${eng.price}, ${eng.duration}). ${eng.hook}.`,
+      system: `You are a copywriter for Part Human. Write in their voice: direct, warm, human, no jargon. Never use em dashes (—). Return only valid JSON.\n\nENGAGEMENT CONTEXT: ${eng.name} (${eng.price}, ${eng.duration}). ${eng.hook}.${icp.outreachVoice ? '\n\nVOICE GUIDANCE: ' + icp.outreachVoice : ''}`,
       messages: [{ role: 'user', content: TOUCH_PROMPTS[3](company, contact, null, t1Subject, engagementType, contactPosts) }],
     }),
     TIMEOUT_MS
@@ -648,8 +1031,8 @@ export async function generateLinkedInDrafts(company, contact, t1Subject = null,
   const e = cleaned.lastIndexOf('}');
   if (s === -1 || e === -1) throw new Error('No JSON found in LinkedIn draft response');
   const result = JSON.parse(cleaned.slice(s, e + 1));
-  if (result.connection_note) result.connection_note = result.connection_note.replace(/—/g, ',');
-  if (result.acceptance_dm) result.acceptance_dm = result.acceptance_dm.replace(/—/g, ',');
+  if (result.connection_note) result.connection_note = result.connection_note.replace(/[—–]/g, ',');
+  if (result.acceptance_dm) result.acceptance_dm = result.acceptance_dm.replace(/[—–]/g, ',');
   return result;
 }
 
@@ -664,12 +1047,25 @@ ${newCompanies.map(c => `- ${c.name}: ${c.recommended_angle || c.summary || 'No 
 FOLLOW-UPS DUE:
 ${followups.map(f => `- ${f.companyName} (Touch ${f.touchNumber}, ${f.contactName || 'primary contact'})`).join('\n') || 'None'}
 
-Write a brief, motivating weekly briefing for Mike and Pete. Include:
-1. A 2-sentence overview of this week's pipeline health
-2. The top 2-3 companies to prioritize and why
-3. One tactical reminder based on the Dan Allard 5-touch cadence
+Write a brief, motivating weekly briefing for Mike and Pete using this exact structure:
 
-Keep it under 200 words. Direct and human. No bullet-point overload. Never use em dashes.`;
+**Part Human | Weekly Outreach Briefing**
+
+**[First name greeting],**
+
+[1-2 sentence overview of this week's pipeline health and energy.]
+
+**Top Priorities**
+
+[2-4 sentences of prose identifying the top 2-3 companies to lead with and why. Bold every company name using **CompanyName**. No bullet points — write in flowing paragraphs. Include any companies to skip or deprioritize if relevant.]
+
+**Tactical Reminder**
+
+[One sharp, specific reminder tied to the Dan Allard 5-touch cadence.]
+
+Good hunting this week.
+
+Keep it tight and direct. Never use em dashes.`;
 
   const data = await withTimeout(
     callClaude({
@@ -682,7 +1078,7 @@ Keep it under 200 words. Direct and human. No bullet-point overload. Never use e
   );
 
   const text = data.content?.find(b => b.type === 'text')?.text || '';
-  return text.replace(/—/g, ',');
+  return text.replace(/[—–]/g, ',');
 }
 
 // ── AI Chat ───────────────────────────────────────────────────────────────────
@@ -711,7 +1107,7 @@ Be direct, specific, and actionable. Never use em dashes (—). Reference actual
   );
 
   const text = data.content?.find(b => b.type === 'text')?.text || '';
-  return text.replace(/—/g, ',');
+  return text.replace(/[—–]/g, ',');
 }
 
 // ── Company Discovery ─────────────────────────────────────────────────────────
@@ -725,7 +1121,7 @@ Each object schema:
 {"name":"str","website":"https://... or null","hq":"City, ST","description":"1 sentence about what they do","whyItFits":"1 sentence on why they match the criteria","fundingStage":"Seed|Series A|Series B|Series C|Series D+|Unknown","employeeCount":integer_or_null}
 
 Rules:
-- Return up to 50 companies (or fewer if genuinely hard to find strong matches).
+- Return up to 25 high-quality matches (fewer if genuinely hard to find strong fits).
 - Only include real, verifiable companies.
 - website: only include if you are confident it is correct. Set to null if unsure.
 - employeeCount: your best estimate as an integer, or null if unknown.
@@ -737,12 +1133,12 @@ Rules:
 SEARCH CRITERIA:
 ${criteria}
 
-Suggest up to 50 real companies that match both the ICP above and the search criteria. Return ONLY the JSON array.`;
+Suggest up to 25 real companies that match both the ICP above and the search criteria. Return ONLY the JSON array.`;
 
   const data = await withTimeout(
     callClaude({
       model: 'claude-sonnet-4-6',
-      max_tokens: 16000,
+      max_tokens: 7000,
       system,
       messages: [{ role: 'user', content: userMsg }],
     }),
@@ -777,6 +1173,127 @@ Suggest up to 50 real companies that match both the ICP above and the search cri
   }
 }
 
+// ── Contextual outreach advisor ───────────────────────────────────────────────
+// Reads ALL deal context (stage, activities, thesis, tasks) and decides what
+// kind of email is appropriate right now, then writes it.
+
+export async function generateContextualOutreach(deal, companyIntel, activities = [], tasks = [], contact, icp = DEFAULT_ICP) {
+  const brandCtx = await getBrandContext();
+
+  const activityHistory = activities.slice(0, 20).map(a =>
+    `[${a.activity_date}] ${a.type}${a.assigned_to ? ` (${a.assigned_to})` : ''}: ${a.summary}`
+  ).join('\n');
+
+  const openTasks = tasks.filter(t => !t.completed).map(t =>
+    `- ${t.title}${t.due_date ? ` (due ${t.due_date})` : ''}`
+  ).join('\n');
+
+  const lastActivity = activities.length > 0 ? activities[0] : null;
+  const daysSinceLastActivity = lastActivity
+    ? Math.floor((Date.now() - new Date(lastActivity.activity_date).getTime()) / 86400000)
+    : null;
+  const daysSinceCreated = Math.floor((Date.now() - new Date(deal.created_at).getTime()) / 86400000);
+  const eng = ENGAGEMENT_META[deal.engagement_type] || ENGAGEMENT_META.Sprint;
+
+  const system = `You are a senior sales strategist at Part Human, a brand strategy agency. Your job is to read a complete deal situation and advise exactly what to do next, then write the right email for this specific moment in the relationship.
+
+${brandCtx}
+
+${buildIcpProfile(icp)}
+
+${EMAIL_RULES}
+
+EMAIL LENGTH AND STRUCTURE (non-negotiable):
+- Cold intros: 4 short paragraphs — trigger (1-2 sentences), pain (1-2 sentences), human truth (1-2 sentences), CTA (1 sentence). Under 120 words.
+- Follow-ups and re-engagements: approximately 6 sentences across 2-3 short paragraphs. Lead with a sharp, specific observation about the prospect's situation — something they can react to. Do NOT just re-extend the calendar link or ask if they saw your last email. Make it feel like you have been paying attention, not just following a cadence.
+- Post-meeting and check-ins: 4-5 sentences. Reference something specific from the meeting or conversation.
+- Every paragraph is 1-2 sentences. If you find yourself writing a third sentence in a paragraph, cut it.
+- White space is the point. Brevity signals confidence. Long emails signal insecurity.
+
+ADDITIONAL RULES:
+- The email must be calibrated to WHERE THIS DEAL IS RIGHT NOW, not a generic template.
+- If there was a discovery call or meeting, reference what was discussed specifically. Do not re-pitch from scratch.
+- If they haven't responded to prior outreach, acknowledge the silence briefly and gracefully. One sentence. Move on.
+- Timing advice should be specific (e.g. "Send today, it's been 3 days since the call" or "Hold until Monday morning").
+- Do NOT add any signature, title, phone number, or contact details at the end of the email. End the body with just the sender's first name on its own line. The sender will add their own signature.
+- Return only valid JSON, no markdown.`;
+
+  const user = `Read this complete deal situation and advise on next steps, then write the right email.
+
+DEAL:
+- Company: ${deal.company_name}
+- Stage: ${deal.stage}
+- Engagement type: ${eng.name} (${eng.price}, ${eng.duration}) — ${eng.hook}
+- Created: ${daysSinceCreated} days ago
+- Days since last activity: ${daysSinceLastActivity !== null ? `${daysSinceLastActivity} days` : 'no activity logged yet'}
+
+CONTACT TO REACH:
+- Name: ${contact.name}
+- Title: ${contact.title || 'unknown role'}
+- Email: ${contact.email || 'not on file'}
+
+COMPANY INTEL (from thesis):
+${companyIntel?.summary ? `Summary: ${companyIntel.summary}` : 'No summary.'}
+${companyIntel?.recommended_angle ? `Best angle: ${companyIntel.recommended_angle}` : ''}
+${companyIntel?.entry_contact?.hook ? `Entry hook for ${companyIntel.entry_contact.name || 'primary contact'}: ${companyIntel.entry_contact.hook}` : ''}
+${companyIntel?.thesis ? `Thesis (excerpt): ${companyIntel.thesis.slice(0, 600)}` : 'No thesis built yet.'}
+
+DEAL NOTES (outreach history, prospect replies, internal context):
+${deal.notes?.trim() || 'None.'}
+
+ACTIVITY HISTORY (most recent first):
+${activityHistory || 'No activities logged — this is a cold deal.'}
+
+OPEN TASKS:
+${openTasks || 'No open tasks.'}
+
+Based on the full picture above:
+1. What is the real situation with this deal right now? (1-2 sentences, honest)
+2. What is the right next action and why? (1-2 sentences, specific)
+3. Timing — when should we send and why? (1 sentence, specific)
+4. Write the email that fits this exact moment. Subject line and body.
+
+Return JSON only:
+{
+  "situation": "honest 1-2 sentence read of where this deal stands",
+  "recommendation": "specific next action and why it's right for this moment",
+  "timing": "when to send and any timing caveats",
+  "emailType": "cold_intro|follow_up|post_meeting|post_proposal|re_engagement|nurture|check_in",
+  "subject": "email subject line",
+  "body": "email body — use \\n for paragraph breaks, no markdown"
+}`;
+
+  const data = await withTimeout(
+    callClaude({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 900,
+      system,
+      messages: [{ role: 'user', content: user }],
+    }),
+    TIMEOUT_MS
+  );
+
+  const text = data.content?.find(b => b.type === 'text')?.text || '';
+  const cleaned = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
+  const s = cleaned.indexOf('{');
+  const e = cleaned.lastIndexOf('}');
+  if (s === -1 || e === -1) throw new Error('No JSON found in contextual outreach response');
+  const result = JSON.parse(cleaned.slice(s, e + 1));
+
+  // Strip em-dash (U+2014) and en-dash (U+2013) — Claude sometimes outputs either
+  const stripDashes = str => str.replace(/[—–]/g, ',');
+  ['body', 'subject', 'situation', 'recommendation', 'timing'].forEach(k => {
+    if (result[k]) result[k] = stripDashes(result[k]);
+  });
+
+  // Append ICP email signature if one is set in settings
+  if (icp.emailSignature?.trim() && result.body) {
+    result.body = result.body.trimEnd() + '\n\n' + icp.emailSignature.trim();
+  }
+
+  return result;
+}
+
 // ── Response analysis ─────────────────────────────────────────────────────────
 
 export async function analyzeResponse(company, contact, touchNumber, responseText) {
@@ -797,9 +1314,241 @@ export async function analyzeResponse(company, contact, touchNumber, responseTex
   const cleaned = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
   try {
     const result = JSON.parse(cleaned);
-    if (result.suggestedReply) result.suggestedReply = result.suggestedReply.replace(/—/g, ',');
+    if (result.suggestedReply) result.suggestedReply = result.suggestedReply.replace(/[—–]/g, ',');
     return result;
   } catch {
     return { error: 'Could not parse AI response', raw: cleaned };
   }
+}
+
+// ── New trigger scan — what's changed since last outreach ─────────────────────
+// Scans company news AND each known contact's LinkedIn for recent posts/activity.
+// Returns { newTriggers: [{headline, detail, urgency, date, source}], found: bool }
+
+export async function scanForNewTriggers(company, daysSinceLastTouch = 14) {
+  const scanWindow = Math.max(7, Math.min(daysSinceLastTouch, 60));
+  const contacts   = (company.contacts || []).filter(c => c.name);
+
+  // Build contact-specific search instructions
+  const linkedInContacts = contacts.filter(c => c.linkedin);
+  const nameOnlyContacts = contacts.filter(c => !c.linkedin && c.name);
+
+  const linkedInClause = linkedInContacts.length
+    ? `\n\nLINKEDIN PROFILES TO CHECK (search each URL for recent posts):
+${linkedInContacts.map(c => `- ${c.name}${c.title ? ` (${c.title})` : ''}: ${c.linkedin}`).join('\n')}`
+    : '';
+
+  const nameSearchClause = nameOnlyContacts.length
+    ? `\n\nALSO SEARCH LINKEDIN/TWITTER for recent posts by these contacts at ${company.name}:
+${nameOnlyContacts.map(c => `- "${c.name}"${c.title ? ` (${c.title})` : ''}`).join('\n')}`
+    : '';
+
+  const contactSection = linkedInClause || nameSearchClause
+    ? `${linkedInClause}${nameSearchClause}
+
+For contact posts look for: job changes, promotions, strategic announcements, pain points, company milestones they mention, or anything signaling brand/growth challenges or momentum.`
+    : '';
+
+  try {
+    const data = await withTimeout(
+      callClaude({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 1200,
+        system: 'You are a sales intelligence researcher. Search thoroughly but report ONLY events from the specified time window. For each trigger include whether it came from company news or a specific contact\'s LinkedIn. Return valid JSON only, no markdown.',
+        tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 3 }],
+        messages: [{
+          role: 'user',
+          content: `Search for new intelligence about ${company.name}${company.website ? ` (${company.website})` : ''} from the last ${scanWindow} days ONLY.
+
+COMPANY NEWS TO LOOK FOR:
+- Funding rounds, valuations, investor news
+- Leadership changes (new CMO, CEO, brand hires)
+- Product launches or major announcements
+- Regulatory approvals or milestones
+- Expansions, partnerships, acquisitions
+- Brand or marketing campaign launches
+- Layoffs, restructuring, or challenges${contactSection}
+
+Do NOT report anything older than ${scanWindow} days. Each trigger must have a specific date or "recent" if date unclear.
+
+Return JSON only:
+{
+  "found": true|false,
+  "newTriggers": [
+    {
+      "headline": "max 10 words",
+      "detail": "max 25 words describing what happened",
+      "urgency": "high|medium|low",
+      "date": "e.g. May 20, 2026 or 'this week'",
+      "source": "company|contact",
+      "contactName": "name if from a contact post, else null"
+    }
+  ]
+}
+
+If nothing found in the last ${scanWindow} days: {"found": false, "newTriggers": []}`,
+        }],
+      }),
+      60000
+    );
+
+    const textBlocks = (data.content || []).filter(b => b.type === 'text');
+    for (let i = textBlocks.length - 1; i >= 0; i--) {
+      const raw = textBlocks[i]?.text || '';
+      const stripped = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
+      const s = stripped.indexOf('{');
+      const e = stripped.lastIndexOf('}');
+      if (s !== -1 && e !== -1) {
+        try { return JSON.parse(stripped.slice(s, e + 1)); } catch {}
+      }
+    }
+  } catch (err) {
+    console.warn(`scanForNewTriggers failed for ${company.name}:`, err.message);
+  }
+  return { found: false, newTriggers: [] };
+}
+
+export async function generateProjectSummary(proposalText) {
+  const trimmed = proposalText.slice(0, 12000);
+
+  const data = await withTimeout(
+    callClaude({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 350,
+      messages: [{
+        role: 'user',
+        content: `Based on the following project proposal, write a concise 3–4 sentence summary capturing: what the project is, the key deliverables, the overall scope and goal, and any notable approach. Plain prose only — no bullet points, no headers.\n\nProposal:\n${trimmed}`,
+      }],
+    }),
+    30000
+  );
+
+  const text = (data.content || []).find(b => b.type === 'text')?.text || '';
+  return text.trim();
+}
+
+export async function generateQuickNextStep(companyName, noteText, dealNotes = '') {
+  const context = [
+    noteText?.trim() ? `LATEST NOTE:\n${noteText.trim()}` : '',
+    dealNotes?.trim() && dealNotes.trim() !== noteText?.trim() ? `PRIOR CONTEXT:\n${dealNotes.trim()}` : '',
+  ].filter(Boolean).join('\n\n');
+
+  const data = await withTimeout(
+    callClaude({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 120,
+      messages: [{
+        role: 'user',
+        content: `You are a B2B sales advisor. Based on the context below for ${companyName}, write a single concrete next action for the sales rep — 1–2 sentences, specific and actionable, starting with a verb (e.g. "Send a follow-up email...", "Schedule a discovery call...", "Share the proposal..."). No preamble, no sign-off.\n\n${context}`,
+      }],
+    }),
+    15000
+  );
+  const text = (data.content || []).find(b => b.type === 'text')?.text || '';
+  return text.trim();
+}
+
+// ── Document generation ───────────────────────────────────────────────────────
+
+// PH_VOICE is kept as a lightweight fallback; the real brand brain is loaded fresh from settings at generation time.
+
+export async function generateDocumentSections(type, dealContext) {
+  const typeInstructions = {
+    proposal: {
+      label: 'Proposal',
+      instructions: `Generate a Proposal document. Return a JSON object with these exact keys:
+- "understanding": 2–3 paragraphs. Start with the client's specific situation. Show you understand what's at stake. Use emotional and logical framing. Do NOT use a header in the text — just write the paragraphs.
+- "strategic_approach": 1–2 paragraphs about Part Human's specific approach for this engagement. What methodology, what principles, why it fits this client.
+- "objectives": array of 6–9 strings (bullet points). Start each with a verb. Specific to this client, not generic.
+- "outcomes": array of 4–6 strings (bullet points). What will the client have at the end. Concrete and tangible.
+- "phases": array of phase objects — each has "title" (e.g. "Sprint 1: Brand Strategy"), "duration" (e.g. "Weeks 1–2"), "deliverables" (array of strings). Generate 2–3 phases appropriate for the scope.
+- "investment": 1–2 sentences framing the investment — not the price itself, but the value and the engagement type.
+- "next_steps": 1–2 sentences. Clear, specific, action-oriented.`,
+    },
+    goo: {
+      label: 'Goals & Objectives',
+      instructions: `Generate a Goals, Objectives & Outcomes document. This is a "napkin note" — tight, direct, written in a first-person plural voice that shows you listened and have a clear POV. NOT a formal proposal. Return a JSON object with these exact keys:
+- "what_we_heard": 2–3 paragraphs. Narrate back what you understand about their situation — with insight added. Show you see things they may not have named yet. Direct, slightly provocative.
+- "the_goal": SINGLE sentence. The clearest possible statement of what we're trying to accomplish together. Should make the client think "yes, exactly."
+- "objectives": array of 4–6 objects — each has "title" (short, punchy, starts with a verb) and "description" (1–2 sentences of context).
+- "outcomes": array of 4–6 strings. What they'll have when this phase is done. Concrete.
+- "what_this_is_not": 2–4 sentences. Clear scope guardrails. What you're explicitly NOT doing yet.
+- "next_step": 1 sentence. Singular, concrete next action.`,
+    },
+    sow: {
+      label: 'Statement of Work',
+      instructions: `Generate a Statement of Work document. This is professional and specific — it defines the work, not the strategy. Return a JSON object with these exact keys:
+- "goals": 1–2 paragraphs about the project goals and what this SOW accomplishes.
+- "approach": 1 paragraph about the overall approach/methodology for this engagement.
+- "deliverables": array of category objects — each has "category" (section title like "Brand Strategy", "Website Design", "Launch") and "items" (array of specific deliverable strings). Generate 3–6 categories appropriate for the scope.
+- "timeline": 1 sentence about overall estimated duration.
+- "start_date": 1 sentence about when work begins.
+- "payment_schedule": 1–2 sentences about payment structure (e.g. "Split into two equal payments of 50%. First payment to commence work, second upon project completion.").`,
+    },
+  };
+
+  const inst = typeInstructions[type];
+  if (!inst) throw new Error(`No AI generation for document type: ${type}`);
+
+  // Load the live brand brain from Settings so the document sounds like Part Human
+  const brandContext = await getBrandContext();
+
+  const system = `You are Pete Andrews, Managing Partner at Part Human, writing a ${inst.label} for a specific client.
+
+${brandContext}
+
+DOCUMENT INSTRUCTIONS — ${inst.label.toUpperCase()}:
+${inst.instructions}
+
+VOICE REMINDERS FOR THIS DOCUMENT:
+- Write in first-person plural ("we", "our approach", "what we heard") — never "I"
+- Every sentence should sound like it could only be about THIS client — no generic placeholders
+- Short sentences. No throat-clearing. No hedging.
+- Never use em dashes (—). Use commas or a new sentence instead.
+- Never: "solutions," "deliverables," "leverage," "synergy," "full-service," "best-in-class," "holistic," "utilize"
+- Challenge assumptions where you can — don't just validate what they already believe
+- Connect brand work to specific business outcomes this client cares about
+
+CRITICAL: Return ONLY valid JSON — no markdown fences, no explanation, no preamble. Just the raw JSON object.`;
+
+  const data = await withTimeout(
+    callClaude({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 4000,
+      system,
+      messages: [{
+        role: 'user',
+        content: `Generate the ${inst.label} document sections based on this deal context:\n\n${dealContext}`,
+      }],
+    }),
+    60000
+  );
+
+  const raw = (data.content || []).find(b => b.type === 'text')?.text || '';
+  // Strip markdown fences, then try to extract the first { ... } block
+  const stripped = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+  // Attempt direct parse first
+  try { return JSON.parse(stripped); } catch (_) {}
+  // Fall back to extracting first JSON object from the response
+  const match = stripped.match(/\{[\s\S]*\}/);
+  if (match) {
+    try { return JSON.parse(match[0]); } catch (_) {}
+  }
+  throw new Error(`Document generation returned invalid JSON: ${stripped.slice(0, 200)}`);
+}
+
+export async function generateRejectionResponse(taskTitle, projectName, rejectionNotes) {
+  const data = await withTimeout(
+    callClaude({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 150,
+      messages: [{
+        role: 'user',
+        content: `You are a project manager sending a client an update that their revision is ready. The task was "${taskTitle}" and the client's feedback was:\n\n"${rejectionNotes}"\n\nWrite 1–2 sentences confirming the specific issue has been addressed — e.g. "We've adjusted the [specific thing] per your feedback." Past tense. Specific. No greeting, no sign-off, no "please review" — just what was done. Keep it under 30 words.`,
+      }],
+    }),
+    20000
+  );
+  const text = (data.content || []).find(b => b.type === 'text')?.text || '';
+  return text.trim();
 }

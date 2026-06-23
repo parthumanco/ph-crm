@@ -1,15 +1,15 @@
 import { useState, useEffect, useCallback, Fragment } from 'react';
 import { supabase } from '../lib/supabase';
 import EmailDraftModal from '../components/EmailDraftModal';
-import { ENGAGEMENT_META, ENGAGEMENT_OPTIONS } from '../lib/anthropic';
-import { upsertDeal } from '../lib/deals';
+import { ENGAGEMENT_META, ENGAGEMENT_OPTIONS, generateQuickNextStep } from '../lib/anthropic';
+import { upsertDeal, addActivity, addTask } from '../lib/deals';
 
 const STATUS_LABELS = {
-  active:    { label: 'Active',     cls: 'badge-blue'  },
-  responded: { label: 'Responded',  cls: 'badge-green' },
-  paused:    { label: 'Paused',     cls: 'badge-gray'  },
-  won:       { label: 'Won',        cls: 'badge-green' },
-  lost:      { label: 'Lost',       cls: 'badge-red'   },
+  active:     { label: 'Active',     cls: 'badge-blue'  },
+  responded:  { label: 'Responded',  cls: 'badge-green' },
+  paused:     { label: 'Paused',     cls: 'badge-gray'  },
+  won:        { label: 'Won',        cls: 'badge-green' },
+  lost:       { label: 'Lost',       cls: 'badge-red'   },
 };
 
 const TOUCH_LABELS = {
@@ -34,7 +34,22 @@ function nextTouchDue(entryTouches) {
   return `In ${7 - days}d`;
 }
 
-export default function PipelinePage({ icp = {} }) {
+// Precomputed bill rain positions (outside component to stay stable)
+const RAIN_BILLS = [
+  { left:'4%',  delay:'0.00s', dur:'1.55s' }, { left:'11%', delay:'0.18s', dur:'1.90s' },
+  { left:'18%', delay:'0.45s', dur:'1.40s' }, { left:'25%', delay:'0.08s', dur:'2.00s' },
+  { left:'32%', delay:'0.35s', dur:'1.70s' }, { left:'39%', delay:'0.22s', dur:'1.50s' },
+  { left:'46%', delay:'0.60s', dur:'1.80s' }, { left:'53%', delay:'0.05s', dur:'1.30s' },
+  { left:'60%', delay:'0.50s', dur:'2.10s' }, { left:'67%', delay:'0.15s', dur:'1.65s' },
+  { left:'74%', delay:'0.40s', dur:'1.45s' }, { left:'81%', delay:'0.28s', dur:'1.85s' },
+  { left:'88%', delay:'0.55s', dur:'1.60s' }, { left:'95%', delay:'0.10s', dur:'1.95s' },
+  { left:'8%',  delay:'1.00s', dur:'1.55s' }, { left:'21%', delay:'0.90s', dur:'1.80s' },
+  { left:'35%', delay:'1.10s', dur:'1.50s' }, { left:'49%', delay:'0.80s', dur:'1.70s' },
+  { left:'63%', delay:'1.20s', dur:'1.60s' }, { left:'77%', delay:'0.95s', dur:'2.00s' },
+  { left:'91%', delay:'0.85s', dur:'1.40s' }, { left:'15%', delay:'1.30s', dur:'1.75s' },
+];
+
+export default function PipelinePage({ icp = {}, refreshKey = 0, onNavigate }) {
   const [entries, setEntries]     = useState([]);
   const [companies, setCompanies] = useState({});
   const [touches, setTouches]     = useState([]);
@@ -48,13 +63,14 @@ export default function PipelinePage({ icp = {} }) {
   const [notesEntry, setNotesEntry] = useState(null);
   const [contextMenu, setContextMenu] = useState(null);
   const [creatingDeal, setCreatingDeal] = useState({});
+  const [rainAnim, setRainAnim]         = useState(null); // null | { company, phase:'grip'|'rain' }
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       // Load entries and touches first
       const [{ data: ents, error: e1 }, { data: tchs, error: e2 }] = await Promise.all([
-        supabase.from('pipeline_entries').select('*').order('created_at', { ascending: false }),
+        supabase.from('pipeline_entries').select('*').neq('status', 'won').neq('status', 'watch_list').order('created_at', { ascending: false }),
         supabase.from('touches').select('*'),
       ]);
       if (e1 || e2) console.error('Pipeline load error:', e1 || e2);
@@ -77,14 +93,19 @@ export default function PipelinePage({ icp = {} }) {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [refreshKey]);
 
   useEffect(() => { load(); }, [load]);
 
   const updateStatus = useCallback(async (entryId, status) => {
     await supabase.from('pipeline_entries').update({ status, updated_at: new Date().toISOString() }).eq('id', entryId);
     setEntries(es => es.map(e => e.id === entryId ? { ...e, status } : e));
-  }, []);
+    if (status !== 'active') {
+      const entry   = entries.find(e => e.id === entryId);
+      const company = entry ? companies[entry.company_id] : null;
+      if (entry && company) handleCreateDeal(entry, company);
+    }
+  }, [entries, companies]);
 
   const updateEngagement = useCallback(async (companyId, engType) => {
     setCompanies(prev => ({ ...prev, [companyId]: { ...prev[companyId], engagement_type: engType } }));
@@ -162,20 +183,77 @@ export default function PipelinePage({ icp = {} }) {
     return last ? daysSince(last.sent_date) >= 7 : true;
   }).length;
 
-  const handleCreateDeal = async (entry, company) => {
+  const handleCreateDeal = async (entry, company, freshNotes = null) => {
     const key = entry.id;
     if (creatingDeal[key]) return;
+    // Guard: company must be resolved — look it up from state if not passed correctly
+    const resolvedCompany = (company?.id ? company : companies[entry.company_id]) || company || {};
+    if (!resolvedCompany.name) { alert('Could not resolve company — please try again.'); return; }
     setCreatingDeal(p => ({ ...p, [key]: true }));
     try {
-      const primaryContact = (company.contacts || [])[0] || {};
-      await upsertDeal({
-        company_id:   company.id,
-        company_name: company.name,
-        contact_name: primaryContact.name || '',
+      const primaryContact = (resolvedCompany.contacts || [])[0] || {};
+      // Build deal notes — freshNotes takes priority over stale entry.notes
+      const noteParts = [];
+      const noteText = freshNotes ?? entry.notes;
+      if (noteText?.trim())           noteParts.push(`Outreach notes:\n${noteText.trim()}`);
+      if (entry.last_reply?.trim())   noteParts.push(`Prospect reply:\n${entry.last_reply.trim()}`);
+
+      const deal = await upsertDeal({
+        company_id:    resolvedCompany.id,
+        company_name:  resolvedCompany.name,
+        contact_name:  primaryContact.name  || '',
         contact_email: primaryContact.email || '',
-        stage: 'outreach',
+        stage:         'outreach',
+        notes:         noteParts.length ? noteParts.join('\n\n') : null,
       });
-      alert(`Deal created for ${company.name} — open Deals to continue.`);
+
+      // Log note as activity so it appears in the deal's activity log
+      if (noteText?.trim() && deal?.id) {
+        await addActivity({
+          deal_id:       deal.id,
+          company_id:    resolvedCompany.id,
+          type:          'note',
+          summary:       noteText.trim(),
+          activity_date: new Date().toISOString().slice(0, 10),
+          assigned_to:   'Mike',
+        });
+      }
+      // Kick off AI next step early (concurrent with animation) so it lands before the card opens
+      const nextStepPromise = (resolvedCompany.id && noteText?.trim())
+        ? generateQuickNextStep(resolvedCompany.name, noteText, deal.notes)
+            .then(async nextStep => {
+              if (!nextStep) return;
+              console.log('[nextStep] generated:', nextStep);
+              // Save to company record so AI RECOMMENDED box shows it
+              await supabase.from('companies')
+                .update({ thesis_next_step: nextStep, updated_at: new Date().toISOString() })
+                .eq('id', resolvedCompany.id);
+              // Also create a real task in MY NEXT STEPS on the deal card
+              if (deal?.id) {
+                await addTask({
+                  deal_id:       deal.id,
+                  company_id:    resolvedCompany.id,
+                  title:         nextStep,
+                  due_date:      null,
+                  assigned_to:   'Mike',
+                });
+              }
+            })
+            .catch(e => console.error('generateQuickNextStep failed:', e.message))
+        : Promise.resolve();
+
+      // Mark entry as won in DB and remove from list immediately
+      await supabase.from('pipeline_entries').update({ status: 'won', updated_at: new Date().toISOString() }).eq('id', entry.id);
+      setEntries(es => es.filter(e => e.id !== entry.id));
+      // Phase 1: character grabs bills
+      setRainAnim({ company: resolvedCompany.name, phase: 'grip' });
+      // Phase 2: throw + rain
+      setTimeout(() => setRainAnim(r => r ? { ...r, phase: 'rain' } : r), 700);
+      // Wait for AI next step to land (or 3s max) before navigating so card sees it on load
+      Promise.race([nextStepPromise, new Promise(r => setTimeout(r, 3000))])
+        .finally(() => {
+          setTimeout(() => { setRainAnim(null); onNavigate?.('deals'); }, 100);
+        });
     } catch (e) {
       alert('Error creating deal: ' + e.message);
     } finally {
@@ -209,7 +287,7 @@ export default function PipelinePage({ icp = {} }) {
         </div>
 
         <div className="filter-bar">
-          {['all','active','responded','paused','won','lost'].map(f => (
+          {['all','active','responded','paused','lost'].map(f => (
             <button key={f} className={`filter-btn${filter === f ? ' active' : ''}`} onClick={() => setFilter(f)}>
               {f === 'all' ? 'All' : STATUS_LABELS[f]?.label || f}
               {f === 'all' && ` (${entries.length})`}
@@ -238,7 +316,6 @@ export default function PipelinePage({ icp = {} }) {
               <table>
                 <thead>
                   <tr>
-                    <th style={{ width: 28 }}></th>
                     <th>Company</th>
                     <th>ICP</th>
                     <th>Touches (primary contact)</th>
@@ -277,16 +354,10 @@ export default function PipelinePage({ icp = {} }) {
 
                     return (
                       <Fragment key={entry.id}>
-                      <tr>
-                        <td style={{ verticalAlign: 'top', paddingTop: 14 }}>
-                          <button
-                            onClick={() => setExpandedRows(r => ({ ...r, [entry.id]: !r[entry.id] }))}
-                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 12, padding: 0, lineHeight: 1 }}
-                            title={isExpanded ? 'Collapse' : 'Expand'}
-                          >
-                            {isExpanded ? '▾' : '▸'}
-                          </button>
-                        </td>
+                      <tr
+                        onClick={e => { if (e.target.tagName !== 'SELECT' && e.target.tagName !== 'BUTTON' && e.target.tagName !== 'A' && e.target.tagName !== 'INPUT') setExpandedRows(r => ({ ...r, [entry.id]: !r[entry.id] })); }}
+                        style={{ cursor: 'pointer' }}
+                      >
                         <td>
                           <div>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
@@ -327,6 +398,14 @@ export default function PipelinePage({ icp = {} }) {
                               </span>
                             )}
                             {company.icp_tier && <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>{company.icp_tier}</span>}
+                            {company.deep_scanned && (
+                              <span
+                                title={company.scan_date ? `Deep scanned ${new Date(company.scan_date).toLocaleDateString()}` : 'Deep scanned'}
+                                style={{ fontSize: 9, fontWeight: 700, padding: '2px 7px', borderRadius: 10, background: '#dcfce7', color: '#15803d', border: '1px solid #86efac', whiteSpace: 'nowrap', alignSelf: 'flex-start' }}
+                              >
+                                ✓ Scanned
+                              </span>
+                            )}
                           </div>
                         </td>
                         <td>
@@ -371,29 +450,28 @@ export default function PipelinePage({ icp = {} }) {
                             ))}
                           </select>
                         </td>
-                        <td>
+                        <td style={{ whiteSpace: 'nowrap' }}>
                           <span style={{ fontSize: 12, color: isDue ? 'var(--red)' : 'var(--text-muted)', fontWeight: isDue ? 700 : 400 }}>
                             {entry.status !== 'active' ? '—' : due}
                           </span>
                         </td>
-                        <td>
-                          <div style={{ display: 'flex', gap: 4 }}>
-                            <button className="btn btn-secondary btn-xs" onClick={() => setResponseModal({ entry, company })}>Log Reply</button>
-                            <button className="btn btn-ghost btn-xs" onClick={() => setNotesEntry(entry)}>Notes</button>
+                        <td style={{ whiteSpace: 'nowrap' }}>
+                          <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'nowrap' }}>
+                            <button className="btn btn-secondary btn-xs" style={{ borderRadius: 20, whiteSpace: 'nowrap', padding: '4px 12px' }} onClick={() => setResponseModal({ entry, company })}>+ Reply</button>
+                            <button className="btn btn-secondary btn-xs" style={{ borderRadius: 20, whiteSpace: 'nowrap', padding: '4px 12px' }} onClick={() => setNotesEntry(entry)}>+ Note</button>
                             <button
-                              className="btn btn-ghost btn-xs"
+                              className="btn btn-primary btn-xs"
+                              style={{ borderRadius: 20, whiteSpace: 'nowrap', padding: '4px 12px' }}
                               onClick={() => handleCreateDeal(entry, company)}
                               disabled={!!creatingDeal[entry.id]}
-                              title="Create a deal in the Deals pipeline for this company"
                             >
-                              {creatingDeal[entry.id] ? '…' : '$ Deal'}
+                              {creatingDeal[entry.id] ? '…' : 'Move to Pipeline'}
                             </button>
                           </div>
                         </td>
                       </tr>
                       {isExpanded && (
                         <tr key={`${entry.id}-expanded`} style={{ background: 'var(--surface)' }}>
-                          <td />
                           <td colSpan={6} style={{ padding: '12px 16px 16px', borderTop: '1px solid var(--border)' }}>
                             <div style={{ display: 'grid', gridTemplateColumns: '3fr 2fr', gap: 24 }}>
                               {/* Left: per-contact touch grid */}
@@ -419,6 +497,16 @@ export default function PipelinePage({ icp = {} }) {
                               </div>
                               {/* Right: scan intel */}
                               <div>
+                                <div style={{ marginBottom: 12 }}>
+                                  <span
+                                    title={company.scan_date ? `Deep scanned ${new Date(company.scan_date).toLocaleDateString()}` : 'Not yet deep scanned'}
+                                    style={company.deep_scanned
+                                      ? { fontSize: 10, fontWeight: 700, padding: '3px 10px', borderRadius: 20, background: '#dcfce7', color: '#15803d', border: '1px solid #86efac' }
+                                      : { fontSize: 10, fontWeight: 600, padding: '3px 10px', borderRadius: 20, background: 'var(--surface)', color: 'var(--text-faint)', border: '1px solid var(--border)' }}
+                                  >
+                                    {company.deep_scanned ? '✓ Deep Scanned' : 'Not Deep Scanned'}
+                                  </span>
+                                </div>
                                 {company.recommended_angle && (
                                   <div style={{ marginBottom: 12 }}>
                                     <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 4 }}>Recommended Angle</div>
@@ -451,6 +539,19 @@ export default function PipelinePage({ icp = {} }) {
                                 )}
                               </div>
                             </div>
+                            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 12 }}>
+                              <button
+                                className="btn btn-secondary btn-xs"
+                                style={{ borderRadius: 20, padding: '3px 12px', fontSize: 11, color: 'var(--text-muted)' }}
+                                title="Return to Watch List — all touch history is preserved"
+                                onClick={async () => {
+                                  if (!window.confirm(`Return ${company?.name || 'this company'} to Watch List? All touch history will be preserved.`)) return;
+                                  const { error } = await supabase.from('pipeline_entries').update({ status: 'watch_list', updated_at: new Date().toISOString() }).eq('id', entry.id);
+                                  if (error) { alert('DB error: ' + error.message); return; }
+                                  setEntries(es => es.filter(e => e.id !== entry.id));
+                                }}
+                              >← Watch List</button>
+                            </div>
                           </td>
                         </tr>
                       )}
@@ -477,7 +578,12 @@ export default function PipelinePage({ icp = {} }) {
         <ResponseModal
           {...responseModal}
           onClose={() => setResponseModal(null)}
-          onSave={() => { load(); setResponseModal(null); }}
+          onSave={() => {
+            load();
+            const { entry, company } = responseModal;
+            setResponseModal(null);
+            handleCreateDeal(entry, company);
+          }}
         />
       )}
 
@@ -486,7 +592,13 @@ export default function PipelinePage({ icp = {} }) {
           entry={notesEntry}
           company={companies[notesEntry.company_id] || {}}
           onClose={() => setNotesEntry(null)}
-          onSave={() => { load(); setNotesEntry(null); }}
+          onSave={(freshNotes) => {
+            const entry   = notesEntry;
+            const company = companies[notesEntry.company_id] || {};
+            load();
+            setNotesEntry(null);
+            handleCreateDeal(entry, company, freshNotes);
+          }}
         />
       )}
 
@@ -507,6 +619,113 @@ export default function PipelinePage({ icp = {} }) {
             </button>
           </div>
         </>
+      )}
+
+      {/* ── Make It Rain overlay ─────────────────────────────────────────── */}
+      {rainAnim && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 700,
+          background: 'rgba(2, 10, 30, 0.80)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          animation: 'win-overlay-in 0.2s ease-out',
+          pointerEvents: 'none',
+          overflow: 'hidden',
+        }}>
+          {/* Raining bills — only during rain phase */}
+          {rainAnim.phase === 'rain' && RAIN_BILLS.map((b, i) => (
+            <div key={i} style={{
+              position: 'absolute', left: b.left, top: -40,
+              fontSize: 22, zIndex: 1, pointerEvents: 'none',
+              animation: `bill-rain ${b.dur} ease-in ${b.delay} forwards`,
+            }}>💵</div>
+          ))}
+
+          <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', zIndex: 2 }}>
+
+            {/* Pixel-art character — both arms raised, holding bills */}
+            <div className={rainAnim.phase === 'rain' ? 'char-celebrate' : 'char-grip'} style={{ position: 'relative' }}>
+              <svg width="80" height="110" viewBox="0 0 80 110" style={{ imageRendering: 'pixelated', display: 'block', overflow: 'visible' }}>
+                {/* Hair */}
+                <rect x="16" y="4"  width="48" height="8"  rx="2" fill="#1c1917" />
+                {/* Head */}
+                <rect x="16" y="8"  width="48" height="32" rx="4" fill="#f5c8a0" />
+                {/* Eyes */}
+                <rect x="24" y="18" width="10" height="10" rx="1" fill="#fff" />
+                <rect x="46" y="18" width="10" height="10" rx="1" fill="#fff" />
+                <rect x="27" y="20" width="5"  height="6"  rx="1" fill="#1d4ed8" />
+                <rect x="49" y="20" width="5"  height="6"  rx="1" fill="#1d4ed8" />
+                <rect x="28" y="21" width="2"  height="2"  fill="#000" />
+                <rect x="50" y="21" width="2"  height="2"  fill="#000" />
+                {/* Smile */}
+                <rect x="28" y="32" width="24" height="4" rx="2" fill="#e07060" />
+                <rect x="30" y="33" width="20" height="2" rx="1" fill="#fff" />
+                {/* Body — sharp suit */}
+                <rect x="18" y="40" width="44" height="36" rx="2" fill="#1e3a5f" />
+                <rect x="18" y="40" width="44" height="8"  rx="1" fill="#254d7f" />
+                {/* Lapels */}
+                <polygon points="40,42 30,56 36,56" fill="#e8d5b0" />
+                <polygon points="40,42 50,56 44,56" fill="#e8d5b0" />
+                {/* Tie */}
+                <rect x="37" y="48" width="6" height="20" rx="1" fill="#dc2626" />
+                <polygon points="37,68 43,68 40,76" fill="#b91c1c" />
+                {/* Belt */}
+                <rect x="18" y="72" width="44" height="7" fill="#1c1917" />
+                <rect x="34" y="73" width="12" height="5" rx="1" fill="#78350f" />
+                <rect x="37" y="74" width="6"  height="3" rx="0" fill="#fbbf24" />
+                {/* Legs */}
+                <rect x="20" y="79" width="18" height="22" rx="2" fill="#1e3a5f" />
+                <rect x="42" y="79" width="18" height="22" rx="2" fill="#1e3a5f" />
+                {/* Shoes */}
+                <rect x="16" y="95" width="26" height="8" rx="3" fill="#0c0a09" />
+                <rect x="38" y="95" width="26" height="8" rx="3" fill="#0c0a09" />
+                {/* Left arm — raised high (grip phase: lower; rain phase: up) */}
+                <rect x="0"  y="26" width="18" height="24" rx="4" fill="#f5c8a0" />
+                <rect x="0"  y="24" width="18" height="10" rx="3" fill="#1e3a5f" />
+                {/* Right arm — raised high */}
+                <rect x="62" y="26" width="18" height="24" rx="4" fill="#f5c8a0" />
+                <rect x="62" y="24" width="18" height="10" rx="3" fill="#1e3a5f" />
+                {/* Wad of bills in left hand */}
+                <rect x="-4" y="14" width="20" height="12" rx="1" fill="#059669" />
+                <rect x="-2" y="12" width="20" height="12" rx="1" fill="#10b981" />
+                <rect x="0"  y="10" width="20" height="12" rx="1" fill="#34d399" />
+                <rect x="3"  y="13" width="5"  height="5"  rx="0" fill="#065f46" />
+                <text x="5" y="19" fontFamily="monospace" fontSize="7" fontWeight="900" fill="#fff">$</text>
+                {/* Wad of bills in right hand */}
+                <rect x="64" y="14" width="20" height="12" rx="1" fill="#059669" />
+                <rect x="62" y="12" width="20" height="12" rx="1" fill="#10b981" />
+                <rect x="60" y="10" width="20" height="12" rx="1" fill="#34d399" />
+                <rect x="67" y="13" width="5"  height="5"  rx="0" fill="#065f46" />
+                <text x="69" y="19" fontFamily="monospace" fontSize="7" fontWeight="900" fill="#fff">$</text>
+              </svg>
+            </div>
+
+            {/* Ground line */}
+            <div style={{ width: 180, height: 5, marginTop: 4, background: 'linear-gradient(90deg, transparent, #10b981 20%, #fbbf24 50%, #10b981 80%, transparent)', borderRadius: 3 }} />
+
+            {/* DEAL CREATED popup — rain phase only */}
+            {rainAnim.phase === 'rain' && (
+              <div className="win-popup-anim" style={{
+                marginTop: 18,
+                background: '#020d1f',
+                border: '3px solid #fbbf24',
+                borderRadius: 3,
+                padding: '14px 28px 16px',
+                textAlign: 'center',
+                boxShadow: '4px 4px 0 #78350f, 0 0 32px rgba(251,191,36,0.5), inset 0 0 0 1px #1e3a5f',
+              }}>
+                <div style={{ fontFamily: '"Press Start 2P", "Courier New", monospace', fontSize: 14, color: '#fde68a', textShadow: '0 0 14px rgba(251,191,36,0.9), 2px 2px 0 #78350f', letterSpacing: '0.04em', lineHeight: 1.7 }}>
+                  IT'S RAINING!
+                </div>
+                <div style={{ fontFamily: '"Press Start 2P", "Courier New", monospace', fontSize: 9, color: '#86efac', marginTop: 8, textShadow: '0 0 8px rgba(16,185,129,0.7)' }}>
+                  {rainAnim.company}
+                </div>
+                <div style={{ fontFamily: '"Press Start 2P", "Courier New", monospace', fontSize: 6, color: '#4b5563', marginTop: 8, letterSpacing: '0.06em' }}>
+                  DEAL CREATED → HEADING TO DEALS
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
       )}
     </>
   );
@@ -687,7 +906,11 @@ function ResponseModal({ entry, company, onClose, onSave }) {
 
   const save = async () => {
     try {
-      const { error } = await supabase.from('pipeline_entries').update({ status: 'responded', updated_at: new Date().toISOString() }).eq('id', entry.id);
+      const { error } = await supabase.from('pipeline_entries').update({
+        status: 'responded',
+        last_reply: responseText.trim() || null,
+        updated_at: new Date().toISOString(),
+      }).eq('id', entry.id);
       if (error) throw new Error(error.message);
       onSave();
     } catch (e) {
@@ -770,7 +993,7 @@ function NotesModal({ entry, company, onClose, onSave }) {
     try {
       const { error } = await supabase.from('pipeline_entries').update({ notes, updated_at: new Date().toISOString() }).eq('id', entry.id);
       if (error) throw new Error(error.message);
-      onSave();
+      onSave(notes);
     } catch (e) {
       alert('Error saving notes: ' + e.message);
     } finally {

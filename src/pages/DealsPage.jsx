@@ -1,11 +1,14 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import {
-  fetchDeals, moveStage,
+  fetchDeals, upsertDeal, moveStage,
   ACTIVE_STAGES, CLOSED_STAGES,
   stageColor, stageLabel, dealValue, fmt$, daysSince,
 } from '../lib/deals';
-import { upsertProject } from '../lib/projects';
+import { upsertProject, buildTimelineFromParsed, bulkInsertMilestones, bulkInsertTasks, migrateDealMeetingsToProject, migrateDealTasksToProject, migrateDealFilesToProject } from '../lib/projects';
+import { upsertClientContacts } from '../lib/clients';
 import DealDetailModal from '../components/DealDetailModal';
+import ProposalImporter from '../components/ProposalImporter';
+import TranscriptImporter from '../components/TranscriptImporter';
 
 const OWNER_COLORS = {
   Mike: { bg: '#f3e8ff', color: '#7c3aed' },
@@ -121,7 +124,7 @@ function KanbanColumn({ stage, deals, onCardClick, onDrop, isDragOver, onDragOve
   );
 }
 
-export default function DealsPage() {
+export default function DealsPage({ refreshKey = 0, targetDealId = null, onTargetDealConsumed }) {
   const [deals, setDeals]           = useState([]);
   const [loading, setLoading]       = useState(true);
   const [selectedDeal, setSelectedDeal] = useState(null);
@@ -134,6 +137,10 @@ export default function DealsPage() {
   const [wonAnim,  setWonAnim]        = useState(null); // null | {dealId, phase:'plant'|'celebrate'}
   const [showLostPanel, setShowLostPanel] = useState(false);
   const [wonToast, setWonToast]         = useState(null); // project name string
+  const [wonError, setWonError]         = useState(null); // project creation error
+  const [proposalDraftPayload, setProposalDraftPayload] = useState(null); // { parsed, startDate, deal }
+  const [showProspectImporter, setShowProspectImporter] = useState(false);
+  const [prospectToast, setProspectToast] = useState(null); // { company, isNew }
   const dragDealId = useRef(null);
 
   const load = useCallback(async () => {
@@ -145,9 +152,23 @@ export default function DealsPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [refreshKey]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Deep-link: open a specific deal card when targetDealId is set — fire once per id
+  const consumedDealIdRef = useRef(null);
+  useEffect(() => {
+    if (!targetDealId || !deals.length) return;
+    if (consumedDealIdRef.current === targetDealId) return; // already handled
+    const deal = deals.find(d => d.id === targetDealId);
+    if (deal) {
+      consumedDealIdRef.current = targetDealId;
+      setShowNewDeal(false);
+      setSelectedDeal(deal);
+      onTargetDealConsumed?.();
+    }
+  }, [targetDealId, deals]);
 
   const byStage = id => deals.filter(d => d.stage === id);
 
@@ -200,20 +221,37 @@ export default function DealsPage() {
   // ── Drag and drop ──────────────────────────────────────────────────────────
   // ── Auto-create project when a deal is won ────────────────────────────────
   const createProjectFromDeal = async (deal) => {
+    setWonError(null);
     try {
       const today = new Date().toISOString().slice(0, 10);
       const proj = await upsertProject({
-        name:         deal.company_name || 'New Project',
-        client_name:  deal.company_name || '',
-        contact_name: deal.contact_name || '',
-        status:       'active',
-        start_date:   today,
-        description:  deal.description || '',
+        name:        deal.company_name || 'New Project',
+        client_name: deal.company_name || '',
+        status:      'active',
+        start_date:  today,
+        source_deal_id: deal.id,
       });
+      // Push the deal's primary contact into the client record
+      if (proj.client_id && deal.contact_name) {
+        upsertClientContacts(proj.client_id, [{
+          name:  deal.contact_name,
+          email: deal.contact_email || null,
+          title: deal.contact_title || null,
+        }]).catch(e => console.warn('Won contact sync:', e.message));
+      }
+
+      // Migrate any deal meetings, tasks, and files into the new project
+      if (deal.id) {
+        await migrateDealMeetingsToProject(deal.id, proj.id);
+        await migrateDealTasksToProject(deal.id, proj.id).catch(e => console.warn('Task migration:', e.message));
+        await migrateDealFilesToProject(deal.id, proj.id).catch(e => console.warn('File migration:', e.message));
+      }
       setWonToast(proj.name || deal.company_name);
-      setTimeout(() => setWonToast(null), 4000);
+      setTimeout(() => setWonToast(null), 5000);
     } catch (e) {
       console.error('Auto-create project failed:', e.message);
+      setWonError(e.message);
+      setTimeout(() => setWonError(null), 6000);
     }
   };
 
@@ -301,6 +339,80 @@ export default function DealsPage() {
     }, 2150);
   };
 
+  // ── Deal → Project from proposal draft ────────────────────────────────────
+  const handleDraftProposal = async ({ parsed, startDate, deal }) => {
+    // Close deal modal immediately
+    setSelectedDeal(null);
+    setShowNewDeal(false);
+    setWonError(null);
+    try {
+      // 1. Create the project
+      const proj = await upsertProject({
+        name:           parsed.project_name || deal.company_name || 'New Project',
+        client_name:    deal.company_name || '',
+        status:         'active',
+        start_date:     startDate,
+        budget:         parsed.total_budget || null,
+        source_deal_id: deal.id,
+      });
+
+      // 2. Build and insert milestones + tasks
+      const { milestones: msRows, tasks: taskRows } = buildTimelineFromParsed(parsed, proj.id, startDate);
+      if (msRows.length > 0) await bulkInsertMilestones(msRows);
+      if (taskRows.length > 0) await bulkInsertTasks(taskRows);
+
+      // 3. Push the deal's primary contact into the client record
+      if (proj.client_id && deal.contact_name) {
+        upsertClientContacts(proj.client_id, [{
+          name:  deal.contact_name,
+          email: deal.contact_email || null,
+          title: deal.contact_title || null,
+        }]).catch(e => console.warn('Proposal contact sync:', e.message));
+      }
+
+      // 4. Migrate any deal meetings, tasks, and files over to the new project
+      if (deal.id) {
+        await migrateDealMeetingsToProject(deal.id, proj.id);
+        await migrateDealTasksToProject(deal.id, proj.id).catch(e => console.warn('Task migration:', e.message));
+        await migrateDealFilesToProject(deal.id, proj.id).catch(e => console.warn('File migration:', e.message));
+      }
+
+      // 5. Show success toast
+      setWonToast(proj.name || deal.company_name);
+      setTimeout(() => setWonToast(null), 5000);
+    } catch (e) {
+      console.error('Project creation from proposal failed:', e.message);
+      setWonError(e.message);
+      setTimeout(() => setWonError(null), 6000);
+    }
+  };
+
+  // ── Prospect meeting: find or create deal ─────────────────────────────────
+  const resolveDealId = async (companyName, contactName, contactEmail) => {
+    // Check in-memory deals first (case-insensitive)
+    const existing = deals.find(d => d.company_name.toLowerCase() === companyName.toLowerCase());
+    if (existing) return existing.id;
+
+    // Create new deal in prospect stage
+    const newDeal = await upsertDeal({
+      company_name:  companyName,
+      contact_name:  contactName  || null,
+      contact_email: contactEmail || null,
+      stage:         'prospect',
+      assigned_to:   'Mike',
+    });
+    setDeals(prev => [newDeal, ...prev]);
+    return newDeal.id;
+  };
+
+  const handleProspectImported = ({ meeting, dealId, companyName }) => {
+    setShowProspectImporter(false);
+    // Check if this was a new deal (not in deals list before the import triggered resolveDealId)
+    const isNew = !deals.some(d => d.id === dealId);
+    setProspectToast({ company: companyName, isNew });
+    setTimeout(() => setProspectToast(null), 5000);
+  };
+
   // ── Modal handlers ─────────────────────────────────────────────────────────
   const handleSaved = (saved) => {
     if (!saved) {
@@ -319,11 +431,11 @@ export default function DealsPage() {
     setSelectedDeal(saved);
   };
 
-  const newDealTemplate = { company_name: '', stage: 'prospect', assigned_to: 'Mike' };
+  const newDealTemplate = { company_name: '', stage: 'outreach', assigned_to: 'Mike' };
 
   return (
     <>
-      {/* Won → Project toast */}
+      {/* Won → Project created toast */}
       {wonToast && (
         <div style={{
           position: 'fixed', bottom: 28, left: '50%', transform: 'translateX(-50%)',
@@ -333,25 +445,48 @@ export default function DealsPage() {
           fontSize: 14, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 10,
           animation: 'fadeInUp .3s ease',
         }}>
-          🗂️ Project created for <span style={{ fontWeight: 800 }}>{wonToast}</span>
+          🗂️ Project created for <span style={{ fontWeight: 800 }}>{wonToast}</span> — switch to Projects to see it
+        </div>
+      )}
+
+      {/* Won → Project creation error toast */}
+      {wonError && (
+        <div style={{
+          position: 'fixed', bottom: 28, left: '50%', transform: 'translateX(-50%)',
+          zIndex: 999, background: '#dc2626', color: '#fff',
+          padding: '12px 22px', borderRadius: 10,
+          boxShadow: '0 4px 20px rgba(220,38,38,0.4)',
+          fontSize: 14, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 10,
+          animation: 'fadeInUp .3s ease',
+        }}>
+          ⚠️ Project creation failed: {wonError}
         </div>
       )}
 
       <div className="page-header">
-        <div className="page-header-left">
-          <h2>💼 Deals</h2>
-          <p>{activeDeals.length} active deal{activeDeals.length !== 1 ? 's' : ''} · {fmt$(totalPipeline)} pipeline</p>
-        </div>
-        <div className="page-header-actions">
-          <button className="btn btn-primary" onClick={() => { setSelectedDeal(null); setShowNewDeal(true); }}>
+        <div className="page-header-left" style={{ display: 'flex', gap: 8 }}>
+          <button className="btn btn-primary" style={{ borderRadius: 20, padding: '7px 18px' }} onClick={() => { setSelectedDeal(null); setShowNewDeal(true); }}>
             + New Deal
           </button>
+          <button
+            className="btn btn-secondary"
+            onClick={() => setShowProspectImporter(true)}
+            style={{ borderRadius: 20, padding: '7px 18px', display: 'flex', alignItems: 'center', gap: 6 }}
+          >
+            Log Meeting
+          </button>
         </div>
+        <div className="page-header-actions" />
       </div>
 
       <div className="page-body">
         {/* Stats */}
-        <div className="stats-row cols-3" style={{ marginBottom: 24 }}>
+        <div className="stats-row cols-4" style={{ marginBottom: 24 }}>
+          <div className="stat-card">
+            <div className="stat-val" style={{ color: 'var(--accent)' }}>{activeDeals.length}</div>
+            <div className="stat-label">Active Deals</div>
+            <div className="stat-sub">{fmt$(totalPipeline)} pipeline</div>
+          </div>
           <div className="stat-card">
             <div className="stat-val">{fmt$(totalPipeline)}</div>
             <div className="stat-label">Pipeline Value</div>
@@ -503,7 +638,8 @@ export default function DealsPage() {
       </div>
 
       {/* ═══ Retro Arcade Trash Bin ═══════════════════════════════════════════ */}
-      <div style={{
+      {/* Hide when any modal is open so it doesn't float above overlays */}
+      {!(selectedDeal || showNewDeal || showProspectImporter || showLostPanel) && <div style={{
         position: 'fixed', bottom: 28, right: 32, zIndex: 600,
         display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
       }}>
@@ -642,7 +778,7 @@ export default function DealsPage() {
         }}>
           {lostAnim ? '…' : isDragging ? (trashHover ? 'Drop to lose' : 'Drag here') : `${lostDeals.length} lost`}
         </span>
-      </div>
+      </div>}
 
       {/* ═══ Win Celebration Overlay ════════════════════════════════════════════ */}
       {wonAnim && (() => {
@@ -827,6 +963,32 @@ export default function DealsPage() {
         </div>
       )}
 
+      {/* Prospect meeting logged toast */}
+      {prospectToast && (
+        <div style={{
+          position: 'fixed', bottom: 72, left: '50%', transform: 'translateX(-50%)',
+          zIndex: 999, background: 'var(--accent)', color: '#fff',
+          padding: '12px 22px', borderRadius: 10,
+          boxShadow: '0 4px 20px rgba(99,102,241,0.35)',
+          fontSize: 14, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 10,
+          animation: 'fadeInUp .3s ease',
+        }}>
+          📝 Meeting saved{prospectToast.isNew ? ` · New deal created for ` : ' · Added to '}
+          <span style={{ fontWeight: 800 }}>{prospectToast.company}</span>
+        </div>
+      )}
+
+      {/* Prospect transcript importer */}
+      {showProspectImporter && (
+        <TranscriptImporter
+          prospectMode
+          allDeals={deals.filter(d => !['won','lost'].includes(d.stage))}
+          resolveDealId={resolveDealId}
+          onImported={handleProspectImported}
+          onClose={() => setShowProspectImporter(false)}
+        />
+      )}
+
       {/* Deal detail modal */}
       {(selectedDeal || showNewDeal) && (
         <DealDetailModal
@@ -839,6 +1001,7 @@ export default function DealsPage() {
               setSelectedDeal(saved);
             }
           }}
+          onDraftProposal={handleDraftProposal}
         />
       )}
     </>

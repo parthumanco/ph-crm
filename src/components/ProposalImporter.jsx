@@ -16,21 +16,55 @@ export default function ProposalImporter({ projectId, projectStart, onImported, 
   const [error, setError]         = useState('');
   const [parsed, setParsed]       = useState(null);      // raw AI output
   const [preview, setPreview]     = useState([]);         // editable milestones
+  const [dragOver, setDragOver]   = useState(false);
   const fileInputRef              = useRef(null);
 
-  const handleFileChange = (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    if (file.type !== 'application/pdf') { setError('Please select a PDF file.'); return; }
+  const loadPdfFile = (file) => {
+    if (file.type !== 'application/pdf') { setError('Please drop a PDF file.'); return; }
     setPdfFile(file);
+    setInputMode('pdf');
     setError('');
     const reader = new FileReader();
     reader.onload = (ev) => {
-      // Strip the data URL prefix to get raw base64
       const b64 = ev.target.result.split(',')[1];
       setPdfBase64(b64);
     };
     reader.readAsDataURL(file);
+  };
+
+  const handleFileChange = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    loadPdfFile(file);
+  };
+
+  // ── Drag-and-drop handlers for the whole paste step ───────────────────────
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOver(true);
+  };
+  const handleDragLeave = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!e.currentTarget.contains(e.relatedTarget)) setDragOver(false);
+  };
+  const handleDrop = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOver(false);
+    const file = e.dataTransfer.files[0];
+    if (!file) return;
+    if (file.type === 'application/pdf') {
+      loadPdfFile(file);
+    } else if (file.type === 'text/plain' || file.name.endsWith('.txt') || file.name.endsWith('.md')) {
+      // Text file → switch to paste mode and load content
+      const reader = new FileReader();
+      reader.onload = (ev) => { setText(ev.target.result); setInputMode('text'); };
+      reader.readAsText(file);
+    } else {
+      setError('Drop a PDF or plain-text file.');
+    }
   };
 
   // Extract Google Doc ID from any share/edit/view URL
@@ -179,6 +213,7 @@ export default function ProposalImporter({ projectId, projectStart, onImported, 
     onImported({
       startDate,
       projectName:     parsed.project_name || '',
+      budget:          parsed.total_budget  || null,
       milestones:      preview,
       proposalText,
       proposalPdfFile: inputMode === 'pdf' ? pdfFile : null,
@@ -226,7 +261,27 @@ export default function ProposalImporter({ projectId, projectStart, onImported, 
 
           {/* ── PASTE step ── */}
           {step === 'paste' && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            <div
+              style={{ display: 'flex', flexDirection: 'column', gap: 16, position: 'relative' }}
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+            >
+              {/* Drop overlay */}
+              {dragOver && (
+                <div style={{
+                  position: 'absolute', inset: -8, zIndex: 10, borderRadius: 10,
+                  background: 'rgba(var(--accent-rgb, 79,70,229), 0.08)',
+                  border: '2px dashed var(--accent)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  pointerEvents: 'none',
+                }}>
+                  <div style={{ textAlign: 'center' }}>
+                    <div style={{ fontSize: 32, marginBottom: 6 }}>📄</div>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--accent)' }}>Drop PDF or text file</div>
+                  </div>
+                </div>
+              )}
               <div>
                 <label style={{ fontSize: 11, fontWeight: 800, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.05em', display: 'block', marginBottom: 6 }}>
                   Project start date
@@ -259,9 +314,12 @@ export default function ProposalImporter({ projectId, projectStart, onImported, 
 
               {inputMode === 'text' ? (
                 <div>
-                  <label style={{ fontSize: 11, fontWeight: 800, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.05em', display: 'block', marginBottom: 6 }}>
-                    Proposal text
-                  </label>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                    <label style={{ fontSize: 11, fontWeight: 800, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.05em' }}>
+                      Proposal text
+                    </label>
+                    <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>or drag & drop a PDF / .txt file anywhere</span>
+                  </div>
                   <textarea
                     value={text}
                     onChange={e => setText(e.target.value)}
@@ -291,6 +349,7 @@ export default function ProposalImporter({ projectId, projectStart, onImported, 
                     onMouseEnter={e => e.currentTarget.style.borderColor = 'var(--accent)'}
                     onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--border)'}
                   >
+                    {!pdfFile && <div style={{ fontSize: 11, color: 'var(--text-faint)', marginBottom: 8 }}>Drag & drop or click to browse</div>}
                     {pdfFile ? (
                       <>
                         <div style={{ fontSize: 28, marginBottom: 6 }}>📄</div>

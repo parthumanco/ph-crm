@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { scanBatch, scanDeepDive, weeklyRescanBatch, geocodeHqBatch, enrichContactsWithSearch, scanLinkedInPosts, ENGAGEMENT_META, ENGAGEMENT_OPTIONS } from '../lib/anthropic';
 import { loadLastWeeklyScan, saveLastWeeklyScan, isWeeklyScanDue, markWeeklyScanViewed } from '../lib/settings';
+import { mergeContactAngles, mergeTriggers } from '../lib/clients';
 
 const TRIGGER_CATEGORIES = [
   { id: 'leadership', label: 'Leadership Change', color: '#f59e0b' },
@@ -33,6 +34,13 @@ function haversineDistance(lat1, lng1, lat2, lng2) {
 
 // Client-side engagement type correction — baseline from headcount, uplift from need-state triggers
 const TIERS = ['Sprint', 'Foundation', 'Growth', 'Acceleration', 'Enterprise'];
+// Compact "mm/dd/yy" formatter for "Last scanned" labels next to scan actions.
+function ddmyy(d) {
+  if (!d) return '';
+  const dt = new Date(d);
+  return `${String(dt.getMonth() + 1).padStart(2, '0')}/${String(dt.getDate()).padStart(2, '0')}/${String(dt.getFullYear()).slice(-2)}`;
+}
+
 function tierIndex(t) { return TIERS.indexOf(t) === -1 ? 0 : TIERS.indexOf(t); }
 function tierAt(i)    { return TIERS[Math.min(Math.max(i, 0), TIERS.length - 1)]; }
 
@@ -132,7 +140,7 @@ function parseCSV(text) {
   }).filter(Boolean);
 }
 
-export default function SignalWatchPage({ onNavigate, icp }) {
+export default function SignalWatchPage({ onNavigate, icp, refreshKey = 0, isActive = false }) {
   // companies: array of {id (db uuid), _tempId, name, website, hq, contacts, ...scan fields}
   const [companies, setCompanies]     = useState([]);
   const [scanning, setScanning]       = useState({});
@@ -144,6 +152,7 @@ export default function SignalWatchPage({ onNavigate, icp }) {
   const [sortBy, setSortBy]           = useState('icp');
   const [addingToPipeline, setAddingToPipeline] = useState({});
   const [addedToPipeline, setAddedToPipeline]   = useState({});
+  const [watchListEntries, setWatchListEntries] = useState({}); // company_id → pipeline_entry_id for watch_list status
   const [loading, setLoading]         = useState(true);
   const [importing, setImporting]     = useState(false);
   const [autoResume, setAutoResume]   = useState(false);
@@ -156,6 +165,7 @@ export default function SignalWatchPage({ onNavigate, icp }) {
     industry: 'all',
     engagement: 'all',
     deepScan: 'all',
+    scanDate: 'all',
   });
   const [autoDeepQueue, setAutoDeepQueue]           = useState([]);
   const [autoDeepProgress, setAutoDeepProgress]     = useState({ done: 0, total: 0 });
@@ -208,13 +218,19 @@ export default function SignalWatchPage({ onNavigate, icp }) {
           from += PAGE;
         }
         if (allData.length) {
-          const { data: pipelineEntries } = await supabase.from('pipeline_entries').select('company_id');
+          const [{ data: pipelineEntries }, { data: watchEntries }] = await Promise.all([
+            supabase.from('pipeline_entries').select('company_id').neq('status', 'won').neq('status', 'watch_list'),
+            supabase.from('pipeline_entries').select('id, company_id').eq('status', 'watch_list'),
+          ]);
           const inPipeline = new Set((pipelineEntries || []).map(e => e.company_id));
           const loaded = allData.map(c => ({ ...c, _key: c.id }));
           setCompanies(loaded);
           const alreadyAdded = {};
           loaded.forEach(c => { if (inPipeline.has(c.id)) alreadyAdded[c.id] = true; });
           setAddedToPipeline(alreadyAdded);
+          const wlMap = {};
+          (watchEntries || []).forEach(e => { wlMap[e.company_id] = e.id; });
+          setWatchListEntries(wlMap);
           if (localStorage.getItem('ph_scan_active')) setAutoResume(true);
         }
         const lastScan = await loadLastWeeklyScan();
@@ -231,7 +247,7 @@ export default function SignalWatchPage({ onNavigate, icp }) {
       }
     }
     load();
-  }, []);
+  }, [refreshKey]);
 
   // ── CSV import ──────────────────────────────────────────────────────────────
 
@@ -365,8 +381,9 @@ export default function SignalWatchPage({ onNavigate, icp }) {
     handleFiles(e.dataTransfer.files);
   }, [handleFiles]);
 
-  // ── Document-level drag-and-drop (works anywhere on the page) ───────────────
+  // ── Document-level drag-and-drop (only active when this page is visible) ────
   useEffect(() => {
+    if (!isActive) return;
     const onDragOver = e => { e.preventDefault(); setDragOver(true); };
     const onDragLeave = e => { if (!e.relatedTarget) setDragOver(false); };
     const onDropDoc = e => {
@@ -382,13 +399,23 @@ export default function SignalWatchPage({ onNavigate, icp }) {
       document.removeEventListener('dragleave', onDragLeave);
       document.removeEventListener('drop', onDropDoc);
     };
-  }, [handleFiles]);
+  }, [handleFiles, isActive]);
 
   // ── Save scan result to Supabase ─────────────────────────────────────────────
 
-  const stripEmDash = str => str ? str.replace(/—/g, ',') : str;
+  const stripEmDash = str => str ? str.replace(/[—–]/g, ',') : str;
 
   const saveScanResult = useCallback(async (companyId, result, overwriteWebsite = false) => {
+    // Use existing company data from ref for additive merging — no extra DB read needed
+    const prev = companiesRef.current.find(c => c.id === companyId) || {};
+    const prevAngles   = prev.contact_angles || [];
+    const prevTriggers = prev.triggers       || [];
+
+    const incomingAngles = (result.contactAngles || []).map(ca => ({
+      ...ca,
+      linkedin: ca.linkedinUrl || ca.linkedin || null,
+    }));
+
     const update = {
       icp_tier: result.icpTier || null,
       icp_score: result.icpScore ? Math.round(result.icpScore) : null,
@@ -397,9 +424,9 @@ export default function SignalWatchPage({ onNavigate, icp }) {
       employee_count_num: result.employeeCountNum ? Math.round(result.employeeCountNum) : null,
       employee_count: result.employeeCountNum ? String(Math.round(result.employeeCountNum)) : null,
       summary: stripEmDash(result.summary) || null,
-      triggers: (result.triggers || []).map(t => ({ ...t, headline: stripEmDash(t.headline), detail: stripEmDash(t.detail) })),
+      triggers: mergeTriggers(prevTriggers, result.triggers || []),
       recommended_angle: stripEmDash(result.recommendedAngle) || null,
-      contact_angles: (result.contactAngles || []).map(ca => ({ ...ca, angle: stripEmDash(ca.angle) })),
+      contact_angles: mergeContactAngles(prevAngles, incomingAngles),
       lat: result.lat || null,
       lng: result.lng || null,
       scan_date: new Date().toISOString(),
@@ -791,13 +818,28 @@ export default function SignalWatchPage({ onNavigate, icp }) {
       monday.setDate(today.getDate() - today.getDay() + 1);
       const weekStart = monday.toISOString().slice(0, 10);
 
-      const { error } = await supabase.from('pipeline_entries').insert({
-        company_id: company.id,
-        current_touch: 0,
-        status: 'active',
-        week_start: weekStart,
-      });
-      if (error && !error.message.includes('duplicate')) throw error;
+      // If a 'won' entry exists, restore it; otherwise insert fresh
+      const { data: existing } = await supabase
+        .from('pipeline_entries')
+        .select('id, status')
+        .eq('company_id', company.id)
+        .limit(1);
+
+      if (existing?.length) {
+        const { error } = await supabase
+          .from('pipeline_entries')
+          .update({ status: 'active', updated_at: new Date().toISOString() })
+          .eq('id', existing[0].id);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase.from('pipeline_entries').insert({
+          company_id: company.id,
+          current_touch: 0,
+          status: 'active',
+          week_start: weekStart,
+        });
+        if (error && !error.message.includes('duplicate')) throw error;
+      }
       setAddedToPipeline(s => ({ ...s, [company.id]: true }));
     } catch (e) {
       alert('Error adding to pipeline: ' + e.message);
@@ -805,6 +847,16 @@ export default function SignalWatchPage({ onNavigate, icp }) {
       setAddingToPipeline(s => ({ ...s, [company.id]: false }));
     }
   }, []);
+
+  // ── Resume outreach (move back from watch_list → active) ────────────────────
+
+  const resumeOutreach = useCallback(async (company) => {
+    const entryId = watchListEntries[company.id];
+    if (!entryId) return;
+    await supabase.from('pipeline_entries').update({ status: 'active', updated_at: new Date().toISOString() }).eq('id', entryId);
+    setWatchListEntries(prev => { const n = { ...prev }; delete n[company.id]; return n; });
+    setAddedToPipeline(s => ({ ...s, [company.id]: true }));
+  }, [watchListEntries]);
 
   // ── Delete company ───────────────────────────────────────────────────────────
 
@@ -876,118 +928,6 @@ export default function SignalWatchPage({ onNavigate, icp }) {
     URL.revokeObjectURL(url);
   }, [companies]);
 
-  // ── Clear all ────────────────────────────────────────────────────────────────
-
-  const clearAll = useCallback(async () => {
-    if (!window.confirm(`Clear all companies from Signal Watch? Companies already in your pipeline will not be deleted.`)) return;
-    try {
-      const CHUNK = 100;
-      const chunk = (arr) => { const out = []; for (let i = 0; i < arr.length; i += CHUNK) out.push(arr.slice(i, i + CHUNK)); return out; };
-
-      // Fetch ALL company IDs from DB (not from React state, which may be capped)
-      let allIds = [];
-      let from = 0;
-      while (true) {
-        const { data, error } = await supabase.from('companies').select('id').range(from, from + 999);
-        if (error || !data?.length) break;
-        allIds = allIds.concat(data.map(c => c.id));
-        if (data.length < 1000) break;
-        from += 1000;
-      }
-      if (!allIds.length) { setCompanies([]); return; }
-
-      // Find which are in the pipeline
-      const pipelinedIds = new Set();
-      for (const batch of chunk(allIds)) {
-        const { data } = await supabase.from('pipeline_entries').select('company_id').in('company_id', batch);
-        (data || []).forEach(e => pipelinedIds.add(e.company_id));
-      }
-
-      const toDelete = allIds.filter(id => !pipelinedIds.has(id));
-      const toReset  = allIds.filter(id =>  pipelinedIds.has(id));
-
-      for (const batch of chunk(toDelete)) {
-        const { error } = await supabase.from('companies').delete().in('id', batch);
-        if (error) throw error;
-      }
-
-      for (const batch of chunk(toReset)) {
-        await supabase.from('companies').update({
-          scan_date: null, icp_score: null, overall_score: null, icp_tier: null,
-          funding_stage: null, employee_count_num: null, summary: null,
-          triggers: [], recommended_angle: null, contact_angles: [],
-        }).in('id', batch);
-      }
-
-      setCompanies(prev =>
-        prev
-          .filter(c => pipelinedIds.has(c.id))
-          .map(c => ({ ...c, scan_date: null, icp_score: null, overall_score: null, icp_tier: null, funding_stage: null, employee_count_num: null, summary: null, triggers: [], recommended_angle: null, contact_angles: [], _error: undefined }))
-      );
-
-      if (toReset.length) {
-        alert(`Cleared. ${toReset.length} compan${toReset.length === 1 ? 'y' : 'ies'} in your pipeline were kept but their scan data was reset.`);
-      }
-    } catch (e) {
-      alert('Clear failed: ' + e.message);
-    }
-  }, []);
-
-  // ── Start fresh (wipe everything) ───────────────────────────────────────────
-
-  const startFresh = useCallback(async () => {
-    if (!window.confirm('Clear all companies from Signal Watch and start over? Companies in your pipeline will not be deleted.')) return;
-    try {
-      cancelRef.current.cancelled = true;
-      setScanningAll(false);
-      localStorage.removeItem('ph_scan_active');
-
-      const CHUNK = 100;
-      const chunk = (arr) => { const out = []; for (let i = 0; i < arr.length; i += CHUNK) out.push(arr.slice(i, i + CHUNK)); return out; };
-
-      let allIds = [];
-      let from = 0;
-      while (true) {
-        const { data, error } = await supabase.from('companies').select('id').range(from, from + 999);
-        if (error || !data?.length) break;
-        allIds = allIds.concat(data.map(c => c.id));
-        if (data.length < 1000) break;
-        from += 1000;
-      }
-      if (!allIds.length) { setCompanies([]); return; }
-
-      const pipelinedIds = new Set();
-      for (const batch of chunk(allIds)) {
-        const { data } = await supabase.from('pipeline_entries').select('company_id').in('company_id', batch);
-        (data || []).forEach(e => pipelinedIds.add(e.company_id));
-      }
-
-      const toDelete = allIds.filter(id => !pipelinedIds.has(id));
-      const toReset  = allIds.filter(id =>  pipelinedIds.has(id));
-
-      for (const batch of chunk(toDelete)) {
-        const { error } = await supabase.from('companies').delete().in('id', batch);
-        if (error) throw error;
-      }
-      for (const batch of chunk(toReset)) {
-        await supabase.from('companies').update({
-          scan_date: null, icp_score: null, overall_score: null, icp_tier: null,
-          funding_stage: null, employee_count_num: null, summary: null,
-          triggers: [], recommended_angle: null, contact_angles: [],
-        }).in('id', batch);
-      }
-
-      setCompanies(prev =>
-        prev.filter(c => pipelinedIds.has(c.id))
-          .map(c => ({ ...c, scan_date: null, icp_score: null, overall_score: null, icp_tier: null, funding_stage: null, employee_count_num: null, summary: null, triggers: [], recommended_angle: null, contact_angles: [], _error: undefined }))
-      );
-      setAddedToPipeline({});
-      setScanStatus({});
-    } catch (e) {
-      alert('Start Fresh failed: ' + e.message);
-    }
-  }, []);
-
   // ── Filtering ────────────────────────────────────────────────────────────────
 
   const applyFilters = (list, pinId = null) => {
@@ -1037,6 +977,13 @@ export default function SignalWatchPage({ onNavigate, icp }) {
       if (filters.deepScan === 'yes' && !c.deep_scanned) return false;
       if (filters.deepScan === 'no'  &&  c.deep_scanned) return false;
 
+      if (filters.scanDate !== 'all') {
+        if (!c.scan_date) return false;
+        const days = { today: 1, week: 7, month: 30, six_months: 182 }[filters.scanDate];
+        const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+        if (new Date(c.scan_date).getTime() < cutoff) return false;
+      }
+
       return true;
     });
   };
@@ -1081,7 +1028,7 @@ export default function SignalWatchPage({ onNavigate, icp }) {
     const id = company.id || company._tempId;
     setExpandedCards(prev => ({ ...prev, [id]: true }));
     // Clear filters so the card is visible
-    setFilters({ series: 'all', employees: 'all', distance: 'all', icp: 'all', sig: 'all', industry: 'all', engagement: 'all', deepScan: 'all' });
+    setFilters({ series: 'all', employees: 'all', distance: 'all', icp: 'all', sig: 'all', industry: 'all', engagement: 'all', deepScan: 'all', scanDate: 'all' });
     setSearch('');
     setTimeout(() => {
       cardRefs.current[id]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -1110,24 +1057,25 @@ export default function SignalWatchPage({ onNavigate, icp }) {
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           {toolbarLabel('Scan')}
           {companies.length > 0 && (scanningAll || weeklyScanRunning || autoDeepQueue.length > 0) && (
-            <button className="btn btn-secondary" onClick={() => { cancelRef.current.cancelled = true; setScanningAll(false); setWeeklyScanRunning(false); setAutoDeepQueue([]); autoDeepRunning.current = false; localStorage.removeItem('ph_scan_active'); }}>
-              ⏹ Stop
+            <button className="btn btn-secondary" style={{ borderRadius: 20 }} onClick={() => { cancelRef.current.cancelled = true; setScanningAll(false); setWeeklyScanRunning(false); setAutoDeepQueue([]); autoDeepRunning.current = false; localStorage.removeItem('ph_scan_active'); }}>
+              Stop
             </button>
           )}
           {companies.length > 0 && (
-            <button className="btn btn-primary" onClick={scanAll} disabled={scanningAll || !unscannedCount}>
-              {unscannedCount ? `▶ Resume Scan (${unscannedCount} left)` : '✅ All Scanned'}
+            <button className="btn btn-primary" style={{ borderRadius: 20 }} onClick={scanAll} disabled={scanningAll || !unscannedCount}>
+              {unscannedCount ? `Resume Scan (${unscannedCount} left)` : 'All Scanned'}
             </button>
           )}
           {companies.length > 0 && (
             <div style={{ position: 'relative' }}>
               <button
                 className="btn btn-secondary"
+                style={{ borderRadius: 20 }}
                 disabled={weeklyScanRunning || scanningAll}
                 onClick={() => setRescanFilteredDropdownOpen(o => !o)}
                 title="Rescan companies matching current filters"
               >
-                {weeklyScanRunning ? <><span className="spinner" /> Scanning…</> : '🔄 Scan ▾'}
+                {weeklyScanRunning ? <><span className="spinner" /> Scanning…</> : 'Scan ▾'}
               </button>
               {rescanFilteredDropdownOpen && (
                 <>
@@ -1175,6 +1123,7 @@ export default function SignalWatchPage({ onNavigate, icp }) {
             {toolbarLabel('Deep')}
             <button
               className="btn btn-secondary"
+              style={{ borderRadius: 20 }}
               disabled={autoDeepQueue.length > 0 || scanningAll}
               onClick={() => {
                 const toDeep = companiesRef.current
@@ -1186,17 +1135,18 @@ export default function SignalWatchPage({ onNavigate, icp }) {
                 setAutoDeepProgress({ done: 0, total: toDeep.length });
               }}
             >
-              🔍 Deep Scan All
+              Deep Scan All
             </button>
             {toolbarDivider}
             <div style={{ position: 'relative' }}>
               <button
                 className="btn btn-secondary"
+                style={{ borderRadius: 20 }}
                 disabled={autoDeepQueue.length > 0 || scanningAll}
                 onClick={() => setDeepScanDropdownOpen(o => !o)}
                 title="Deep scan companies matching current filters"
               >
-                🎯 Deep Scan Filtered ▾
+                Deep Scan Filtered ▾
               </button>
               {deepScanDropdownOpen && (
                 <>
@@ -1247,26 +1197,11 @@ export default function SignalWatchPage({ onNavigate, icp }) {
         {/* Row 3: Data */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           {toolbarLabel('Data')}
-          <button className="btn btn-secondary" onClick={() => setShowAddForm(v => !v)}>➕ Add Company</button>
-          <button className="btn btn-secondary" onClick={() => fileInputRef.current?.click()}>📂 Import CSV</button>
+          <button className="btn btn-secondary" style={{ borderRadius: 20 }} onClick={() => setShowAddForm(v => !v)}>+ Add Company</button>
+          <button className="btn btn-secondary" style={{ borderRadius: 20 }} onClick={() => fileInputRef.current?.click()}>Import CSV</button>
           {companies.length > 0 && (
-            <button className="btn btn-secondary" onClick={exportCSV} title="Download all companies as CSV">⬇️ Export CSV</button>
+            <button className="btn btn-secondary" style={{ borderRadius: 20 }} onClick={exportCSV} title="Download all companies as CSV">Export CSV</button>
           )}
-          {!hqFillDone && companies.filter(c => !c.hq).length > 0 && (
-            <button
-              className="btn btn-secondary"
-              disabled={hqFillRunning || scanningAll || weeklyScanRunning}
-              onClick={fillMissingHq}
-              title={`Fill HQ for ${companies.filter(c => !c.hq).length} companies missing location data`}
-            >
-              {hqFillRunning ? `📍 Filling HQ… ${hqFillProgress.done}/${hqFillProgress.total}` : `📍 Fill Missing HQ (${companies.filter(c => !c.hq).length})`}
-            </button>
-          )}
-          {toolbarDivider}
-          {companies.length > 0 && (
-            <button className="btn btn-ghost btn-sm" onClick={clearAll} style={{ color: 'var(--red)' }} title="Delete Signal Watch companies (keeps pipeline)">🗑️ Clear All</button>
-          )}
-          <button className="btn btn-ghost btn-sm" onClick={startFresh} style={{ color: 'var(--red)', fontWeight: 700 }} title="Wipe everything and start over">⚠️ Start Fresh</button>
         </div>
 
         <input ref={fileInputRef} type="file" accept=".csv" multiple style={{ display: 'none' }} onChange={e => handleFiles(e.target.files)} />
@@ -1478,7 +1413,7 @@ export default function SignalWatchPage({ onNavigate, icp }) {
                   <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', whiteSpace: 'nowrap' }}>Series</span>
                   <div style={{ display: 'flex', gap: 4 }}>
                     {[['all','All'],['seed','Seed'],['series_a','Series A'],['series_b','Series B'],['series_c','Series C+']].map(([v,l]) => (
-                      <button key={v} className={`filter-btn${filters.series === v ? ' active' : ''}`} style={{ padding: '4px 9px', fontSize: 11 }} onClick={() => setFilter('series', v)}>{l}</button>
+                      <button key={v} className={`filter-btn${filters.series === v ? ' active' : ''}`} onClick={() => setFilter('series', v)}>{l}</button>
                     ))}
                   </div>
                 </div>
@@ -1486,7 +1421,7 @@ export default function SignalWatchPage({ onNavigate, icp }) {
                   <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', whiteSpace: 'nowrap' }}>Employees</span>
                   <div style={{ display: 'flex', gap: 4 }}>
                     {[['all','All'],['1_30','1–30'],['30_100','30–100'],['100_500','100–500'],['500_plus','500+']].map(([v,l]) => (
-                      <button key={v} className={`filter-btn${filters.employees === v ? ' active' : ''}`} style={{ padding: '4px 9px', fontSize: 11 }} onClick={() => setFilter('employees', v)}>{l}</button>
+                      <button key={v} className={`filter-btn${filters.employees === v ? ' active' : ''}`} onClick={() => setFilter('employees', v)}>{l}</button>
                     ))}
                   </div>
                 </div>
@@ -1494,7 +1429,7 @@ export default function SignalWatchPage({ onNavigate, icp }) {
                   <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', whiteSpace: 'nowrap' }}>From Andover MA</span>
                   <div style={{ display: 'flex', gap: 4 }}>
                     {[['all','All'],['50','<50mi'],['100','<100mi'],['250','<250mi'],['500','<500mi']].map(([v,l]) => (
-                      <button key={v} className={`filter-btn${filters.distance === v ? ' active' : ''}`} style={{ padding: '4px 9px', fontSize: 11 }} onClick={() => setFilter('distance', v)}>{l}</button>
+                      <button key={v} className={`filter-btn${filters.distance === v ? ' active' : ''}`} onClick={() => setFilter('distance', v)}>{l}</button>
                     ))}
                   </div>
                 </div>
@@ -1502,7 +1437,15 @@ export default function SignalWatchPage({ onNavigate, icp }) {
                   <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', whiteSpace: 'nowrap' }}>ICP Score</span>
                   <div style={{ display: 'flex', gap: 4 }}>
                     {[['all','All'],['7','7+'],['5','5+'],['3','3+']].map(([v,l]) => (
-                      <button key={v} className={`filter-btn${filters.icp === v ? ' active' : ''}`} style={{ padding: '4px 9px', fontSize: 11 }} onClick={() => setFilter('icp', v)}>{l}</button>
+                      <button key={v} className={`filter-btn${filters.icp === v ? ' active' : ''}`} onClick={() => setFilter('icp', v)}>{l}</button>
+                    ))}
+                  </div>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', whiteSpace: 'nowrap' }}>Entry Point</span>
+                  <div style={{ display: 'flex', gap: 4 }}>
+                    {[['all','All'],['Sprint','Sprint'],['Foundation','Foundation'],['Growth','Growth'],['Acceleration','Accel.'],['Enterprise','Enterprise']].map(([v,l]) => (
+                      <button key={v} className={`filter-btn${filters.engagement === v ? ' active' : ''}`} onClick={() => setFilter('engagement', v)}>{l}</button>
                     ))}
                   </div>
                 </div>
@@ -1510,7 +1453,7 @@ export default function SignalWatchPage({ onNavigate, icp }) {
                   <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', whiteSpace: 'nowrap' }}>SIG Score</span>
                   <div style={{ display: 'flex', gap: 4 }}>
                     {[['all','All'],['7','7+'],['5','5+'],['3','3+']].map(([v,l]) => (
-                      <button key={v} className={`filter-btn${filters.sig === v ? ' active' : ''}`} style={{ padding: '4px 9px', fontSize: 11 }} onClick={() => setFilter('sig', v)}>{l}</button>
+                      <button key={v} className={`filter-btn${filters.sig === v ? ' active' : ''}`} onClick={() => setFilter('sig', v)}>{l}</button>
                     ))}
                   </div>
                 </div>
@@ -1518,7 +1461,15 @@ export default function SignalWatchPage({ onNavigate, icp }) {
                   <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', whiteSpace: 'nowrap' }}>Deep Scan</span>
                   <div style={{ display: 'flex', gap: 4 }}>
                     {[['all','All'],['yes','Complete'],['no','Pending']].map(([v,l]) => (
-                      <button key={v} className={`filter-btn${filters.deepScan === v ? ' active' : ''}`} style={{ padding: '4px 9px', fontSize: 11 }} onClick={() => setFilter('deepScan', v)}>{l}</button>
+                      <button key={v} className={`filter-btn${filters.deepScan === v ? ' active' : ''}`} onClick={() => setFilter('deepScan', v)}>{l}</button>
+                    ))}
+                  </div>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', whiteSpace: 'nowrap' }}>Scanned</span>
+                  <div style={{ display: 'flex', gap: 4 }}>
+                    {[['all','All'],['today','Today'],['week','Last Week'],['month','Last Month'],['six_months','Last 6 Months']].map(([v,l]) => (
+                      <button key={v} className={`filter-btn${filters.scanDate === v ? ' active' : ''}`} onClick={() => setFilter('scanDate', v)}>{l}</button>
                     ))}
                   </div>
                 </div>
@@ -1553,21 +1504,6 @@ export default function SignalWatchPage({ onNavigate, icp }) {
                     <option value="Government">Government</option>
                   </select>
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', whiteSpace: 'nowrap' }}>Entry Point</span>
-                  <select
-                    value={filters.engagement}
-                    onChange={e => setFilter('engagement', e.target.value)}
-                    style={{ fontSize: 12, padding: '4px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface)', color: filters.engagement !== 'all' ? 'var(--accent)' : 'var(--text)', fontWeight: filters.engagement !== 'all' ? 700 : 400, cursor: 'pointer' }}
-                  >
-                    <option value="all">All Entry Points</option>
-                    <option value="Sprint">Sprint</option>
-                    <option value="Foundation">Foundation</option>
-                    <option value="Growth">Growth</option>
-                    <option value="Acceleration">Acceleration</option>
-                    <option value="Enterprise">Enterprise</option>
-                  </select>
-                </div>
                 <input
                   type="text"
                   placeholder="Search…"
@@ -1579,7 +1515,7 @@ export default function SignalWatchPage({ onNavigate, icp }) {
               {(filters.series !== 'all' || filters.employees !== 'all' || filters.distance !== 'all' || filters.icp !== 'all' || filters.sig !== 'all' || filters.industry !== 'all' || filters.engagement !== 'all' || filters.deepScan !== 'all' || search) && (
                 <div style={{ marginTop: 8, fontSize: 12, color: 'var(--text-muted)' }}>
                   Showing {filtered.length} of {companies.length} companies &nbsp;
-                  <button className="btn btn-ghost btn-xs" onClick={() => { setFilters({ series: 'all', employees: 'all', distance: 'all', icp: 'all', sig: 'all', industry: 'all', engagement: 'all', deepScan: 'all' }); setSearch(''); }}>
+                  <button className="btn btn-ghost btn-xs" onClick={() => { setFilters({ series: 'all', employees: 'all', distance: 'all', icp: 'all', sig: 'all', industry: 'all', engagement: 'all', deepScan: 'all', scanDate: 'all' }); setSearch(''); }}>
                     Clear filters
                   </button>
                 </div>
@@ -1603,8 +1539,10 @@ export default function SignalWatchPage({ onNavigate, icp }) {
                     weeklyScanRunning={weeklyScanRunning}
                     isAddingToPipeline={addingToPipeline[key]}
                     isAddedToPipeline={addedToPipeline[company.id]}
+                    isOnWatchList={!!watchListEntries[company.id]}
                     onScan={() => scanOne(company)}
                     onAddToPipeline={() => addToPipeline(company)}
+                    onResumeOutreach={() => resumeOutreach(company)}
                     onNavigatePipeline={() => onNavigate('pipeline')}
                     onDelete={() => deleteCompany(company)}
                     forceExpanded={expandedCards[key]}
@@ -1668,7 +1606,7 @@ function AddContactForm({ companyId, existingContacts, onSaved }) {
   );
 }
 
-function CompanyCard({ company, distMiles, status, isScanning, scanningAll, weeklyScanRunning, isAddingToPipeline, isAddedToPipeline, onScan, onAddToPipeline, onNavigatePipeline, onDelete, forceExpanded, onExpandedChange, cardRef, onUpdateContacts, onUpdateEngagement }) {
+function CompanyCard({ company, distMiles, status, isScanning, scanningAll, weeklyScanRunning, isAddingToPipeline, isAddedToPipeline, isOnWatchList, onScan, onAddToPipeline, onResumeOutreach, onNavigatePipeline, onDelete, forceExpanded, onExpandedChange, cardRef, onUpdateContacts, onUpdateEngagement }) {
   const [expanded, setExpanded] = useState(false);
   const [editingIdx, setEditingIdx] = useState(null);
   const [editForm, setEditForm] = useState({});
@@ -1689,6 +1627,106 @@ function CompanyCard({ company, distMiles, status, isScanning, scanningAll, week
   const handleSetExpanded = (val) => {
     setExpanded(val);
     onExpandedChange?.(val);
+  };
+
+  const exportToPdf = () => {
+    const eng     = company.engagement_type || '';
+    const sc      = company.overall_score;
+    const icp     = company.icp_score;
+    const triggers = company.triggers || [];
+    const contacts = company.contacts || [];
+    const angles   = company.contact_angles || [];
+
+    const scColor = sc ? (sc >= 7 ? '#10b981' : sc >= 4 ? '#f59e0b' : '#94a3b8') : '#94a3b8';
+    const icpColor = icp ? (icp >= 7 ? '#10b981' : icp >= 4 ? '#f59e0b' : '#94a3b8') : '#94a3b8';
+
+    const triggerRows = triggers.map(t => {
+      const cc = catColor(t.category);
+      const uc = urgColor(t.urgency);
+      return `
+        <div style="border:1px solid #e5e7eb;border-radius:6px;padding:10px 14px;margin-bottom:8px;">
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:${t.detail ? '6px' : '0'}">
+            <span style="background:${cc}22;color:${cc};border:1px solid ${cc}44;font-size:10px;font-weight:700;padding:2px 8px;border-radius:4px;">${catLabel(t.category)}</span>
+            <span style="font-weight:700;font-size:13px;flex:1">${t.headline || ''}</span>
+            <span style="background:${uc}18;color:${uc};border:1px solid ${uc}44;font-size:10px;font-weight:700;padding:2px 8px;border-radius:4px;font-family:monospace;">${(t.urgency || '').toUpperCase()}</span>
+          </div>
+          ${t.detail ? `<p style="font-size:12px;color:#6b7280;line-height:1.55;margin:0">${t.detail}</p>` : ''}
+          ${(t.date || t.source) ? `<p style="font-size:11px;color:#9ca3af;margin:4px 0 0">${[t.date, t.source].filter(Boolean).join(' · ')}</p>` : ''}
+        </div>`;
+    }).join('');
+
+    const contactRows = contacts.map(ct => {
+      const angle = angles.find(ca => ca.name?.toLowerCase() === ct.name?.toLowerCase());
+      return `
+        <div style="border:1px solid #e5e7eb;border-radius:6px;overflow:hidden;margin-bottom:8px;">
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 12px;background:#f9fafb;">
+            <span style="font-weight:700;font-size:13px;">${ct.name || ''}</span>
+            ${ct.title ? `<span style="font-size:12px;color:#6b7280;">${ct.title}</span>` : ''}
+            ${ct.email ? `<span style="font-size:12px;color:#6b7280;">${ct.email}</span>` : ''}
+            ${ct.linkedin ? `<span style="font-size:11px;color:#0a66c2;">${ct.linkedin}</span>` : ''}
+          </div>
+          ${angle?.angle ? `<div style="padding:8px 12px;background:#f0fdf4;border-top:1px solid #bbf7d0;font-size:12px;color:#166534;line-height:1.55;"><strong style="color:#15803d;font-size:10px;text-transform:uppercase;letter-spacing:.04em;">Outreach Angle · </strong>${angle.angle}</div>` : ''}
+        </div>`;
+    }).join('');
+
+    const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>${company.name} — Part Human CRM</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: #111; background: #fff; padding: 32px 40px; font-size: 13px; line-height: 1.6; }
+    @media print { body { padding: 20px 24px; } @page { margin: 1.2cm; } }
+    .header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 20px; padding-bottom: 16px; border-bottom: 2px solid #f3f4f6; }
+    .company-name { font-size: 22px; font-weight: 800; color: #111; }
+    .meta { font-size: 12px; color: #6b7280; margin-top: 4px; display: flex; gap: 12px; flex-wrap: wrap; }
+    .scores { display: flex; gap: 8px; flex-direction: column; align-items: flex-end; }
+    .score-pill { font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 6px; border: 1px solid; }
+    .section-label { font-size: 10px; font-weight: 800; color: #9ca3af; letter-spacing: .06em; text-transform: uppercase; margin-bottom: 8px; margin-top: 16px; }
+    .summary { font-size: 13px; color: #374151; line-height: 1.65; }
+    .angle { padding: 12px 14px; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 6px; font-size: 13px; color: #166534; line-height: 1.6; margin-bottom: 4px; }
+    .footer { margin-top: 28px; padding-top: 12px; border-top: 1px solid #f3f4f6; font-size: 10px; color: #9ca3af; display: flex; justify-content: space-between; }
+    .badge { display: inline-block; font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 4px; background: #f3f4f6; color: #6b7280; margin-right: 4px; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div>
+      <div class="company-name">${company.name}</div>
+      <div class="meta">
+        ${company.hq ? `<span>📍 ${company.hq}</span>` : ''}
+        ${company.funding_stage && company.funding_stage !== 'Unknown' ? `<span>💰 ${company.funding_stage}</span>` : ''}
+        ${company.employee_count_num ? `<span>👥 ${company.employee_count_num} employees</span>` : ''}
+        ${company.website ? `<span>🌐 ${company.website.replace(/https?:\/\//, '')}</span>` : ''}
+        ${eng ? `<span class="badge">${eng}</span>` : ''}
+      </div>
+    </div>
+    <div class="scores">
+      ${sc ? `<span class="score-pill" style="color:${scColor};border-color:${scColor}44;background:${scColor}18">SIG ${sc}/10</span>` : ''}
+      ${icp ? `<span class="score-pill" style="color:${icpColor};border-color:${icpColor}44;background:${icpColor}18">ICP ${icp}/10</span>` : ''}
+    </div>
+  </div>
+
+  ${company.summary ? `<div class="section-label">Summary</div><p class="summary">${company.summary}</p>` : ''}
+
+  ${triggers.length > 0 ? `<div class="section-label">Trigger Events</div>${triggerRows}` : ''}
+
+  ${company.recommended_angle ? `<div class="section-label">Recommended Outreach Angle</div><div class="angle">${company.recommended_angle}</div>` : ''}
+
+  ${contacts.length > 0 ? `<div class="section-label">Contacts</div>${contactRows}` : ''}
+
+  <div class="footer">
+    <span>Part Human CRM · Watch List</span>
+    <span>Scanned ${company.scan_date ? new Date(company.scan_date).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : '—'} · Exported ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}</span>
+  </div>
+
+  <script>window.onload = () => { window.print(); }<\/script>
+</body>
+</html>`;
+
+    const win = window.open('', '_blank');
+    if (win) { win.document.write(html); win.document.close(); }
   };
 
   const saveContactEdit = async () => {
@@ -1755,39 +1793,47 @@ function CompanyCard({ company, distMiles, status, isScanning, scanningAll, week
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexShrink: 0 }}>
           {hasResult && (
             <>
-              <span className="score-badge" style={{ background: sc + '22', color: sc, borderColor: sc }}>SIG {company.overall_score}/10</span>
+              <span style={{ fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 20, background: sc + '22', color: sc, border: `1px solid ${sc}` }}>SIG {company.overall_score}/10</span>
               {company.icp_score && (
-                <span className="score-badge" style={{ background: scoreColor(company.icp_score) + '22', color: scoreColor(company.icp_score), borderColor: scoreColor(company.icp_score) }}>
+                <span style={{ fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 20, background: scoreColor(company.icp_score) + '22', color: scoreColor(company.icp_score), border: `1px solid ${scoreColor(company.icp_score)}` }}>
                   ICP {company.icp_score}/10
                 </span>
               )}
             </>
           )}
           {isQueued && (
-            <span style={{ fontSize: 10, fontWeight: 700, color: '#92400e', background: '#fef3c7', padding: '2px 7px', borderRadius: 4 }}>⏳ Queued</span>
+            <span style={{ fontSize: 10, fontWeight: 700, color: '#92400e', background: '#fef3c7', padding: '3px 10px', borderRadius: 20, border: '1px solid #fde047' }}>Queued</span>
           )}
           {isDone && (
-            <span style={{ fontSize: 10, fontWeight: 700, color: '#15803d', background: '#dcfce7', padding: '2px 7px', borderRadius: 4 }}>✓ Done</span>
+            <span style={{ fontSize: 10, fontWeight: 700, color: '#15803d', background: '#dcfce7', padding: '3px 10px', borderRadius: 20, border: '1px solid #86efac' }}>Done</span>
           )}
           {(isScanning || status === 'Scanning…') && (
             <span style={{ fontSize: 11, color: 'var(--accent)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 4 }}>
               <span className="spinner" />{status || 'Scanning…'}
             </span>
           )}
+          {company.scan_date && (
+            <span style={{ fontSize: 10, color: 'var(--text-faint)', whiteSpace: 'nowrap' }}>
+              Last scanned: {ddmyy(company.scan_date)}
+            </span>
+          )}
           <button
             className="btn btn-sm"
-            style={company.deep_scanned ? { background: '#fef08a', color: '#854d0e', border: '1px solid #fde047' } : {}}
+            title={company.deep_scanned && company.scan_date ? `Deep scanned ${new Date(company.scan_date).toLocaleDateString()} — click to rescan` : 'Run a deep scan'}
+            style={{ borderRadius: 20, ...(company.deep_scanned ? { background: '#dcfce7', color: '#15803d', border: '1px solid #86efac' } : {}) }}
             onClick={e => { e.stopPropagation(); onScan(); }}
             disabled={isScanning}
           >
-            {isScanning ? <><span className="spinner" /> Scanning…</> : '🔍 Deep Scan'}
+            {isScanning ? <><span className="spinner" /> Scanning…</> : company.deep_scanned ? '✓ Scanned — Rescan' : 'Deep Scan'}
           </button>
           {hasResult && (
             isAddedToPipeline ? (
-              <button className="btn btn-ghost btn-sm" onClick={e => { e.stopPropagation(); onNavigatePipeline(); }}>✅ In Pipeline →</button>
+              <button className="btn btn-ghost btn-sm" style={{ borderRadius: 20 }} onClick={e => { e.stopPropagation(); onNavigatePipeline(); }}>In Prospects →</button>
+            ) : isOnWatchList ? (
+              <button className="btn btn-secondary btn-sm" style={{ borderRadius: 20, color: 'var(--accent)', borderColor: 'var(--accent)' }} onClick={e => { e.stopPropagation(); onResumeOutreach(); }}>↩ Resume Outreach</button>
             ) : (
-              <button className="btn btn-green btn-sm" onClick={e => { e.stopPropagation(); onAddToPipeline(); }} disabled={isAddingToPipeline}>
-                {isAddingToPipeline ? <><span className="spinner" /> Adding…</> : '+ Add to Pipeline'}
+              <button className="btn btn-green btn-sm" style={{ borderRadius: 20 }} onClick={e => { e.stopPropagation(); onAddToPipeline(); }} disabled={isAddingToPipeline}>
+                {isAddingToPipeline ? <><span className="spinner" /> Adding…</> : '+ Add to Prospects'}
               </button>
             )
           )}
@@ -1933,6 +1979,21 @@ function CompanyCard({ company, distMiles, status, isScanning, scanningAll, week
               </div>
             )}
             <AddContactForm companyId={company.id} existingContacts={company.contacts || []} onSaved={onUpdateContacts} />
+          </div>
+
+          {/* Export footer */}
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16, paddingTop: 12, borderTop: '1px solid var(--border-light)' }}>
+            <button
+              className="btn btn-ghost btn-sm"
+              onClick={exportToPdf}
+              title="Export this card as PDF"
+              style={{ fontSize: 12, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 5 }}
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><polyline points="9 15 12 18 15 15"/>
+              </svg>
+              Export PDF
+            </button>
           </div>
 
         </div>

@@ -13,17 +13,28 @@ import '@fontsource/playfair-display/800.css'
 import './index.css'
 import App from './App.jsx'
 import V2App from './v2/V2App.jsx'
+import ClientPortalPage from './pages/ClientPortalPage.jsx'
 
-// Route flag: /legacy/* renders the original app for fallback or comparison.
-// Everything else (root, /v2/* alias) renders the redesigned UI.
+// Three-way routing.
 //
-// This flip only exists on the ux/redesign-v2 branch — main stays bit-for-bit
-// unchanged, so production Netlify continues to serve the legacy app at root.
+//   /portal/:token   → ClientPortalPage  (Mike's client-facing portal)
+//   /legacy[/...]    → legacy App        (fallback / comparison only)
+//   everything else  → V2App             (redesigned UI; legacy pages render
+//                                         inside the v2 shell where v2 hasn't
+//                                         ported them yet — see V2App)
+//
+// Only this file decides which tree mounts. Both apps are wired underneath.
 const pathname = typeof window !== 'undefined' ? window.location.pathname : '/';
-const isLegacy = pathname.startsWith('/legacy');
+const portalMatch = pathname.match(/^\/portal\/([^/]+)/);
+const isLegacy    = pathname.startsWith('/legacy');
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>
-    {isLegacy ? <App /> : <V2App />}
+    {portalMatch
+      ? <ClientPortalPage token={portalMatch[1]} />
+      : isLegacy
+        ? <App />
+        : <V2App />
+    }
   </StrictMode>,
 )

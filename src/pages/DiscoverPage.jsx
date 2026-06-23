@@ -58,7 +58,7 @@ function fundingColor(stage) {
   return '#94a3b8';
 }
 
-export default function DiscoverPage({ icp }) {
+export default function DiscoverPage({ icp, refreshKey = 0 }) {
   const [criteria, setCriteria] = useState('');
   const [locationFilter, setLocationFilter] = useState('');
   const [fundingFilter, setFundingFilter] = useState('');
@@ -83,7 +83,7 @@ export default function DiscoverPage({ icp }) {
       setExistingNames(new Set((data || []).map(c => c.name?.toLowerCase().trim())));
     }
     loadExisting();
-  }, []);
+  }, [refreshKey]);
 
   function buildFullCriteria() {
     let parts = [criteria.trim()];
@@ -327,7 +327,7 @@ export default function DiscoverPage({ icp }) {
           </button>
 
           <p style={{ margin: 0, fontSize: 12, color: 'var(--text-muted)', textAlign: 'center' }}>
-            Claude will suggest up to 50 companies based on your ICP and search criteria
+            Claude will suggest up to 25 companies based on your ICP and search criteria
           </p>
         </form>
       </div>
@@ -378,6 +378,18 @@ export default function DiscoverPage({ icp }) {
                 ✓ {successMsg}
               </span>
             )}
+
+            <button
+              onClick={() => { setResults([]); setSelected(new Set()); setSuccessMsg(''); setError(''); }}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 6,
+                padding: '8px 18px', borderRadius: 8, border: '1px solid var(--border)',
+                background: 'var(--surface)', color: 'var(--text-muted)',
+                fontWeight: 600, fontSize: 14, cursor: 'pointer',
+              }}
+            >
+              ↩ New Search
+            </button>
 
             <button
               onClick={handleAddSelected}

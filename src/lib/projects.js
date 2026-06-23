@@ -86,6 +86,17 @@ export async function upsertProject(p) {
   // Convert empty strings to null for date columns
   if (!payload.start_date) payload.start_date = null;
   if (!payload.end_date)   payload.end_date   = null;
+
+  // Always sync client_id whenever client_name is present
+  // (handles new projects, renames, and any rows that slipped through migration)
+  if (payload.client_name?.trim()) {
+    try {
+      const { findOrCreateClient } = await import('./clients.js');
+      const client = await findOrCreateClient(payload.client_name.trim());
+      if (client) payload.client_id = client.id;
+    } catch (e) { console.warn('upsertProject: client sync failed — client_id not set:', e.message); }
+  }
+
   const { data, error } = await supabase
     .from('projects').upsert(payload, { onConflict: 'id' }).select().single();
   if (error) throw new Error(error.message);
@@ -172,10 +183,20 @@ export async function upsertProjectTask(t) {
 }
 
 export async function toggleTask(id, completed) {
-  const { error } = await supabase.from('project_tasks').update({
+  const update = {
     completed,
     completed_at: completed ? new Date().toISOString() : null,
-  }).eq('id', id);
+  };
+  // Unchecking resets the entire review chain
+  if (!completed) {
+    update.approved_at        = null;
+    update.approved_by        = null;
+    update.rejected_at        = null;
+    update.rejected_by        = null;
+    update.rejection_notes    = null;
+    update.rejection_response = null;
+  }
+  const { error } = await supabase.from('project_tasks').update(update).eq('id', id);
   if (error) throw new Error(error.message);
 }
 
@@ -188,6 +209,69 @@ export async function deleteProjectTask(id) {
     const { error: err2 } = await supabase.from('project_tasks').delete().eq('id', id);
     if (err2) throw new Error(err2.message);
   }
+}
+
+// Effective owner = task.assigned_to OR (if blank) the milestone's assigned_to.
+// This function returns all tasks where the effective owner matches `owner`.
+export async function fetchAllTasksByOwner(owner) {
+  const isUnassigned = owner === '__unassigned__';
+
+  // Helper: run a tasks query with optional soft-delete filter
+  async function queryTasks(filter) {
+    try {
+      const { data, error } = await filter(
+        supabase.from('project_tasks').select('*').is('deleted_at', null)
+      );
+      if (!error) return data || [];
+    } catch {}
+    // fallback — no deleted_at column
+    const { data, error } = await filter(supabase.from('project_tasks').select('*'));
+    if (error) throw new Error(error.message);
+    return data || [];
+  }
+
+  // 1. Tasks directly assigned to owner (or unassigned for the __unassigned__ case)
+  const directTasks = await queryTasks(q =>
+    isUnassigned
+      ? q.or('assigned_to.is.null,assigned_to.eq.').order('due_date', { ascending: true, nullsFirst: false })
+      : q.eq('assigned_to', owner).order('due_date', { ascending: true, nullsFirst: false })
+  );
+
+  // 2. Find milestones owned by this person, then pull their unassigned tasks
+  //    (tasks with no assigned_to fall back to the milestone owner)
+  let inheritedTasks = [];
+  if (!isUnassigned) {
+    const { data: ownerMs } = await supabase
+      .from('milestones').select('id').eq('assigned_to', owner);
+    const msIds = (ownerMs || []).map(m => m.id);
+    if (msIds.length > 0) {
+      inheritedTasks = await queryTasks(q =>
+        q.in('milestone_id', msIds)
+         .or('assigned_to.is.null,assigned_to.eq.')
+         .order('due_date', { ascending: true, nullsFirst: false })
+      );
+    }
+  }
+
+  // For __unassigned__: exclude tasks whose milestone IS assigned to someone
+  if (isUnassigned) {
+    const { data: assignedMs } = await supabase
+      .from('milestones').select('id').not('assigned_to', 'is', null).neq('assigned_to', '');
+    const assignedMsIds = new Set((assignedMs || []).map(m => m.id));
+    const truly = directTasks.filter(t => !t.milestone_id || !assignedMsIds.has(t.milestone_id));
+    return truly;
+  }
+
+  // Merge direct + inherited, dedupe by id, sort by due_date
+  const seen = new Set();
+  return [...directTasks, ...inheritedTasks]
+    .filter(t => { if (seen.has(t.id)) return false; seen.add(t.id); return true; })
+    .sort((a, b) => {
+      if (!a.due_date && !b.due_date) return 0;
+      if (!a.due_date) return 1;
+      if (!b.due_date) return -1;
+      return a.due_date.localeCompare(b.due_date);
+    });
 }
 
 export async function restoreProjectTask(id, taskData = null) {
@@ -352,6 +436,7 @@ Project start date: ${startDate}
 Return ONLY a valid JSON object with no markdown, no explanation, no code fences. Use this exact structure:
 {
   "project_name": "Short descriptive project name",
+  "total_budget": 45000,
   "milestones": [
     {
       "title": "Phase name",
@@ -371,6 +456,7 @@ Rules:
 - Each milestone starts the day the previous one ends
 - Tasks within a milestone are concrete, actionable deliverables
 - Estimate realistic durations based on the described work
+- "total_budget": extract the total project fee, investment, or contract value as a plain number (no $ or commas). If not stated, omit the field or set to null
 - assigned_to fields should be blank strings
 - "page" must be the page where that task or milestone is described IN DETAIL — meaning it has its own paragraph, section heading, or substantial explanation of what will be done and how. NEVER use a page that only contains a table of contents, executive summary, scope overview, deliverables list, or any other page where the task appears as a single line or bullet point. If a task is briefly listed on page 2 but has a full description on page 7, "page" must be 7. When in doubt, choose the later page with more detail over the earlier page with a brief mention. If the proposal is plain text (not a PDF), omit page fields or set them to null
 - Return ONLY the raw JSON object, nothing else`;
@@ -460,9 +546,37 @@ export async function fetchProjectFiles(projectId) {
     .from('project_files')
     .select('*')
     .eq('project_id', projectId)
+    .is('archived_at', null)
     .order('uploaded_at', { ascending: false });
   if (error) throw new Error(error.message);
   return data || [];
+}
+
+export async function fetchArchivedProjectFiles(projectId) {
+  const { data, error } = await supabase
+    .from('project_files')
+    .select('*')
+    .eq('project_id', projectId)
+    .not('archived_at', 'is', null)
+    .order('archived_at', { ascending: false });
+  if (error) throw new Error(error.message);
+  return data || [];
+}
+
+export async function archiveProjectFile(id) {
+  const { error } = await supabase
+    .from('project_files')
+    .update({ archived_at: new Date().toISOString() })
+    .eq('id', id);
+  if (error) throw new Error(error.message);
+}
+
+export async function restoreProjectFile(id) {
+  const { error } = await supabase
+    .from('project_files')
+    .update({ archived_at: null })
+    .eq('id', id);
+  if (error) throw new Error(error.message);
 }
 
 export async function uploadProjectFile(projectId, file, milestoneId = null, taskId = null) {
@@ -506,6 +620,414 @@ export async function deleteProjectFile(id, storagePath) {
   }
   const { error } = await supabase.from('project_files').delete().eq('id', id);
   if (error) throw new Error(error.message);
+}
+
+export async function fetchProjectByToken(token) {
+  const { data, error } = await supabase
+    .from('projects').select('*').eq('share_token', token).single();
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+export async function approveMilestone(milestoneId, approvedBy) {
+  const now = new Date().toISOString();
+  const { error } = await supabase.from('milestones')
+    .update({ approved_at: now, approved_by: approvedBy })
+    .eq('id', milestoneId);
+  if (error) throw new Error(error.message);
+}
+
+// ── Review chain helpers ──────────────────────────────────────────────────────
+
+export async function addToReviewChain(taskId, event) {
+  const now = new Date().toISOString();
+  const { data, error } = await supabase
+    .from('project_tasks').select('review_chain').eq('id', taskId).single();
+  if (error) throw new Error(error.message);
+  const chain = Array.isArray(data?.review_chain) ? data.review_chain : [];
+  const updated = [...chain, { ...event, at: event.at || now }];
+  const { error: err2 } = await supabase
+    .from('project_tasks').update({ review_chain: updated }).eq('id', taskId);
+  if (err2) throw new Error(err2.message);
+  return updated;
+}
+
+export async function approveTask(taskId, approvedBy) {
+  const now = new Date().toISOString();
+  const { error } = await supabase.from('project_tasks')
+    .update({ approved_at: now, approved_by: approvedBy, rejected_at: null, rejected_by: null, rejection_notes: null, rejection_response: null })
+    .eq('id', taskId);
+  if (error) throw new Error(error.message);
+  const chain = await addToReviewChain(taskId, { type: 'approved', by: approvedBy, at: now });
+  await syncMilestoneStatusForTask(taskId);
+  return chain;
+}
+
+export async function rejectTask(taskId, rejectedBy, notes) {
+  const now = new Date().toISOString();
+  const { error } = await supabase.from('project_tasks')
+    .update({ rejected_at: now, rejected_by: rejectedBy, rejection_notes: notes, approved_at: null, approved_by: null })
+    .eq('id', taskId);
+  if (error) throw new Error(error.message);
+  const chain = await addToReviewChain(taskId, { type: 'rejected', by: rejectedBy, notes, at: now });
+  // Push milestone back to in_progress so it no longer shows "Completed"
+  await syncMilestoneStatusForTask(taskId);
+  return chain;
+}
+
+// Recalculate and save milestone status based on current tasks in DB.
+// Called after portal-side events (reject/approve) where the PM isn't online.
+export async function syncMilestoneStatusForTask(taskId) {
+  try {
+    const { data: task } = await supabase.from('project_tasks').select('milestone_id').eq('id', taskId).single();
+    if (!task?.milestone_id) return;
+    const msId = task.milestone_id;
+
+    const { data: msTasks } = await supabase.from('project_tasks').select('completed,rejected_at').eq('milestone_id', msId).is('deleted_at', null);
+    const tasks = msTasks || [];
+    if (!tasks.length) return;
+
+    const hasRejected = tasks.some(t => t.rejected_at);
+    const doneCount   = tasks.filter(t => t.completed && !t.rejected_at).length;
+    const newStatus   = hasRejected || doneCount < tasks.length
+                        ? (doneCount > 0 || hasRejected ? 'in_progress' : 'not_started')
+                        : 'completed';
+
+    await supabase.from('milestones').update({ status: newStatus }).eq('id', msId);
+  } catch { /* non-fatal */ }
+}
+
+// Called when PM sends a revision — clears rejection fields so the portal resets
+// to "awaiting approval" state. History is preserved in review_chain.
+export async function clearRejectionFields(taskId) {
+  const { error } = await supabase.from('project_tasks')
+    .update({ rejected_at: null, rejected_by: null, rejection_notes: null, rejection_response: null })
+    .eq('id', taskId);
+  if (error) throw new Error(error.message);
+  await syncMilestoneStatusForTask(taskId);
+}
+
+export async function saveRejectionResponse(taskId, response) {
+  const { error } = await supabase.from('project_tasks')
+    .update({ rejection_response: response })
+    .eq('id', taskId);
+  if (error) throw new Error(error.message);
+}
+
+// ── Project meetings ──────────────────────────────────────────────────────────
+
+export async function fetchProjectMeetings(projectId) {
+  const { data, error } = await supabase
+    .from('project_meetings')
+    .select('*')
+    .eq('project_id', projectId)
+    .order('created_at', { ascending: false });
+  if (error) throw new Error(error.message);
+  return data || [];
+}
+
+export async function saveProjectMeeting({ projectId, dealId, title, meetingDate, meetingTime, attendees, summary, transcript, actionItems }) {
+  const { data, error } = await supabase
+    .from('project_meetings')
+    .insert({
+      project_id:    projectId || null,
+      deal_id:       dealId    || null,
+      title,
+      meeting_date:  meetingDate  || null,
+      meeting_time:  meetingTime  || null,
+      attendees:     attendees?.length ? attendees : null,
+      summary:       summary || null,
+      transcript:    transcript || null,
+      action_items:  actionItems || [],
+    })
+    .select()
+    .single();
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+export async function fetchDealMeetings(dealId) {
+  const { data, error } = await supabase
+    .from('project_meetings')
+    .select('*')
+    .eq('deal_id', dealId)
+    .order('created_at', { ascending: false });
+  if (error) throw new Error(error.message);
+  return data || [];
+}
+
+// Migrate deal meetings to a project when a deal is won
+export async function migrateDealMeetingsToProject(dealId, projectId) {
+  const { error } = await supabase
+    .from('project_meetings')
+    .update({ project_id: projectId })
+    .eq('deal_id', dealId);
+  if (error) throw new Error(error.message);
+}
+
+// Migrate deal tasks (with files + review_chain) to project_tasks when a deal is won.
+// Tasks land at the top level (milestone_id = null) so they're visible in the project.
+export async function migrateDealTasksToProject(dealId, projectId) {
+  // 1. Fetch deal tasks
+  const { data: dealTasks, error: tErr } = await supabase
+    .from('tasks')
+    .select('*')
+    .eq('deal_id', dealId);
+  if (tErr) throw new Error(tErr.message);
+  if (!dealTasks?.length) return;
+
+  // 2. Fetch associated files
+  const taskIds = dealTasks.map(t => t.id);
+  const { data: dealFiles } = await supabase
+    .from('deal_task_files')
+    .select('*')
+    .in('task_id', taskIds);
+  const filesByTask = {};
+  (dealFiles || []).forEach(f => {
+    if (!filesByTask[f.task_id]) filesByTask[f.task_id] = [];
+    filesByTask[f.task_id].push(f);
+  });
+
+  // 3. Insert as project_tasks
+  const now = new Date().toISOString();
+  const rows = dealTasks.map((t, i) => ({
+    project_id:    projectId,
+    milestone_id:  null,
+    title:         t.title,
+    assigned_to:   t.assigned_to || null,
+    due_date:      t.due_date || null,
+    completed:     t.completed || false,
+    completed_at:  t.completed_at || null,
+    review_chain:  t.review_chain || [],
+    order_index:   i,
+    created_at:    now,
+    source_deal_task_id: t.id,
+  }));
+  let inserted = null;
+  const { data: ins1, error: iErr } = await supabase
+    .from('project_tasks')
+    .insert(rows)
+    .select('id, source_deal_task_id');
+  if (iErr) {
+    // source_deal_task_id column may not exist yet — retry without it so tasks still migrate
+    console.warn('migrateDealTasksToProject: retrying without source_deal_task_id:', iErr.message);
+    const rowsWithoutSource = rows.map(({ source_deal_task_id, ...r }) => r);
+    const { data: ins2, error: iErr2 } = await supabase
+      .from('project_tasks')
+      .insert(rowsWithoutSource)
+      .select('id');
+    if (iErr2) {
+      console.warn('migrateDealTasksToProject: insert failed entirely:', iErr2.message);
+      return; // can't proceed without task IDs
+    }
+    inserted = ins2; // no source_deal_task_id mapping available — file copy will be skipped
+  } else {
+    inserted = ins1;
+  }
+
+  // 4. Copy files to project_files for each migrated task
+  // Requires source_deal_task_id mapping; skipped if fallback insert was used
+  if (inserted?.length) {
+    const idMap = {};
+    inserted.forEach(r => { if (r.source_deal_task_id) idMap[r.source_deal_task_id] = r.id; });
+    const fileRows = [];
+    Object.entries(filesByTask).forEach(([dealTaskId, files]) => {
+      const projTaskId = idMap[dealTaskId];
+      if (!projTaskId) return;
+      files.forEach(f => {
+        fileRows.push({
+          project_id:   projectId,
+          task_id:      projTaskId,
+          name:         f.name,
+          size:         f.size,
+          mime_type:    f.mime_type,
+          storage_path: f.storage_path,
+          url:          f.url,
+          created_at:   now,
+        });
+      });
+    });
+    if (fileRows.length) {
+      const { error: fErr } = await supabase.from('project_files').insert(fileRows);
+      if (fErr) console.warn('migrateDealTasksToProject: file copy failed:', fErr.message);
+    }
+  }
+}
+
+// Migrate deal-level files (uploaded directly to the deal, not to a task) → project_files.
+// These appear in the project Files tab at the top level (no milestone_id, no task_id).
+export async function migrateDealFilesToProject(dealId, projectId) {
+  const { data: files, error } = await supabase
+    .from('deal_files')
+    .select('*')
+    .eq('deal_id', dealId);
+  if (error) throw new Error(error.message);
+  if (!files?.length) return;
+
+  const rows = files.map(f => ({
+    project_id:   projectId,
+    milestone_id: null,
+    task_id:      null,
+    name:         f.name,
+    size:         f.size,
+    mime_type:    f.mime_type,
+    storage_path: f.storage_path,
+    url:          f.url,
+  }));
+
+  const { error: iErr } = await supabase.from('project_files').insert(rows);
+  if (iErr) console.warn('migrateDealFilesToProject: insert failed:', iErr.message);
+}
+
+export async function generateProposalFromMeetings(meetings, companyName, startDate) {
+  const key = import.meta.env.VITE_ANTHROPIC_API_KEY;
+  if (!key) throw new Error('No API key configured');
+
+  const today = startDate || new Date().toISOString().slice(0, 10);
+  const transcriptBlock = meetings
+    .map((m, i) => `--- Meeting ${i + 1}: ${m.title}${m.meeting_date ? ` (${m.meeting_date})` : ''} ---\n${m.transcript || m.summary || ''}`)
+    .join('\n\n');
+
+  const prompt = `You are an expert project manager at a creative/digital agency. Based on the following discovery meeting transcripts with a prospective client, generate a structured project proposal plan.
+
+Client/Company: ${companyName || 'Prospective Client'}
+Project start date: ${today}
+
+Return ONLY a valid JSON object with no markdown, no explanation, no code fences:
+{
+  "project_name": "Short descriptive project name",
+  "total_budget": null,
+  "milestones": [
+    {
+      "title": "Phase name",
+      "description": "What this phase delivers",
+      "duration_days": 14,
+      "assigned_to": "",
+      "tasks": [
+        { "title": "Specific deliverable or action", "duration_days": 3, "assigned_to": "" }
+      ]
+    }
+  ]
+}
+
+Rules:
+- Create 3–6 sequential phases that reflect the full project scope based on what was discussed
+- Each milestone starts the day the previous one ends
+- Tasks within a milestone are concrete, actionable deliverables
+- Estimate realistic durations based on the described work
+- Base the scope entirely on what the client described needing — don't add things not mentioned
+- If budget was discussed, include it as total_budget (number only, no $ or commas)
+- Return ONLY the raw JSON object, nothing else
+
+MEETING TRANSCRIPTS:
+${transcriptBlock}`;
+
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': key,
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true',
+    },
+    body: JSON.stringify({
+      model: 'claude-opus-4-5',
+      max_tokens: 4000,
+      messages: [{ role: 'user', content: prompt }],
+    }),
+  });
+
+  if (!res.ok) throw new Error(`API error ${res.status}`);
+  const json = await res.json();
+  const text = json.content[0].text.trim();
+  const match = text.match(/\{[\s\S]*\}/);
+  if (!match) throw new Error('Could not parse AI response as JSON');
+  return JSON.parse(match[0]);
+}
+
+export async function deleteProjectMeeting(id) {
+  const { error } = await supabase.from('project_meetings').delete().eq('id', id);
+  if (error) throw new Error(error.message);
+}
+
+export async function parseMeetingWithAI(transcript, existingTasks = []) {
+  const key = import.meta.env.VITE_ANTHROPIC_API_KEY;
+  if (!key) throw new Error('No API key configured');
+
+  const today = new Date().toISOString().slice(0, 10);
+
+  const existingTasksSection = existingTasks.length > 0
+    ? `\n\nEXISTING PROJECT TASKS (already in the system — cross-reference these):\n${existingTasks.map((t, i) => `${i + 1}. "${t.title}"${t.assigned_to ? ` · assigned: ${t.assigned_to}` : ''}${t.due_date ? ` · due: ${t.due_date}` : ''}${t.completed ? ' · ✓ completed' : ''}`).join('\n')}`
+    : '';
+
+  const prompt = `You are an expert project manager. Read this meeting transcript and extract a structured summary.
+
+Today's date: ${today}${existingTasksSection}
+
+Return ONLY a valid JSON object with no markdown, no explanation, no code fences:
+{
+  "title": "Short descriptive meeting title (eg. 'Kickoff', 'Intro Call', 'Week 2 Check-in')",
+  "meeting_date": "YYYY-MM-DD if a date is mentioned or implied, otherwise null",
+  "company_name": "The client or prospect company name if identifiable from context, otherwise null",
+  "contact_name": "The primary external contact's full name if mentioned, otherwise null",
+  "contact_email": "The primary external contact's email if mentioned, otherwise null",
+  "attendees": ["Full Name", "Full Name"],
+  "meeting_time": "HH:MM in 12-hour format if a time is mentioned, otherwise null",
+  "summary": "2-3 sentence summary of what was discussed and decided",
+  "action_items": [
+    {
+      "title": "Specific actionable task",
+      "owner": "Person responsible if mentioned, otherwise empty string",
+      "due_date": "YYYY-MM-DD if a deadline is mentioned, otherwise null",
+      "estimated_hours": null,
+      "notes": "Any extra context for this task, or empty string",
+      "existing_task_title": "Exact title of an existing task this maps to, or null if this is a new task"
+    }
+  ],
+  "suggested_updates": [
+    {
+      "existing_task_title": "Exact title of the existing task to update",
+      "field": "due_date | title | assigned_to",
+      "suggested_value": "The new value",
+      "reason": "One sentence explaining why this update is suggested"
+    }
+  ]
+}
+
+Rules:
+- Only extract genuine action items — things that need to be done, not things already completed
+- Keep task titles concise and actionable (start with a verb)
+- If no action items are mentioned, return an empty array
+- For company_name: extract the client/prospect company, NOT Part Human or the user's own company
+- For existing_task_title: if an action item clearly refers to an existing task, set this to the exact existing task title so it won't be duplicated
+- For suggested_updates: if the meeting mentions a new deadline, scope change, or reassignment for an EXISTING task, suggest that update here
+- If no updates are suggested, return an empty array for suggested_updates
+- Return ONLY the raw JSON object, nothing else
+
+TRANSCRIPT:
+${transcript}`;
+
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': key,
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true',
+    },
+    body: JSON.stringify({
+      model: 'claude-opus-4-5',
+      max_tokens: 2000,
+      messages: [{ role: 'user', content: prompt }],
+    }),
+  });
+
+  if (!res.ok) throw new Error(`API error ${res.status}`);
+  const json = await res.json();
+  const text = json.content[0].text.trim();
+  const match = text.match(/\{[\s\S]*\}/);
+  if (!match) throw new Error('Could not parse AI response as JSON');
+  return JSON.parse(match[0]);
 }
 
 export async function addExternalLink(projectId, url, name, milestoneId = null, taskId = null) {

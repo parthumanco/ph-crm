@@ -21,6 +21,8 @@ export default function EmailDraftModal({ entry, company, touchNumber, contacts,
   const [copied, setCopied]         = useState(false);
   const [saving, setSaving]         = useState(false);
   const [saveConfirmed, setSaveConfirmed] = useState(false);
+  // Track the DB row id after first insert so subsequent saves/closes use update
+  const [savedTouchId, setSavedTouchId] = useState(existingTouch?.id || null);
   const [angle, setAngle]           = useState(() => {
     const ct = contacts[defaultContactIndex];
     const contactAngle = ct && (company.contact_angles || []).find(ca => ca.name?.toLowerCase() === ct.name?.toLowerCase());
@@ -83,15 +85,17 @@ export default function EmailDraftModal({ entry, company, touchNumber, contacts,
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const saveDraft = async () => {
-    setSaving(true);
+  // Core save logic — silent=true skips UI feedback (used for auto-save on close)
+  const doSave = async (silent = false) => {
+    if (!draft || draft.error) return;
+    if (!silent) setSaving(true);
     try {
       const body = touchNumber === 3
         ? `CONNECTION NOTE:\n${draft.connection_note || ''}\n\n---\nPOST-ACCEPTANCE DM:\n${draft.acceptance_dm || ''}`
         : editedBody;
       const subject = touchNumber === 3 ? '' : editedSubject;
 
-      if (existingTouch?.id) {
+      if (savedTouchId) {
         await supabase.from('touches').update({
           draft_content: body,
           subject_line: subject,
@@ -99,9 +103,9 @@ export default function EmailDraftModal({ entry, company, touchNumber, contacts,
           contact_title: contact.title,
           status: 'ready',
           updated_at: new Date().toISOString(),
-        }).eq('id', existingTouch.id);
+        }).eq('id', savedTouchId);
       } else {
-        await supabase.from('touches').insert({
+        const { data, error } = await supabase.from('touches').insert({
           pipeline_entry_id: entry.id,
           touch_number: touchNumber,
           touch_type: meta.type || 'email',
@@ -110,16 +114,27 @@ export default function EmailDraftModal({ entry, company, touchNumber, contacts,
           subject_line: subject,
           draft_content: body,
           status: 'ready',
-        });
+        }).select().single();
+        if (!error && data?.id) setSavedTouchId(data.id);
       }
-      setSaveConfirmed(true);
-      setTimeout(() => setSaveConfirmed(false), 2000);
+      if (!silent) {
+        setSaveConfirmed(true);
+        setTimeout(() => setSaveConfirmed(false), 2000);
+      }
       onSave?.();
     } catch (e) {
-      alert('Error saving: ' + e.message);
+      if (!silent) alert('Error saving: ' + e.message);
     } finally {
-      setSaving(false);
+      if (!silent) setSaving(false);
     }
+  };
+
+  const saveDraft = () => doSave(false);
+
+  // Auto-save draft on close if there's an unsent draft
+  const handleClose = async () => {
+    if (hasDraft && !isSent) await doSave(true);
+    onClose();
   };
 
   const markSent = () => {
@@ -141,14 +156,14 @@ export default function EmailDraftModal({ entry, company, touchNumber, contacts,
   const hasDraft = draft && !draft.error;
 
   return (
-    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
+    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && handleClose()}>
       <div className="modal" style={{ maxWidth: 1100, width: '95vw' }}>
         <div className="modal-header">
           <div>
             <h3>{meta.label} — {company.name}</h3>
             <p>{meta.desc?.(engName) ?? ''}{existingTouch?.status === 'ready' ? ' · Saved draft loaded' : ''}</p>
           </div>
-          <button className="modal-close" onClick={onClose}>✕</button>
+          <button className="modal-close" onClick={handleClose}>✕</button>
         </div>
 
         <div className="modal-body">
@@ -197,6 +212,22 @@ export default function EmailDraftModal({ entry, company, touchNumber, contacts,
             <>
               {touchNumber === 3 ? (
                 <>
+                  {contact.linkedin && (
+                    <div style={{ marginBottom: 14 }}>
+                      <a
+                        href={contact.linkedin}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="btn btn-sm"
+                        style={{ background: '#0077b5', color: '#fff', display: 'inline-flex', alignItems: 'center', gap: 6, textDecoration: 'none', fontWeight: 600 }}
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                          <path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 0 1-2.063-2.065 2.064 2.064 0 1 1 2.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/>
+                        </svg>
+                        Open {contact.name?.split(' ')[0]}'s Profile
+                      </a>
+                    </div>
+                  )}
                   <div style={{ marginBottom: 12 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
                       <label style={{ marginBottom: 0 }}>Connection Request Note (300 char max)</label>
@@ -259,19 +290,30 @@ export default function EmailDraftModal({ entry, company, touchNumber, contacts,
                 <span>📌</span>
                 <span>
                   <strong>To:</strong> {contact.name}{contact.title ? `, ${contact.title}` : ''}
-                  {contact.email ? (
-                    <>
-                      {' · '}
-                      <a
-                        href={`https://mail.google.com/mail/?view=cm&to=${encodeURIComponent(contact.email)}${editedSubject ? `&su=${encodeURIComponent(editedSubject)}` : ''}${editedBody || emailSignature ? `&body=${encodeURIComponent(editedBody + (emailSignature ? '\n\n' + emailSignature : ''))}` : ''}`}
-                        target="_blank"
-                        rel="noreferrer"
-                        style={{ color: 'var(--accent)', fontWeight: 600 }}
-                      >
-                        {contact.email}
-                      </a>
-                    </>
-                  ) : ''}
+                  {touchNumber === 3 ? (
+                    contact.linkedin ? (
+                      <>
+                        {' · '}
+                        <a href={contact.linkedin} target="_blank" rel="noreferrer" style={{ color: '#0077b5', fontWeight: 600 }}>
+                          LinkedIn Profile ↗
+                        </a>
+                      </>
+                    ) : ' · No LinkedIn URL saved'
+                  ) : (
+                    contact.email ? (
+                      <>
+                        {' · '}
+                        <a
+                          href={`https://mail.google.com/mail/?view=cm&to=${encodeURIComponent(contact.email)}${editedSubject ? `&su=${encodeURIComponent(editedSubject)}` : ''}${editedBody || emailSignature ? `&body=${encodeURIComponent(editedBody + (emailSignature ? '\n\n' + emailSignature : ''))}` : ''}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          style={{ color: 'var(--accent)', fontWeight: 600 }}
+                        >
+                          {contact.email}
+                        </a>
+                      </>
+                    ) : ''
+                  )}
                 </span>
               </div>
             </>
@@ -279,7 +321,7 @@ export default function EmailDraftModal({ entry, company, touchNumber, contacts,
         </div>
 
         <div className="modal-footer">
-          <button className="btn btn-secondary" onClick={onClose}>Close</button>
+          <button className="btn btn-secondary" onClick={handleClose}>Close</button>
           {hasDraft && !isSent && (
             <button className="btn btn-secondary" onClick={saveDraft} disabled={saving}>
               {saving ? 'Saving…' : saveConfirmed ? '✅ Saved!' : '💾 Save Draft'}
