@@ -2053,6 +2053,233 @@
 .v2-contact-card__source--scan   { color: var(--v2-blue); }
 .v2-contact-card__source--thesis { color: var(--v2-purple); }
 
+/* ============================================
+   MEETINGS (Project detail)
+============================================ */
+.v2-meeting-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.v2-meeting {
+    border: 1px solid var(--crm-border);
+    border-radius: 8px;
+    overflow: hidden;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.v2-meeting:hover { border-color: var(--crm-border-strong); }
+.v2-meeting.is-expanded {
+    border-color: var(--v2-teal);
+    box-shadow: var(--crm-shadow-sm);
+}
+.v2-meeting__head {
+    display: grid;
+    grid-template-columns: 110px 1fr 20px;
+    gap: 16px;
+    align-items: center;
+    padding: 12px 16px;
+    width: 100%;
+    background: var(--crm-surface-raised);
+    border: none;
+    text-align: left;
+    cursor: pointer;
+    font-family: inherit;
+}
+.v2-meeting__head:hover { background: var(--crm-surface-alt); }
+.v2-meeting.is-expanded .v2-meeting__head { background: var(--crm-surface-tint); }
+.v2-meeting__date {
+    font-size: 11px;
+    color: var(--crm-text-3);
+    line-height: 1.3;
+}
+.v2-meeting__date strong {
+    display: block;
+    font-family: var(--v2-font-headline);
+    font-weight: 700;
+    font-size: 13px;
+    color: var(--crm-text);
+    letter-spacing: -0.01em;
+}
+.v2-meeting__title-block {
+    min-width: 0;
+}
+.v2-meeting__title {
+    font-family: var(--v2-font-headline);
+    font-weight: 700;
+    font-size: 14px;
+    letter-spacing: -0.01em;
+    color: var(--crm-text);
+    line-height: 1.3;
+}
+.v2-meeting__attendees {
+    font-family: var(--v2-font-serif);
+    font-style: italic;
+    font-size: 11px;
+    color: var(--crm-text-3);
+    margin-top: 2px;
+}
+.v2-meeting__chevron {
+    color: var(--crm-text-3);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: transform 0.15s ease;
+}
+.v2-meeting__chevron svg { width: 14px; height: 14px; }
+.v2-meeting.is-expanded .v2-meeting__chevron { transform: rotate(90deg); }
+
+.v2-meeting__body {
+    padding: 14px 18px 16px;
+    border-top: 1px solid var(--crm-border);
+    background: var(--crm-surface-tint);
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+.v2-meeting__field {}
+.v2-meeting__field-label {
+    font-family: var(--v2-font-serif);
+    font-style: italic;
+    font-size: 11px;
+    color: var(--v2-teal);
+    letter-spacing: 0.04em;
+    margin-bottom: 4px;
+}
+.v2-meeting__field-body {
+    font-size: 13px;
+    color: var(--crm-text-2);
+    line-height: 1.55;
+    white-space: pre-wrap;
+}
+.v2-meeting__list {
+    padding-left: 18px;
+    margin: 0;
+    font-size: 13px;
+    color: var(--crm-text-2);
+    line-height: 1.6;
+}
+.v2-meeting__list li { margin-bottom: 3px; }
+.v2-meeting__transcript {
+    margin-top: 4px;
+}
+.v2-meeting__transcript summary {
+    font-family: var(--v2-font-serif);
+    font-style: italic;
+    font-size: 12px;
+    color: var(--crm-text-3);
+    cursor: pointer;
+    padding: 4px 0;
+}
+.v2-meeting__transcript summary:hover { color: var(--crm-text-2); }
+.v2-meeting__transcript-body {
+    font-family: ui-monospace, 'SF Mono', Monaco, Menlo, monospace;
+    font-size: 11px;
+    color: var(--crm-text-2);
+    background: var(--crm-surface-raised);
+    border: 1px solid var(--crm-border);
+    border-radius: 6px;
+    padding: 10px 12px;
+    margin-top: 6px;
+    line-height: 1.5;
+    max-height: 320px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+}
+
+/* ============================================
+   RESEARCH (Project detail / Account hub)
+============================================ */
+.v2-research {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+}
+.v2-research__block {
+    padding: 0;
+}
+.v2-research__block--callout {
+    background: rgba(58, 17, 112, 0.04);
+    border: 1px solid rgba(58, 17, 112, 0.18);
+    border-radius: 8px;
+    padding: 14px 16px;
+}
+.v2-research__label {
+    font-family: var(--v2-font-serif);
+    font-style: italic;
+    font-size: 12px;
+    color: var(--v2-purple);
+    letter-spacing: 0.04em;
+    margin-bottom: 6px;
+}
+.v2-research__body {
+    font-size: 14px;
+    color: var(--crm-text-2);
+    line-height: 1.6;
+    white-space: pre-wrap;
+}
+.v2-research__next-step {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px dashed rgba(58, 17, 112, 0.18);
+    font-size: 13px;
+    color: var(--crm-text);
+}
+.v2-research__next-step strong {
+    font-family: var(--v2-font-serif);
+    font-style: italic;
+    font-weight: 400;
+    color: var(--v2-purple);
+    margin-right: 4px;
+}
+.v2-research__list {
+    padding-left: 18px;
+    margin: 0;
+    font-size: 13px;
+    color: var(--crm-text-2);
+    line-height: 1.55;
+}
+.v2-research__list li { margin-bottom: 4px; }
+.v2-research__items {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+.v2-research__item {
+    border: 1px solid var(--crm-border);
+    border-left: 3px solid var(--v2-purple);
+    border-radius: 6px;
+    padding: 10px 14px;
+    background: var(--crm-surface-raised);
+}
+.v2-research__item-title {
+    font-family: var(--v2-font-headline);
+    font-weight: 700;
+    font-size: 13px;
+    letter-spacing: -0.01em;
+    color: var(--crm-text);
+    line-height: 1.3;
+    margin-bottom: 4px;
+}
+.v2-research__item-title a {
+    color: var(--crm-text);
+    text-decoration: none;
+}
+.v2-research__item-title a:hover { color: var(--v2-purple); text-decoration: underline; }
+.v2-research__item-body {
+    font-size: 12px;
+    color: var(--crm-text-2);
+    line-height: 1.5;
+    margin-bottom: 6px;
+    white-space: pre-wrap;
+}
+.v2-research__item-meta {
+    font-family: var(--v2-font-serif);
+    font-style: italic;
+    font-size: 11px;
+    color: var(--crm-text-3);
+}
+
 @media (max-width: 1100px) {
     .v2-stat-row { grid-template-columns: repeat(2, 1fr); }
     .v2-project-list__header,

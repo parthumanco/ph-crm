@@ -4,6 +4,10 @@ import {
     fetchMilestones,
     fetchProjectTasks,
     fetchProjectFiles,
+    fetchProjectMeetings,
+    fetchClients,
+    fetchClientDetail,
+    fetchCompanyIntel,
     fmtDate,
 } from './safe-data.js';
 import {
@@ -66,7 +70,11 @@ export default function V2ProjectPage({ projectId, onBack }) {
     const [milestones, setMilestones] = useState([]);
     const [tasksByMs, setTasksByMs] = useState({});
     const [files, setFiles] = useState([]);
+    const [meetings, setMeetings] = useState([]);
+    const [contacts, setContacts] = useState([]);
+    const [intel, setIntel] = useState(null);
     const [expandedMs, setExpandedMs] = useState(null);
+    const [expandedMeeting, setExpandedMeeting] = useState(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
 
@@ -93,13 +101,20 @@ export default function V2ProjectPage({ projectId, onBack }) {
             }
             setProject(target);
 
-            const [ms, fs, allTasks] = await Promise.all([
+            const [ms, fs, allTasks, mts, allClients, intelData] = await Promise.all([
                 fetchMilestones(target.id),
                 fetchProjectFiles(target.id).catch(() => []),
                 fetchProjectTasks(target.id).catch(() => []),
+                fetchProjectMeetings(target.id).catch(() => []),
+                fetchClients().catch(() => []),
+                target.client_name
+                    ? fetchCompanyIntel(target.client_name).catch(() => null)
+                    : Promise.resolve(null),
             ]);
             setMilestones(ms);
             setFiles(fs);
+            setMeetings(mts);
+            setIntel(intelData);
 
             // Bucket tasks by milestone in one pass (was N parallel fetches before — wasteful)
             const byMs = Object.fromEntries(ms.map((m) => [m.id, []]));
@@ -111,6 +126,25 @@ export default function V2ProjectPage({ projectId, onBack }) {
             // Auto-expand the in-progress milestone on first load
             const current = ms.find((m) => m.status === 'in_progress');
             if (current && expandedMs === null) setExpandedMs(current.id);
+
+            // Pull canonical contacts via client lookup. Falls back to
+            // project.contacts if no client record exists yet.
+            try {
+                const targetClient = (allClients || []).find((c) => {
+                    const a = (c.name || '').trim().toLowerCase();
+                    const b = (target.client_name || '').trim().toLowerCase();
+                    return a && b && a === b;
+                });
+                if (targetClient?.id) {
+                    const detail = await fetchClientDetail(targetClient.id);
+                    const rich = Array.isArray(detail?.client?.contacts) ? detail.client.contacts : [];
+                    setContacts(rich.length ? rich : (target.contacts || []));
+                } else {
+                    setContacts(Array.isArray(target.contacts) ? target.contacts : []);
+                }
+            } catch {
+                setContacts(Array.isArray(target.contacts) ? target.contacts : []);
+            }
         } catch (err) {
             setError(err.message || 'Failed to load project');
         } finally {
@@ -433,6 +467,259 @@ export default function V2ProjectPage({ projectId, onBack }) {
                                 </div>
                             );
                         })}
+                    </div>
+                </div>
+            </div>
+
+            {/* MEETINGS */}
+            <div className="v2-section v2-section--teal">
+                <div className="v2-section__header">
+                    <div className="v2-section__title-block">
+                        <div className="v2-section__eyebrow">conversations</div>
+                        <h2 className="v2-section__title">
+                            Meetings
+                            <span className="v2-section__count">
+                                {meetings.length === 0 ? 'none yet' : `${meetings.length} logged`}
+                            </span>
+                        </h2>
+                    </div>
+                </div>
+                <div className="v2-section__card">
+                    <div className="v2-section__body">
+                        {meetings.length === 0 ? (
+                            <div className="v2-empty">
+                                <strong>No meetings logged yet</strong>
+                                Meeting transcripts and summaries land here. Import from Granola or paste a transcript from the legacy Projects page.
+                            </div>
+                        ) : (
+                            <div className="v2-meeting-list">
+                                {meetings.map((m) => {
+                                    const expanded = expandedMeeting === m.id;
+                                    const date = m.meeting_date || m.created_at;
+                                    return (
+                                        <div key={m.id} className={`v2-meeting ${expanded ? 'is-expanded' : ''}`}>
+                                            <button
+                                                type="button"
+                                                className="v2-meeting__head"
+                                                onClick={() => setExpandedMeeting(expanded ? null : m.id)}
+                                            >
+                                                <div className="v2-meeting__date">
+                                                    {date && (
+                                                        <>
+                                                            <strong>{fmtDate(date)}</strong>
+                                                            {m.meeting_time && <span>{m.meeting_time}</span>}
+                                                        </>
+                                                    )}
+                                                </div>
+                                                <div className="v2-meeting__title-block">
+                                                    <div className="v2-meeting__title">{m.title || 'Meeting'}</div>
+                                                    {m.attendees && (
+                                                        <div className="v2-meeting__attendees">
+                                                            {Array.isArray(m.attendees) ? m.attendees.join(' · ') : m.attendees}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                                <div className="v2-meeting__chevron">
+                                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+                                                </div>
+                                            </button>
+                                            {expanded && (
+                                                <div className="v2-meeting__body">
+                                                    {m.summary && (
+                                                        <div className="v2-meeting__field">
+                                                            <div className="v2-meeting__field-label">Summary</div>
+                                                            <div className="v2-meeting__field-body">{m.summary}</div>
+                                                        </div>
+                                                    )}
+                                                    {Array.isArray(m.action_items) && m.action_items.length > 0 && (
+                                                        <div className="v2-meeting__field">
+                                                            <div className="v2-meeting__field-label">Action items</div>
+                                                            <ul className="v2-meeting__list">
+                                                                {m.action_items.map((a, i) => (
+                                                                    <li key={i}>{typeof a === 'string' ? a : (a.text || JSON.stringify(a))}</li>
+                                                                ))}
+                                                            </ul>
+                                                        </div>
+                                                    )}
+                                                    {m.transcript && (
+                                                        <details className="v2-meeting__transcript">
+                                                            <summary>Show transcript</summary>
+                                                            <pre className="v2-meeting__transcript-body">{m.transcript}</pre>
+                                                        </details>
+                                                    )}
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </div>
+                </div>
+            </div>
+
+            {/* CONTACTS — same shape as the Account hub's contacts section */}
+            <div className="v2-section v2-section--blue">
+                <div className="v2-section__header">
+                    <div className="v2-section__title-block">
+                        <div className="v2-section__eyebrow">who you talk to</div>
+                        <h2 className="v2-section__title">
+                            Contacts
+                            <span className="v2-section__count">
+                                {contacts.length} {contacts.length === 1 ? 'person' : 'people'}
+                            </span>
+                        </h2>
+                    </div>
+                    <div className="v2-section__actions">
+                        <a
+                            href="/legacy"
+                            onClick={(e) => { e.preventDefault(); window.location.href = '/legacy'; }}
+                            className="v2-section__link"
+                        >
+                            Manage in legacy
+                        </a>
+                    </div>
+                </div>
+                <div className="v2-section__card">
+                    <div className="v2-section__body">
+                        {contacts.length === 0 ? (
+                            <div className="v2-empty">
+                                <strong>No contacts on this project yet</strong>
+                                Add them from Mike's Clients or Projects page — they sync to the client record and show up everywhere.
+                            </div>
+                        ) : (
+                            <div className="v2-contact-grid">
+                                {contacts.map((c, i) => {
+                                    const initials = (c.name || '?')
+                                        .split(' ')
+                                        .filter(Boolean)
+                                        .slice(0, 2)
+                                        .map((w) => w[0].toUpperCase())
+                                        .join('');
+                                    return (
+                                        <div key={c.id || c.name || i} className="v2-contact-card">
+                                            <div className="v2-contact-card__head">
+                                                <div className="v2-contact-card__avatar">{initials}</div>
+                                                <div className="v2-contact-card__body">
+                                                    <div className="v2-contact-card__name-row">
+                                                        <span className="v2-contact-card__name">{c.name || 'Unnamed'}</span>
+                                                        {c.is_primary && <span className="v2-contact-card__primary">Primary</span>}
+                                                    </div>
+                                                    {c.title && <div className="v2-contact-card__title">{c.title}</div>}
+                                                </div>
+                                            </div>
+                                            <div className="v2-contact-card__details">
+                                                {c.email && (
+                                                    <a className="v2-contact-card__link" href={`mailto:${c.email}`}>
+                                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/></svg>
+                                                        {c.email}
+                                                    </a>
+                                                )}
+                                                {c.linkedin && (
+                                                    <a className="v2-contact-card__link" href={c.linkedin} target="_blank" rel="noopener noreferrer">
+                                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 8a6 6 0 0 1 6 6v7h-4v-7a2 2 0 0 0-4 0v7h-4v-7a6 6 0 0 1 6-6z"/><rect x="2" y="9" width="4" height="12"/><circle cx="4" cy="4" r="2"/></svg>
+                                                        LinkedIn
+                                                    </a>
+                                                )}
+                                                {c.source && (
+                                                    <span className={`v2-contact-card__source v2-contact-card__source--${c.source}`}>{c.source}</span>
+                                                )}
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </div>
+                </div>
+            </div>
+
+            {/* RESEARCH — pulls company intel (summary, positioning, thesis, research items) */}
+            <div className="v2-section v2-section--purple">
+                <div className="v2-section__header">
+                    <div className="v2-section__title-block">
+                        <div className="v2-section__eyebrow">company intel</div>
+                        <h2 className="v2-section__title">
+                            Research
+                            {intel && (
+                                <span className="v2-section__count">
+                                    {intel.thesis_built ? 'thesis built' : intel.summary ? 'summary only' : 'starter'}
+                                </span>
+                            )}
+                        </h2>
+                    </div>
+                    <div className="v2-section__actions">
+                        <a
+                            href="/legacy"
+                            onClick={(e) => { e.preventDefault(); window.location.href = '/legacy'; }}
+                            className="v2-section__link"
+                        >
+                            Run scan in legacy
+                        </a>
+                    </div>
+                </div>
+                <div className="v2-section__card">
+                    <div className="v2-section__body">
+                        {!intel ? (
+                            <div className="v2-empty">
+                                <strong>No research yet for {project.client_name || 'this client'}</strong>
+                                Open the legacy Clients or Signal Watch page to run a deep scan or build a thesis. The results land here automatically.
+                            </div>
+                        ) : (
+                            <div className="v2-research">
+                                {intel.summary && (
+                                    <div className="v2-research__block">
+                                        <div className="v2-research__label">Summary</div>
+                                        <p className="v2-research__body">{intel.summary}</p>
+                                    </div>
+                                )}
+                                {intel.thesis && (
+                                    <div className="v2-research__block v2-research__block--callout">
+                                        <div className="v2-research__label">Thesis</div>
+                                        <p className="v2-research__body">{intel.thesis}</p>
+                                        {intel.thesis_next_step && (
+                                            <div className="v2-research__next-step">
+                                                <strong>Next step:</strong> {intel.thesis_next_step}
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+                                {Array.isArray(intel.thesis_risks) && intel.thesis_risks.length > 0 && (
+                                    <div className="v2-research__block">
+                                        <div className="v2-research__label">Risks</div>
+                                        <ul className="v2-research__list">
+                                            {intel.thesis_risks.map((r, i) => (
+                                                <li key={i}>{typeof r === 'string' ? r : (r.text || r.label || JSON.stringify(r))}</li>
+                                            ))}
+                                        </ul>
+                                    </div>
+                                )}
+                                {Array.isArray(intel.research_items) && intel.research_items.length > 0 && (
+                                    <div className="v2-research__block">
+                                        <div className="v2-research__label">Research items · {intel.research_items.length}</div>
+                                        <div className="v2-research__items">
+                                            {intel.research_items.map((item) => (
+                                                <div key={item.id} className="v2-research__item">
+                                                    <div className="v2-research__item-title">
+                                                        {item.url ? (
+                                                            <a href={item.url} target="_blank" rel="noopener noreferrer">{item.title || item.url}</a>
+                                                        ) : (
+                                                            item.title || 'Untitled'
+                                                        )}
+                                                    </div>
+                                                    {item.body && <div className="v2-research__item-body">{item.body}</div>}
+                                                    {item.added_by && (
+                                                        <div className="v2-research__item-meta">
+                                                            {item.added_by} · {item.created_at ? fmtDate(item.created_at) : ''}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        )}
                     </div>
                 </div>
             </div>

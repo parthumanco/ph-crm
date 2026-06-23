@@ -28,6 +28,7 @@ export {
     fetchArchivedMilestones,
     fetchProjectTasks,
     fetchProjectFiles,
+    fetchProjectMeetings,
     PROJECT_STATUSES,
     MILESTONE_STATUSES,
     projColor,
