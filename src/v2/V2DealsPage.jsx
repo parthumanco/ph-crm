@@ -13,6 +13,10 @@ import {
     moveDealStage,
     deleteDeal,
     upsertProject,
+    migrateDealMeetingsToProject,
+    migrateDealTasksToProject,
+    migrateDealFilesToProject,
+    upsertClientContacts,
 } from './write-data.js';
 import V2Modal from './V2Modal.jsx';
 import V2Confirm from './V2Confirm.jsx';
@@ -150,18 +154,58 @@ export default function V2DealsPage() {
             await moveDealStage(dealId, newStage);
 
             if (newStage === 'won') {
-                // Auto-create a project for the won deal
+                // Auto-create a project for the won deal AND migrate every
+                // artifact attached to the deal so nothing is silently lost.
+                // Mirrors legacy createProjectFromDeal in DealsPage.jsx.
+                let proj = null;
                 try {
-                    await upsertProject({
+                    proj = await upsertProject({
                         name: deal.title || deal.company_name,
                         client_name: deal.company_name,
                         contact_name: deal.contact_name || null,
                         status: 'active',
                         start_date: new Date().toISOString().slice(0, 10),
+                        source_deal_id: deal.id,
                     });
-                    setToast({ kind: 'win', text: `Won! Project created for ${deal.company_name}.` });
                 } catch (err) {
                     setToast({ kind: 'warn', text: `Won, but couldn't create project: ${err.message}` });
+                }
+
+                if (proj?.id) {
+                    // Sync the deal's primary contact into the canonical
+                    // clients.contacts list. upsertProject resolves the
+                    // client_id (creates the client row if needed).
+                    if (proj.client_id && deal.contact_name) {
+                        upsertClientContacts(proj.client_id, [{
+                            name:  deal.contact_name,
+                            email: deal.contact_email || null,
+                            title: deal.contact_title || null,
+                        }]).catch((err) => console.warn('[Won contact sync]', err.message));
+                    }
+
+                    // Migrate the deal's artifacts onto the new project so
+                    // meetings, tasks, and files don't vanish. Each migration
+                    // is independent — partial success is acceptable; we
+                    // surface what made it through in the toast.
+                    const results = await Promise.allSettled([
+                        migrateDealMeetingsToProject(deal.id, proj.id),
+                        migrateDealTasksToProject(deal.id, proj.id),
+                        migrateDealFilesToProject(deal.id, proj.id),
+                    ]);
+                    const labels = ['meetings', 'tasks', 'files'];
+                    const moved   = results.map((r, i) => r.status === 'fulfilled' ? labels[i] : null).filter(Boolean);
+                    const failed  = results.map((r, i) => r.status === 'rejected' ? labels[i] : null).filter(Boolean);
+
+                    if (failed.length === 0) {
+                        const tail = moved.length
+                            ? ` — moved ${moved.join(', ')} over`
+                            : '';
+                        setToast({ kind: 'win', text: `Won! Project created for ${deal.company_name}${tail}.` });
+                    } else if (moved.length === 0) {
+                        setToast({ kind: 'warn', text: `Won, project created, but ${failed.join(' / ')} migration failed.` });
+                    } else {
+                        setToast({ kind: 'warn', text: `Won — ${moved.join(', ')} migrated; ${failed.join(' / ')} failed.` });
+                    }
                 }
             } else if (newStage === 'lost') {
                 setToast({ kind: 'info', text: `${deal.company_name} moved to Lost — back to nurture in 6 months.` });

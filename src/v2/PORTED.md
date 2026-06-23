@@ -56,9 +56,15 @@ Tracked here so they're visible, not silent. Fix in priority order
 - **Restore archived project from the account view** — workflow gap.
 
 ### Deals — `V2DealsPage`
-- **Drag-to-Won data migration** — legacy moves meetings/tasks/files
-  onto the new project. V2's `moveDealStage('won')` only creates
-  the project shell. ⚠ Real data loss risk on Won.
+- ~~**Drag-to-Won data migration**~~ — closed in commit fixing
+  urgent gap #4. The Won path now mirrors Mike's
+  `createProjectFromDeal`: upserts the project with `source_deal_id`,
+  syncs the deal's primary contact into `clients.contacts` via
+  `upsertClientContacts`, then runs `migrateDealMeetingsToProject`
+  + `migrateDealTasksToProject` + `migrateDealFilesToProject` via
+  `Promise.allSettled`. Partial success is surfaced in the toast
+  ("Won — meetings, files migrated; tasks failed.") so the user
+  knows exactly what made it through.
 - **Lost-deals browse panel** with `lost_reason`. V2 has count only.
 - **Split retainer/month + project-value chips** on deal cards. V2
   collapses to one figure.

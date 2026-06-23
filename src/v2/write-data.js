@@ -39,7 +39,15 @@ export {
     toggleTask,
     deleteProjectTask,
     restoreProjectTask,
+    // Deal → Project migration helpers (run on Won)
+    migrateDealMeetingsToProject,
+    migrateDealTasksToProject,
+    migrateDealFilesToProject,
 } from '../lib/projects.js';
+
+// Client contacts — used during the Won migration to push the deal's
+// primary contact into the canonical clients.contacts list.
+export { upsertClientContacts } from '../lib/clients.js';
 
 export {
     // Deals
