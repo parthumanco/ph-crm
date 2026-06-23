@@ -50,3 +50,16 @@ export {
     addActivity,
     deleteActivity,
 } from '../lib/deals.js';
+
+export {
+    // Support cases
+    upsertCase,
+    deleteCase,
+    addMessage as addCaseMessage,
+    deleteMessage as deleteCaseMessage,
+} from '../lib/support.js';
+
+export {
+    // Settings — only the ICP profile for now
+    saveIcp,
+} from '../lib/settings.js';

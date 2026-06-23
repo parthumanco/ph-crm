@@ -1735,6 +1735,211 @@
     border-color: rgba(55, 187, 176, 0.18);
 }
 
+/* Thread header — status dropdown + actions */
+.v2-thread__header {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+}
+.v2-thread__status {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+.v2-thread__actions {
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+    flex-shrink: 0;
+}
+
+/* Inline select — used in the thread status dropdown */
+.v2-select-wrap--inline {
+    width: auto;
+}
+.v2-select--inline {
+    padding: 4px 26px 4px 8px;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--crm-text);
+    background: var(--crm-surface-alt);
+    border-color: transparent;
+    border-radius: 6px;
+    min-width: 0;
+    width: auto;
+}
+.v2-select--inline:hover { background: var(--crm-surface-tint); }
+.v2-select--inline:focus { background: var(--crm-surface-raised); }
+.v2-select-wrap--inline .v2-select__chevron {
+    right: 6px;
+    width: 12px;
+    height: 12px;
+}
+
+/* Composer — reply / internal note */
+.v2-composer {
+    padding: 14px 24px 20px;
+    border-top: 1px solid var(--crm-border);
+    background: var(--crm-surface-tint);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+.v2-composer__tabs {
+    display: flex;
+    gap: 16px;
+}
+.v2-composer__tab {
+    font-family: var(--v2-font-body);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--crm-text-3);
+    background: none;
+    border: none;
+    padding: 2px 0 4px;
+    border-bottom: 2px solid transparent;
+    cursor: pointer;
+    transition: color 0.15s ease, border-color 0.15s ease;
+}
+.v2-composer__tab:hover { color: var(--crm-text); }
+.v2-composer__tab.is-active {
+    color: var(--crm-text);
+    border-bottom-color: var(--v2-orange);
+}
+.v2-composer__input {
+    background: var(--crm-surface-raised);
+    border: 1px solid var(--crm-border);
+    border-radius: 8px;
+    padding: 12px 14px;
+    font-family: var(--v2-font-body);
+    font-size: 13px;
+    color: var(--crm-text);
+    resize: vertical;
+    min-height: 70px;
+    line-height: 1.5;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.v2-composer__input:focus {
+    outline: none;
+    border-color: var(--v2-orange);
+    box-shadow: 0 0 0 3px rgba(247, 94, 42, 0.12);
+}
+.v2-composer__input--note {
+    background: rgba(247, 94, 42, 0.04);
+    border-style: dashed;
+    border-color: rgba(247, 94, 42, 0.30);
+}
+.v2-composer__input--note:focus {
+    background: var(--crm-surface-raised);
+}
+.v2-composer__footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+}
+.v2-composer__hint {
+    font-family: var(--v2-font-serif);
+    font-style: italic;
+    font-size: 12px;
+    color: var(--crm-text-3);
+}
+
+/* ============================================
+   V2 SETTINGS (ICP)
+============================================ */
+
+/* Generic per-section accent — reusable for any page that needs
+   color-coded section headers. Settings uses orange + blue. */
+.v2-section--orange { --v2-section-accent: var(--v2-orange); }
+.v2-section--blue   { --v2-section-accent: var(--v2-blue); }
+.v2-section--purple { --v2-section-accent: var(--v2-purple); }
+.v2-section--teal   { --v2-section-accent: var(--v2-teal); }
+
+.v2-settings__intro {
+    font-family: var(--v2-font-serif);
+    font-style: italic;
+    font-size: 14px;
+    color: var(--crm-text-3);
+    line-height: 1.5;
+    margin-bottom: 16px;
+}
+.v2-settings__field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 18px;
+}
+.v2-settings__field:last-child { margin-bottom: 0; }
+
+.v2-settings__field-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+}
+.v2-settings__label {
+    font-family: var(--v2-font-body);
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--crm-text);
+}
+.v2-settings__empty-chip {
+    font-family: var(--v2-font-serif);
+    font-style: italic;
+    font-size: 11px;
+    color: var(--v2-orange);
+    background: rgba(247, 94, 42, 0.08);
+    padding: 2px 8px;
+    border-radius: 9999px;
+    text-transform: lowercase;
+    letter-spacing: 0.02em;
+}
+.v2-settings__textarea {
+    width: 100%;
+    background: var(--crm-surface);
+    border: 1px solid var(--crm-border);
+    border-radius: 8px;
+    padding: 12px 14px;
+    font-family: var(--v2-font-body);
+    font-size: 13px;
+    color: var(--crm-text);
+    line-height: 1.55;
+    resize: vertical;
+    min-height: 80px;
+    transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+}
+.v2-settings__textarea:hover {
+    background: var(--crm-surface-raised);
+}
+.v2-settings__textarea:focus {
+    outline: none;
+    background: var(--crm-surface-raised);
+    border-color: var(--v2-orange);
+    box-shadow: 0 0 0 3px rgba(247, 94, 42, 0.10);
+}
+.v2-settings__help {
+    font-family: var(--v2-font-serif);
+    font-style: italic;
+    font-size: 12px;
+    color: var(--crm-text-3);
+    line-height: 1.45;
+}
+
+.v2-settings__footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 16px 22px;
+    border-top: 1px solid var(--crm-border);
+    background: var(--crm-surface-tint);
+    border-radius: 10px;
+    flex-wrap: wrap;
+    margin-top: 8px;
+}
+
 @media (max-width: 1100px) {
     .v2-stat-row { grid-template-columns: repeat(2, 1fr); }
     .v2-project-list__header,

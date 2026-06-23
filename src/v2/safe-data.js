@@ -68,9 +68,19 @@ export {
     priorityLabel as casePriorityLabel,
     channelIcon,
     channelLabel,
+    getSlaHours,
+    slaSummary,
     fetchCases,
     fetchMessages as fetchCaseMessages,
 } from '../lib/support.js';
+
+// ── Settings ─────────────────────────────────────────────
+export {
+    DEFAULT_ICP,
+    loadIcp,
+    isWeeklyScanDue,
+    loadLastWeeklyScan,
+} from '../lib/settings.js';
 
 // ── Companies (Signal Watch) ─────────────────────────────
 import { supabase } from '../lib/supabase.js';

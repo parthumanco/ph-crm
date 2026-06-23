@@ -9,6 +9,7 @@ import V2AccountsPage from './V2AccountsPage.jsx';
 import V2AccountPage from './V2AccountPage.jsx';
 import V2SupportPage from './V2SupportPage.jsx';
 import V2SignalsPage from './V2SignalsPage.jsx';
+import V2SettingsPage from './V2SettingsPage.jsx';
 
 // Legacy pages — rendered inside the v2 shell until ported
 import LegacyDiscoverPage from '../pages/DiscoverPage.jsx';
@@ -103,6 +104,7 @@ const PAGE_META = {
 const PORTED = new Set([
     'projects', 'project-detail', 'deals',
     'accounts', 'account-detail', 'support', 'signals',
+    'settings',
 ]);
 
 function Icon({ name }) {
@@ -252,8 +254,9 @@ export default function V2App() {
                             onSelectProject={(id) => setView({ page: 'project-detail', projectId: id, accountName: null })}
                         />
                     )}
-                    {view.page === 'support' && <V2SupportPage />}
-                    {view.page === 'signals' && <V2SignalsPage />}
+                    {view.page === 'support'  && <V2SupportPage />}
+                    {view.page === 'signals'  && <V2SignalsPage />}
+                    {view.page === 'settings' && <V2SettingsPage />}
 
                     {/* Legacy-in-shell fallbacks — Mike's pages render here
                         until they get a V2 counterpart. Each receives the
@@ -262,7 +265,6 @@ export default function V2App() {
                     {view.page === 'outreach'  && <LegacyShim pageKey="Outreach">      <LegacyPipelinePage icp={icp} /></LegacyShim>}
                     {view.page === 'report'    && <LegacyShim pageKey="Weekly Report"> <LegacyWeeklyReportPage icp={icp} /></LegacyShim>}
                     {view.page === 'chat'      && <LegacyShim pageKey="Little Stevie"> <LegacyChatPage /></LegacyShim>}
-                    {view.page === 'settings'  && <LegacyShim pageKey="ICP Settings">  <LegacySettingsPage icp={icp} onIcpSaved={setIcp} /></LegacyShim>}
                     {view.page === 'documents' && <LegacyShim pageKey="Documents">     <LegacyDocumentsPage /></LegacyShim>}
                     {view.page === 'oldgold'   && <LegacyShim pageKey="Old Gold">      <LegacyOldGoldPage isActive={true} onNavigate={goTo} /></LegacyShim>}
                     {view.page === 'clients'   && <LegacyShim pageKey="Clients">       <LegacyClientsPage icp={icp} onNavigate={goTo} /></LegacyShim>}

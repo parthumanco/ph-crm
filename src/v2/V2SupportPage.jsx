@@ -1,19 +1,31 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
     fetchCases,
     fetchCaseMessages,
     caseStatusLabel,
     casePriorityLabel,
     CASE_PRIORITIES,
+    CASE_STATUSES,
 } from './safe-data.js';
+import {
+    upsertCase,
+    deleteCase,
+    addCaseMessage,
+} from './write-data.js';
+import V2Modal from './V2Modal.jsx';
+import V2Confirm from './V2Confirm.jsx';
+import CaseForm from './forms/CaseForm.jsx';
 
 /* ============================================
-   V2 SUPPORT
+   V2 SUPPORT — now interactive
 
    Two-pane layout: cases list (left), thread
-   (right). Wired to lib/support.js read
-   functions. Selecting a case in the list
-   loads its message thread via fetchCaseMessages.
+   (right). Adds:
+     • + New case button on the page header
+     • Click a case row → edit modal
+     • Status dropdown in the thread header
+     • Resolve button
+     • Composer at the bottom with reply / note tabs
 ============================================ */
 
 function priorityClass(p) {
@@ -53,47 +65,124 @@ export default function V2SupportPage() {
     const [loadingThread, setLoadingThread] = useState(false);
     const [error, setError] = useState(null);
 
-    useEffect(() => {
-        let cancelled = false;
-        (async () => {
-            try {
-                setLoading(true);
-                setError(null);
-                const list = await fetchCases();
-                if (cancelled) return;
-                setCases(list);
-                if (list.length && !selectedId) setSelectedId(list[0].id);
-            } catch (err) {
-                if (!cancelled) setError(err.message || 'Failed to load cases');
-            } finally {
-                if (!cancelled) setLoading(false);
-            }
-        })();
-        return () => { cancelled = true; };
+    // Mutation state
+    const [caseModal,    setCaseModal]    = useState(null);   // null | { mode: 'new' | 'edit', target?: case }
+    const [deleteTarget, setDeleteTarget] = useState(null);   // null | case
+    const [composerKind, setComposerKind] = useState('reply'); // 'reply' | 'note'
+    const [composerText, setComposerText] = useState('');
+    const [sending,      setSending]      = useState(false);
+    const [working,      setWorking]      = useState(false);
+    const [toast,        setToast]        = useState(null);
+
+    const loadCases = useCallback(async () => {
+        try {
+            setLoading(true);
+            setError(null);
+            const list = await fetchCases();
+            setCases(list);
+            if (list.length && !selectedId) setSelectedId(list[0].id);
+        } catch (err) {
+            setError(err.message || 'Failed to load cases');
+        } finally {
+            setLoading(false);
+        }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
+    const loadThread = useCallback(async (caseId) => {
+        if (!caseId) { setMessages([]); return; }
+        try {
+            setLoadingThread(true);
+            const msgs = await fetchCaseMessages(caseId);
+            setMessages(msgs);
+        } catch {
+            setMessages([]);
+        } finally {
+            setLoadingThread(false);
+        }
+    }, []);
+
+    useEffect(() => { loadCases(); }, [loadCases]);
+    useEffect(() => { loadThread(selectedId); }, [selectedId, loadThread]);
+
+    // Auto-dismiss toast
     useEffect(() => {
-        if (!selectedId) { setMessages([]); return; }
-        let cancelled = false;
-        (async () => {
-            try {
-                setLoadingThread(true);
-                const msgs = await fetchCaseMessages(selectedId);
-                if (!cancelled) setMessages(msgs);
-            } catch {
-                if (!cancelled) setMessages([]);
-            } finally {
-                if (!cancelled) setLoadingThread(false);
-            }
-        })();
-        return () => { cancelled = true; };
-    }, [selectedId]);
+        if (!toast) return;
+        const t = setTimeout(() => setToast(null), 4000);
+        return () => clearTimeout(t);
+    }, [toast]);
 
     const selectedCase = useMemo(
         () => cases.find((c) => c.id === selectedId),
         [cases, selectedId]
     );
+
+    const handleStatusChange = useCallback(async (newStatus) => {
+        if (!selectedCase || selectedCase.status === newStatus) return;
+        const prevStatus = selectedCase.status;
+        // Optimistic update so the dropdown feels snappy
+        setCases((s) => s.map((c) => c.id === selectedCase.id ? { ...c, status: newStatus } : c));
+        try {
+            await upsertCase({ ...selectedCase, status: newStatus });
+            setToast({ kind: 'info', text: `Status: ${caseStatusLabel(newStatus)}` });
+        } catch (err) {
+            // Roll back
+            setCases((s) => s.map((c) => c.id === selectedCase.id ? { ...c, status: prevStatus } : c));
+            setToast({ kind: 'warn', text: err.message || 'Couldn\'t update status' });
+        }
+    }, [selectedCase]);
+
+    const handleResolve = useCallback(async () => {
+        if (!selectedCase) return;
+        const prevStatus = selectedCase.status;
+        setCases((s) => s.map((c) => c.id === selectedCase.id ? { ...c, status: 'resolved' } : c));
+        try {
+            await upsertCase({ ...selectedCase, status: 'resolved', resolved_at: new Date().toISOString() });
+            setToast({ kind: 'win', text: 'Case resolved.' });
+        } catch (err) {
+            setCases((s) => s.map((c) => c.id === selectedCase.id ? { ...c, status: prevStatus } : c));
+            setToast({ kind: 'warn', text: err.message || 'Couldn\'t resolve' });
+        }
+    }, [selectedCase]);
+
+    const handleSend = useCallback(async (e) => {
+        e?.preventDefault?.();
+        if (!selectedCase || !composerText.trim()) return;
+        setSending(true);
+        try {
+            await addCaseMessage({
+                case_id: selectedCase.id,
+                body: composerText.trim(),
+                internal: composerKind === 'note',
+                author_role: 'internal',
+                author_name: 'Peter',
+            });
+            setComposerText('');
+            await loadThread(selectedCase.id);
+            setToast({ kind: 'win', text: composerKind === 'note' ? 'Internal note saved.' : 'Reply sent.' });
+        } catch (err) {
+            setToast({ kind: 'warn', text: err.message || 'Couldn\'t send' });
+        } finally {
+            setSending(false);
+        }
+    }, [selectedCase, composerText, composerKind, loadThread]);
+
+    const handleDelete = useCallback(async () => {
+        if (!deleteTarget) return;
+        setWorking(true);
+        try {
+            await deleteCase(deleteTarget.id);
+            if (selectedId === deleteTarget.id) setSelectedId(null);
+            setDeleteTarget(null);
+            setCaseModal(null);
+            await loadCases();
+            setToast({ kind: 'info', text: 'Case deleted.' });
+        } catch (err) {
+            setToast({ kind: 'warn', text: err.message || 'Couldn\'t delete' });
+        } finally {
+            setWorking(false);
+        }
+    }, [deleteTarget, selectedId, loadCases]);
 
     const stats = useMemo(() => {
         const open = cases.filter((c) => c.status !== 'resolved' && c.status !== 'closed').length;
@@ -117,6 +206,16 @@ export default function V2SupportPage() {
                     <p className="v2-page-subtitle">
                         {loading ? 'Loading from Supabase…' : `${cases.length} total · sorted by recent activity`}
                     </p>
+                </div>
+                <div className="v2-page-header__actions">
+                    <button
+                        type="button"
+                        className="v2-btn v2-btn--primary"
+                        onClick={() => setCaseModal({ mode: 'new' })}
+                    >
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+                        New case
+                    </button>
                 </div>
             </div>
 
@@ -204,7 +303,7 @@ export default function V2SupportPage() {
                     {selectedCase && (
                         <>
                             <div className="v2-thread__header">
-                                <div>
+                                <div style={{ flex: 1, minWidth: 0 }}>
                                     <div className="v2-thread__breadcrumb">
                                         <span>{selectedCase.client_name || selectedCase.company_name}</span>
                                         {selectedCase.case_number && <span>· Case #{selectedCase.case_number}</span>}
@@ -215,9 +314,42 @@ export default function V2SupportPage() {
                                             <span className={`v2-priority-chip__dot ${priorityClass(selectedCase.priority)}`} />
                                             {casePriorityLabel(selectedCase.priority)} priority
                                         </span>
-                                        <span>Status: {caseStatusLabel(selectedCase.status)}</span>
+                                        <div className="v2-thread__status">
+                                            <span style={{ color: 'var(--crm-text-3)' }}>Status:</span>
+                                            <div className="v2-select-wrap v2-select-wrap--inline">
+                                                <select
+                                                    className="v2-select v2-select--inline"
+                                                    value={selectedCase.status || 'open'}
+                                                    onChange={(e) => handleStatusChange(e.target.value)}
+                                                >
+                                                    {CASE_STATUSES.map((s) => (
+                                                        <option key={s.id} value={s.id}>{s.label}</option>
+                                                    ))}
+                                                </select>
+                                                <svg className="v2-select__chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+                                            </div>
+                                        </div>
                                         {selectedCase.contact_name && <span>Contact: {selectedCase.contact_name}</span>}
                                     </div>
+                                </div>
+                                <div className="v2-thread__actions">
+                                    <button
+                                        type="button"
+                                        className="v2-btn"
+                                        onClick={() => setCaseModal({ mode: 'edit', target: selectedCase })}
+                                    >
+                                        Edit
+                                    </button>
+                                    {selectedCase.status !== 'resolved' && (
+                                        <button
+                                            type="button"
+                                            className="v2-btn v2-btn--primary"
+                                            onClick={handleResolve}
+                                        >
+                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                                            Resolve
+                                        </button>
+                                    )}
                                 </div>
                             </div>
 
@@ -248,10 +380,115 @@ export default function V2SupportPage() {
                                     );
                                 })}
                             </div>
+
+                            {/* Composer — reply to client or internal note */}
+                            <form className="v2-composer" onSubmit={handleSend}>
+                                <div className="v2-composer__tabs">
+                                    <button
+                                        type="button"
+                                        className={`v2-composer__tab ${composerKind === 'reply' ? 'is-active' : ''}`}
+                                        onClick={() => setComposerKind('reply')}
+                                    >
+                                        Reply to client
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className={`v2-composer__tab ${composerKind === 'note' ? 'is-active' : ''}`}
+                                        onClick={() => setComposerKind('note')}
+                                    >
+                                        Internal note
+                                    </button>
+                                </div>
+                                <textarea
+                                    className={`v2-composer__input ${composerKind === 'note' ? 'v2-composer__input--note' : ''}`}
+                                    value={composerText}
+                                    onChange={(e) => setComposerText(e.target.value)}
+                                    placeholder={composerKind === 'reply'
+                                        ? 'Write a reply to the client…  ⌘+Enter to send'
+                                        : 'Internal note — not visible to the client.'}
+                                    onKeyDown={(e) => {
+                                        if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') handleSend(e);
+                                    }}
+                                    rows={3}
+                                />
+                                <div className="v2-composer__footer">
+                                    <span className="v2-composer__hint">
+                                        {composerKind === 'reply'
+                                            ? 'Sent · attaches to the timeline'
+                                            : 'Stays on this case · team only'}
+                                    </span>
+                                    <button
+                                        type="submit"
+                                        className="v2-btn v2-btn--primary"
+                                        disabled={sending || !composerText.trim()}
+                                    >
+                                        {sending
+                                            ? 'Sending…'
+                                            : composerKind === 'reply' ? 'Send reply' : 'Save note'}
+                                    </button>
+                                </div>
+                            </form>
                         </>
                     )}
                 </div>
             </div>
+
+            {/* Toast */}
+            {toast && (
+                <div className={`v2-toast v2-toast--${toast.kind}`}>
+                    <span className="v2-toast__icon">{toast.kind === 'win' ? '✓' : toast.kind === 'warn' ? '!' : '·'}</span>
+                    <span>{toast.text}</span>
+                </div>
+            )}
+
+            {/* New / edit case modal */}
+            <V2Modal
+                open={caseModal !== null}
+                onClose={() => setCaseModal(null)}
+                eyebrow={caseModal?.mode === 'edit' ? 'edit case' : 'new case'}
+                title={caseModal?.mode === 'edit'
+                    ? (caseModal.target?.title || caseModal.target?.subject || 'Edit case')
+                    : 'Create a case'}
+                footer={
+                    caseModal?.mode === 'edit' && (
+                        <button
+                            type="button"
+                            className="v2-btn-link v2-btn-link--danger"
+                            onClick={() => setDeleteTarget(caseModal.target)}
+                            style={{ marginRight: 'auto' }}
+                        >
+                            Delete case
+                        </button>
+                    )
+                }
+            >
+                {caseModal && (
+                    <CaseForm
+                        initial={caseModal.mode === 'edit' ? caseModal.target : null}
+                        onSaved={(saved) => {
+                            const wasNew = caseModal.mode === 'new';
+                            setCaseModal(null);
+                            loadCases().then(() => {
+                                if (wasNew && saved?.id) setSelectedId(saved.id);
+                            });
+                            setToast({ kind: 'win', text: wasNew ? 'Case created.' : 'Case updated.' });
+                        }}
+                        onCancel={() => setCaseModal(null)}
+                    />
+                )}
+            </V2Modal>
+
+            <V2Confirm
+                open={deleteTarget !== null}
+                onClose={() => setDeleteTarget(null)}
+                onConfirm={handleDelete}
+                eyebrow="careful"
+                title="Delete this case?"
+                description={deleteTarget ? `"${deleteTarget.title || deleteTarget.subject || 'Untitled'}" and all its messages will be removed.` : null}
+                confirmLabel="Delete case"
+                confirmTone="danger"
+                loading={working}
+            />
         </>
     );
 }

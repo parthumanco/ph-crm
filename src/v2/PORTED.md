@@ -18,8 +18,9 @@ the v2 instance at https://ph-crm-v2.netlify.app.
 | Deals | `V2DealsPage` | — | ✅ V2 | Drag-drop kanban + Won-creates-project |
 | Accounts | `V2AccountsPage` | — | ✅ V2 | Derived from projects+deals+cases (no accounts table) |
 | Account hub | `V2AccountPage` | — | ✅ V2 | + New deal, + Log activity, edit deal cards |
-| Support | `V2SupportPage` | — | ✅ V2 | **Read-only** — reply/note/resolve not yet wired |
+| Support | `V2SupportPage` | — | ✅ V2 | Reply / internal note / status change / resolve / create / edit / delete |
 | Signals | `V2SignalsPage` | — | ✅ V2 | **Read-only** — scan/CSV/pipeline-add not yet wired |
+| ICP Settings | `V2SettingsPage` | — | ✅ V2 | ICP fields only — brand brain / team / weekly-scan config still on legacy |
 | Discover | — | `DiscoverPage` | 🟡 Legacy | Fully functional via shim |
 | Outreach (Active Pipeline) | — | `PipelinePage` | 🟡 Legacy | Fully functional via shim |
 | Old Gold | — | `OldGoldPage` | 🟡 Legacy | New page Mike added — passes `isActive` + `onNavigate` |
@@ -27,7 +28,6 @@ the v2 instance at https://ph-crm-v2.netlify.app.
 | Documents | — | `DocumentsPage` | 🟡 Legacy | New page Mike added |
 | Weekly Report | — | `WeeklyReportPage` | 🟡 Legacy | |
 | Little Stevie | — | `ChatPage` | 🟡 Legacy | |
-| ICP Settings | — | `SettingsPage` | 🟡 Legacy | Writes via `onIcpSaved` — keeps V2App's `icp` in sync |
 
 **Status legend:**
 - ✅ V2 — designed and functional in V2
@@ -36,8 +36,8 @@ the v2 instance at https://ph-crm-v2.netlify.app.
 - ❌ Not in V2 — page exists in legacy but no V2 entry yet
 
 **Mutations still missing on ported pages:**
-- Support: send reply, internal note, change status, resolve, create case
 - Signals: add to pipeline, run deep scan, weekly rescan, CSV import, edit/delete company
+- ICP Settings: extend to cover brand brain, team members, weekly-scan config
 
 ## Parallel work — rules of the road
 
