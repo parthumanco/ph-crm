@@ -2709,3 +2709,83 @@
     font-family: var(--v2-font-body);
     line-height: 1.5;
 }
+
+/* ============================================
+   LEGACY-IN-SHELL — styling shim
+
+   Lets Mike's legacy pages render cleanly inside
+   the v2 content area without bleeding through.
+   Legacy pages keep their inline styles; this
+   layer normalizes padding, suppresses anything
+   from the legacy index.css that would conflict
+   with the v2 shell (e.g. duplicate sidebars),
+   and stamps a small "legacy view" banner at the
+   top so the state of the port is visible.
+============================================ */
+
+.v2-legacy-shim {
+    /* Bleed out of .v2-content's normal padding so the legacy page
+       can use its own internal padding without being double-padded.
+       The shim's banner stays inside the normal content rhythm. */
+    margin: -28px -36px -64px;
+    background: var(--crm-surface);
+    display: flex;
+    flex-direction: column;
+    min-height: calc(100vh - var(--v2-header-h) - 32px);
+}
+.v2-legacy-shim__banner {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    padding: 10px 36px;
+    border-bottom: 1px solid var(--crm-border);
+    background: var(--crm-surface-tint);
+    font-size: 12px;
+    color: var(--crm-text-3);
+    line-height: 1.4;
+}
+.v2-legacy-shim__eyebrow {
+    font-family: var(--v2-font-serif);
+    font-style: italic;
+    font-size: 11px;
+    color: var(--v2-purple);
+    text-transform: lowercase;
+    letter-spacing: 0.04em;
+    flex-shrink: 0;
+}
+.v2-legacy-shim__text {
+    color: var(--crm-text-2);
+}
+.v2-legacy-shim__text strong {
+    color: var(--crm-text);
+    font-weight: 600;
+}
+.v2-legacy-shim__body {
+    flex: 1;
+    /* Let the legacy page own everything inside this box. Width is
+       implicit from the parent .v2-content; legacy components handle
+       their own layout. */
+    min-width: 0;
+}
+
+/* Suppress legacy app-shell elements that would visually conflict
+   with v2's own shell. The legacy app uses .app-shell + .sidebar +
+   .topbar; inside the shim we don't want any of those rendering.
+   Legacy pages themselves don't use these classes — they're inside
+   App.jsx — but defensive in case any subcomponent does. */
+.v2-legacy-shim .app-shell,
+.v2-legacy-shim .sidebar,
+.v2-legacy-shim .topbar,
+.v2-legacy-shim .app-page-header {
+    display: none !important;
+}
+
+/* Pull legacy .page-content / inline-styled wrappers in slightly so
+   they don't push against the viewport edge. Legacy pages use a
+   generous 32-40px padding; this nudges it down inside the shim. */
+.v2-legacy-shim > .v2-legacy-shim__body > * {
+    padding-left: 24px;
+    padding-right: 24px;
+    padding-top: 16px;
+    padding-bottom: 32px;
+}

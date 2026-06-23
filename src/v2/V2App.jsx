@@ -1,4 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { loadIcp, DEFAULT_ICP } from '../lib/settings.js';
+
+// V2 pages — fully redesigned
 import V2ProjectsPage from './V2ProjectsPage.jsx';
 import V2ProjectPage from './V2ProjectPage.jsx';
 import V2DealsPage from './V2DealsPage.jsx';
@@ -6,33 +9,56 @@ import V2AccountsPage from './V2AccountsPage.jsx';
 import V2AccountPage from './V2AccountPage.jsx';
 import V2SupportPage from './V2SupportPage.jsx';
 import V2SignalsPage from './V2SignalsPage.jsx';
+
+// Legacy pages — rendered inside the v2 shell until ported
+import LegacyDiscoverPage from '../pages/DiscoverPage.jsx';
+import LegacyPipelinePage from '../pages/PipelinePage.jsx';
+import LegacyWeeklyReportPage from '../pages/WeeklyReportPage.jsx';
+import LegacyChatPage from '../pages/ChatPage.jsx';
+import LegacySettingsPage from '../pages/SettingsPage.jsx';
+import LegacyDocumentsPage from '../pages/DocumentsPage.jsx';
+import LegacyOldGoldPage from '../pages/OldGoldPage.jsx';
+import LegacyClientsPage from '../pages/ClientsPage.jsx';
+
 import './v2.css';
 
 /* ============================================
    V2 SHELL — Redesigned CRM
 
-   Loaded by main.jsx when window.location.pathname
-   starts with "/v2". Replaces the entire legacy
-   App tree while on a /v2 URL; legacy app at /
-   stays bit-for-bit untouched.
+   Mounted at root and /v2/* by main.jsx. Routes
+   not yet ported to V2 render their LEGACY
+   counterpart inside the v2 shell, so Mike's
+   ongoing work on main flows through to the v2
+   instance automatically via the weekly
+   main → ux/redesign-v2 merge.
 
-   READ-ONLY GUARANTEE
-   ────────────────────
-   Every v2 page imports data only through
-   safe-data.js, which re-exports nothing that
-   mutates the database. Adding a write surface
-   later requires explicitly extending that file
-   — making the decision visible in code review.
+   Read-only guarantee
+   ───────────────────
+   Every V2 page imports data only through
+   safe-data.js (reads) and write-data.js
+   (mutations). Adding a write requires explicitly
+   re-exporting it from write-data.js — making the
+   decision visible in code review.
+
+   Legacy-in-shell pages
+   ─────────────────────
+   Render directly via their imported component
+   with whatever props App.jsx passes them. They
+   carry their own inline styling and lifecycle.
+   That's fine — they keep working while we
+   progressively replace each with a V2 version.
 ============================================ */
 
 const NAV_SECTIONS = [
     {
         label: 'work',
         items: [
-            { id: 'projects', label: 'Projects', icon: 'folder' },
-            { id: 'deals',    label: 'Deals',    icon: 'cash' },
-            { id: 'accounts', label: 'Accounts', icon: 'list' },
-            { id: 'support',  label: 'Support',  icon: 'support' },
+            { id: 'projects',  label: 'Projects',  icon: 'folder' },
+            { id: 'deals',     label: 'Deals',     icon: 'cash' },
+            { id: 'accounts',  label: 'Accounts',  icon: 'list' },
+            { id: 'clients',   label: 'Clients',   icon: 'building' },
+            { id: 'documents', label: 'Documents', icon: 'doc' },
+            { id: 'support',   label: 'Support',   icon: 'support' },
         ],
     },
     {
@@ -41,12 +67,13 @@ const NAV_SECTIONS = [
             { id: 'signals',  label: 'Signals',  icon: 'spark' },
             { id: 'discover', label: 'Discover', icon: 'search' },
             { id: 'outreach', label: 'Outreach', icon: 'wave' },
+            { id: 'oldgold',  label: 'Old Gold', icon: 'coin' },
         ],
     },
     {
         label: 'tools',
         items: [
-            { id: 'report',   label: 'Weekly Report', icon: 'doc' },
+            { id: 'report',   label: 'Weekly Report', icon: 'report' },
             { id: 'chat',     label: 'Little Stevie', icon: 'chat' },
             { id: 'settings', label: 'ICP Settings',  icon: 'gear' },
         ],
@@ -59,16 +86,24 @@ const PAGE_META = {
     deals:           { breadcrumb: 'Deals' },
     accounts:        { breadcrumb: 'Accounts' },
     'account-detail':{ breadcrumb: 'Account' },
+    clients:         { breadcrumb: 'Clients' },
+    documents:       { breadcrumb: 'Documents' },
     support:         { breadcrumb: 'Support' },
     signals:         { breadcrumb: 'Signals' },
     discover:        { breadcrumb: 'Discover' },
-    outreach:        { breadcrumb: 'Outreach' },
+    outreach:        { breadcrumb: 'Outreach (Active Pipeline)' },
+    oldgold:         { breadcrumb: 'Old Gold' },
     report:          { breadcrumb: 'Weekly Report' },
     chat:            { breadcrumb: 'Little Stevie' },
     settings:        { breadcrumb: 'ICP Settings' },
 };
 
-const PORTED = new Set(['projects', 'project-detail', 'deals', 'accounts', 'account-detail', 'support', 'signals']);
+// Pages with a V2-native component. Everything else in NAV_SECTIONS falls
+// back to its legacy component inside the v2 shell.
+const PORTED = new Set([
+    'projects', 'project-detail', 'deals',
+    'accounts', 'account-detail', 'support', 'signals',
+]);
 
 function Icon({ name }) {
     const stroke = { stroke: 'currentColor', fill: 'none', strokeWidth: 1.75, strokeLinecap: 'round', strokeLinejoin: 'round' };
@@ -83,23 +118,26 @@ function Icon({ name }) {
         case 'doc':     return <svg className="v2-nav-item__icon" viewBox="0 0 24 24" {...stroke}><path d="M6 4h12v16l-6-3-6 3z"/></svg>;
         case 'chat':    return <svg className="v2-nav-item__icon" viewBox="0 0 24 24" {...stroke}><path d="M21 12a8 8 0 1 1-3-6"/><path d="M21 4v5h-5"/></svg>;
         case 'gear':    return <svg className="v2-nav-item__icon" viewBox="0 0 24 24" {...stroke}><circle cx="12" cy="12" r="3"/></svg>;
+        case 'building':return <svg className="v2-nav-item__icon" viewBox="0 0 24 24" {...stroke}><path d="M3 21V7l9-4 9 4v14"/><path d="M9 21V11h6v10"/></svg>;
+        case 'coin':    return <svg className="v2-nav-item__icon" viewBox="0 0 24 24" {...stroke}><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4"/></svg>;
+        case 'report':  return <svg className="v2-nav-item__icon" viewBox="0 0 24 24" {...stroke}><path d="M6 4h12v16l-6-3-6 3z"/></svg>;
         default: return null;
     }
 }
 
-function V2Placeholder({ pageKey }) {
+/** Wraps a legacy page so the v2 shell sets the visual context.
+    Pages keep their inline styles and inner layout; we just normalize
+    padding and provide a hook for any v2-side overrides. */
+function LegacyShim({ pageKey, children }) {
     return (
-        <div className="v2-placeholder">
-            <div className="v2-placeholder__eyebrow">coming next</div>
-            <div className="v2-placeholder__title">{pageKey}</div>
-            <p className="v2-placeholder__body">
-                Not ported to v2 yet. Use the legacy app for {pageKey} until this surface lands.
-            </p>
-            <p className="v2-placeholder__hint">
-                <a href="/legacy" onClick={(e) => { e.preventDefault(); window.location.href = '/legacy'; }}>
-                    ← Use the legacy app
-                </a>
-            </p>
+        <div className="v2-legacy-shim" data-legacy-page={pageKey}>
+            <div className="v2-legacy-shim__banner">
+                <span className="v2-legacy-shim__eyebrow">legacy view</span>
+                <span className="v2-legacy-shim__text">
+                    Mike's working surface for <strong>{pageKey}</strong> — flows through to v2 until we port the design.
+                </span>
+            </div>
+            <div className="v2-legacy-shim__body">{children}</div>
         </div>
     );
 }
@@ -110,6 +148,13 @@ export default function V2App() {
     // (URL routing comes in a later phase).
     const [view, setView] = useState({ page: 'projects', projectId: null, accountName: null });
     const goTo = (page, extras = {}) => setView({ page, projectId: null, accountName: null, ...extras });
+
+    // ICP — loaded once at mount, kept in sync when legacy SettingsPage
+    // saves a new value. Legacy pages expect this prop.
+    const [icp, setIcp] = useState(DEFAULT_ICP);
+    useEffect(() => {
+        loadIcp().then((loaded) => setIcp(loaded)).catch(() => { /* keep DEFAULT_ICP */ });
+    }, []);
 
     const meta = PAGE_META[view.page];
 
@@ -209,7 +254,18 @@ export default function V2App() {
                     )}
                     {view.page === 'support' && <V2SupportPage />}
                     {view.page === 'signals' && <V2SignalsPage />}
-                    {!PORTED.has(view.page) && <V2Placeholder pageKey={view.page} />}
+
+                    {/* Legacy-in-shell fallbacks — Mike's pages render here
+                        until they get a V2 counterpart. Each receives the
+                        same props its legacy App.jsx call site uses. */}
+                    {view.page === 'discover'  && <LegacyShim pageKey="Discover">      <LegacyDiscoverPage icp={icp} /></LegacyShim>}
+                    {view.page === 'outreach'  && <LegacyShim pageKey="Outreach">      <LegacyPipelinePage icp={icp} /></LegacyShim>}
+                    {view.page === 'report'    && <LegacyShim pageKey="Weekly Report"> <LegacyWeeklyReportPage icp={icp} /></LegacyShim>}
+                    {view.page === 'chat'      && <LegacyShim pageKey="Little Stevie"> <LegacyChatPage /></LegacyShim>}
+                    {view.page === 'settings'  && <LegacyShim pageKey="ICP Settings">  <LegacySettingsPage icp={icp} onIcpSaved={setIcp} /></LegacyShim>}
+                    {view.page === 'documents' && <LegacyShim pageKey="Documents">     <LegacyDocumentsPage /></LegacyShim>}
+                    {view.page === 'oldgold'   && <LegacyShim pageKey="Old Gold">      <LegacyOldGoldPage isActive={true} onNavigate={goTo} /></LegacyShim>}
+                    {view.page === 'clients'   && <LegacyShim pageKey="Clients">       <LegacyClientsPage icp={icp} onNavigate={goTo} /></LegacyShim>}
                 </div>
 
             </div>
