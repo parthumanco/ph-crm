@@ -39,6 +39,72 @@ the v2 instance at https://ph-crm-v2.netlify.app.
 - Signals: add to pipeline, run deep scan, weekly rescan, CSV import, edit/delete company
 - ICP Settings: extend to cover brand brain, team members, weekly-scan config
 
+## Known feature-parity gaps (from the V2-vs-legacy audit)
+
+Tracked here so they're visible, not silent. Fix in priority order
+(top items are real "where did my data go?" risks).
+
+### Account hub — `V2AccountPage`
+- **Documents tab** — legacy `ClientsPage` Documents tab surfaces
+  client-level documents + files. V2 has no surface yet.
+- **Ask AI tab** — legacy `ClientsPage` Ask AI chat. V2 has no surface yet.
+- **Quick Scan / Deep Scan / Build Thesis / Export PDF buttons** —
+  mutation-class. Open in legacy for now.
+- **Add/edit/delete client record itself** (notes editable in place,
+  website/linkedin_url editing) — mutation-class. Open in legacy.
+- **Restore archived project from the account view** — workflow gap.
+
+### Deals — `V2DealsPage`
+- **Drag-to-Won data migration** — legacy moves meetings/tasks/files
+  onto the new project. V2's `moveDealStage('won')` only creates
+  the project shell. ⚠ Real data loss risk on Won.
+- **Lost-deals browse panel** with `lost_reason`. V2 has count only.
+- **Split retainer/month + project-value chips** on deal cards. V2
+  collapses to one figure.
+- **Log Meeting / TranscriptImporter** button on the page.
+- **Draft Proposal → auto-create project with milestones from
+  parsed proposal** (lives in legacy DealDetailModal).
+
+### Projects list — `V2ProjectsPage`
+- **Team Tasks ("Assigned") view** — per-owner task triage with
+  rejected/active/completed groups. No V2 entry point. ⚠ Daily-use
+  workflow gone.
+- **Archived projects collapsible** with Restore / hard-delete.
+- **File-count badge**, **contact_name**, **end_date** on the row.
+- Dead `review` status filter (no matching data).
+
+### Accounts list — `V2AccountsPage`
+- **Semantic divergence** — V2 derives accounts from any
+  deal/project/case `company_name`; legacy lists rows from the
+  `clients` table. A company with only a deal appears in V2 but
+  not legacy; a client with nothing active appears in legacy but
+  not V2. Worth documenting in the UI.
+- **+ New account / inline create** affordance.
+
+### Support — `V2SupportPage`
+- **`assigned_to` (owner)** — missing from case row, thread header,
+  filter, AND composer hard-codes `author_name: 'Peter'`. ⚠ Multi-
+  person team data loss.
+- **Channel icon + label** on the case row (email/chat/etc.).
+- **Owner filter dropdown** on the list.
+- **Priority filter dropdown** on the list.
+- **Status segmented tabs** on the list.
+- **Search box** on the list (title/company/contact).
+- **SLA on-time % stat** instead of meaningless "Priorities count".
+- **Case age column** (Today / 1d ago / Nd ago).
+- Likely double-count in stat — V2 counts `awaiting_reply || open`.
+
+### Signals — `V2SignalsPage`
+- **Sort control** (icp / signal score / name).
+- **Signal score / overall_score** display on the row (only shown
+  as a filter slider currently).
+- **Scan date** display per row.
+- **CSV export** (read-only, separate from CSV import).
+
+### ICP Settings — `V2SettingsPage`
+- No ICP-field gaps. Field labels differ between V2 and legacy
+  but keys match — same data, different language.
+
 ## Parallel work — rules of the road
 
 ### Ownership boundaries
