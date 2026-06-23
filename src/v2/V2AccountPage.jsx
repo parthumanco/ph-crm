@@ -4,6 +4,8 @@ import {
     fetchDeals,
     fetchCases,
     fetchActivities,
+    fetchClients,
+    fetchClientDetail,
     fmtDate,
     fmt$,
     dealValue,
@@ -64,6 +66,8 @@ export default function V2AccountPage({ accountName, onBack, onSelectProject }) 
     const [deals, setDeals] = useState([]);
     const [cases, setCases] = useState([]);
     const [activities, setActivities] = useState([]);
+    const [clientRecord, setClientRecord] = useState(null);
+    const [contacts, setContacts] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
 
@@ -76,10 +80,11 @@ export default function V2AccountPage({ accountName, onBack, onSelectProject }) 
         try {
             setLoading(true);
             setError(null);
-            const [allProjects, allDeals, allCases] = await Promise.all([
+            const [allProjects, allDeals, allCases, allClients] = await Promise.all([
                 fetchProjects().catch(() => []),
                 fetchDeals().catch(() => []),
                 fetchCases().catch(() => []),
+                fetchClients().catch(() => []),
             ]);
             const matchedProjects = allProjects.filter((p) => p.client_name === accountName || p.name === accountName);
             const matchedDeals    = allDeals.filter((d) => d.company_name === accountName);
@@ -87,6 +92,32 @@ export default function V2AccountPage({ accountName, onBack, onSelectProject }) 
             setProjects(matchedProjects);
             setDeals(matchedDeals);
             setCases(matchedCases);
+
+            // Match a client record by name. fetchClients reconciles project
+            // client_name strings into a real clients row, so the lookup is
+            // usually clean. Names are case-sensitive in storage, so we do
+            // a forgiving compare.
+            const target = (allClients || []).find((c) => {
+                const a = (c.name || '').trim().toLowerCase();
+                const b = (accountName || '').trim().toLowerCase();
+                return a && b && a === b;
+            }) || null;
+            setClientRecord(target);
+
+            if (target?.id) {
+                try {
+                    const detail = await fetchClientDetail(target.id);
+                    // detail.client is the canonical row; .contacts is the
+                    // editable rich-contact list (name/title/email/linkedin/source).
+                    const rich = Array.isArray(detail?.client?.contacts) ? detail.client.contacts : [];
+                    setContacts(rich);
+                } catch {
+                    setContacts(Array.isArray(target.contacts) ? target.contacts : []);
+                }
+            } else {
+                setContacts([]);
+            }
+
             // Pull activities for every matched deal in parallel
             const acts = await Promise.all(matchedDeals.map((d) => fetchActivities(d.id).catch(() => [])));
             setActivities(acts.flat());
@@ -276,6 +307,96 @@ export default function V2AccountPage({ accountName, onBack, onSelectProject }) 
             </div>
 
             {/* TIMELINE */}
+            {/* CONTACTS — from the canonical clients.contacts jsonb */}
+            <div className="v2-section v2-section--blue">
+                <div className="v2-section__header">
+                    <div className="v2-section__title-block">
+                        <div className="v2-section__eyebrow">who you talk to</div>
+                        <h2 className="v2-section__title">
+                            Contacts
+                            <span className="v2-section__count">
+                                {contacts.length} {contacts.length === 1 ? 'person' : 'people'}
+                            </span>
+                        </h2>
+                    </div>
+                    {clientRecord?.id && (
+                        <div className="v2-section__actions">
+                            <a
+                                href="/legacy"
+                                onClick={(e) => { e.preventDefault(); window.location.href = '/legacy'; }}
+                                className="v2-section__link"
+                            >
+                                Manage in legacy
+                            </a>
+                        </div>
+                    )}
+                </div>
+                <div className="v2-section__card">
+                    <div className="v2-section__body">
+                        {!clientRecord && (
+                            <div className="v2-empty">
+                                <strong>No client record yet for {accountName}</strong>
+                                Contacts attach to the Clients table. Mike's Clients page will create
+                                the record once you add the first contact there.
+                            </div>
+                        )}
+                        {clientRecord && contacts.length === 0 && (
+                            <div className="v2-empty">
+                                <strong>No contacts on this client yet</strong>
+                                Add them from the Clients page — they'll appear here automatically.
+                            </div>
+                        )}
+                        {contacts.length > 0 && (
+                            <div className="v2-contact-grid">
+                                {contacts.map((c, i) => {
+                                    const initials = (c.name || '?')
+                                        .split(' ')
+                                        .filter(Boolean)
+                                        .slice(0, 2)
+                                        .map((w) => w[0].toUpperCase())
+                                        .join('');
+                                    return (
+                                        <div key={c.id || c.name || i} className="v2-contact-card">
+                                            <div className="v2-contact-card__head">
+                                                <div className="v2-contact-card__avatar">{initials}</div>
+                                                <div className="v2-contact-card__body">
+                                                    <div className="v2-contact-card__name-row">
+                                                        <span className="v2-contact-card__name">{c.name || 'Unnamed'}</span>
+                                                        {c.is_primary && (
+                                                            <span className="v2-contact-card__primary">Primary</span>
+                                                        )}
+                                                    </div>
+                                                    {c.title && <div className="v2-contact-card__title">{c.title}</div>}
+                                                </div>
+                                            </div>
+                                            <div className="v2-contact-card__details">
+                                                {c.email && (
+                                                    <a className="v2-contact-card__link" href={`mailto:${c.email}`}>
+                                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/></svg>
+                                                        {c.email}
+                                                    </a>
+                                                )}
+                                                {c.linkedin && (
+                                                    <a className="v2-contact-card__link" href={c.linkedin} target="_blank" rel="noopener noreferrer">
+                                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 8a6 6 0 0 1 6 6v7h-4v-7a2 2 0 0 0-4 0v7h-4v-7a6 6 0 0 1 6-6z"/><rect x="2" y="9" width="4" height="12"/><circle cx="4" cy="4" r="2"/></svg>
+                                                        LinkedIn
+                                                    </a>
+                                                )}
+                                                {c.source && (
+                                                    <span className={`v2-contact-card__source v2-contact-card__source--${c.source}`}>
+                                                        {c.source}
+                                                    </span>
+                                                )}
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </div>
+                </div>
+            </div>
+
             <div className="v2-section v2-section--timeline">
                 <div className="v2-section__header">
                     <div className="v2-section__title-block">

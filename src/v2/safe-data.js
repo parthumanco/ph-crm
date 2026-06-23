@@ -82,6 +82,16 @@ export {
     loadLastWeeklyScan,
 } from '../lib/settings.js';
 
+// ── Clients ──────────────────────────────────────────────
+// The canonical client store with rich contacts (name, title, email,
+// linkedin, source). v2 reads but doesn't write — edits go through Mike's
+// legacy Clients page.
+export {
+    fetchClients,
+    fetchClientDetail,
+    fetchCompanyIntel,
+} from '../lib/clients.js';
+
 // ── Companies (Signal Watch) ─────────────────────────────
 import { supabase } from '../lib/supabase.js';
 
