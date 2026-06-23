@@ -4,8 +4,14 @@ import {
     fetchCaseMessages,
     caseStatusLabel,
     casePriorityLabel,
+    channelIcon,
+    channelLabel,
+    slaSummary,
     CASE_PRIORITIES,
     CASE_STATUSES,
+    CHANNELS,
+    loadTeamMembers,
+    DEFAULT_TEAM_MEMBERS,
 } from './safe-data.js';
 import {
     upsertCase,
@@ -65,6 +71,20 @@ export default function V2SupportPage() {
     const [loadingThread, setLoadingThread] = useState(false);
     const [error, setError] = useState(null);
 
+    // Team — used for the owner filter + composer author + form
+    const [teamMembers, setTeamMembers] = useState(DEFAULT_TEAM_MEMBERS);
+    const owners = useMemo(
+        () => (teamMembers.length ? teamMembers.map((m) => m.name) : DEFAULT_TEAM_MEMBERS.map((m) => m.name)),
+        [teamMembers]
+    );
+    const [composerAuthor, setComposerAuthor] = useState(owners[0] || 'Mike');
+
+    // Filters
+    const [statusFilter,  setStatusFilter]  = useState('open');     // 'all' | open | in_progress | waiting | resolved | closed
+    const [priorityFilter, setPriorityFilter] = useState('all');
+    const [ownerFilter,   setOwnerFilter]   = useState('all');
+    const [search,        setSearch]        = useState('');
+
     // Mutation state
     const [caseModal,    setCaseModal]    = useState(null);   // null | { mode: 'new' | 'edit', target?: case }
     const [deleteTarget, setDeleteTarget] = useState(null);   // null | case
@@ -105,6 +125,17 @@ export default function V2SupportPage() {
     useEffect(() => { loadCases(); }, [loadCases]);
     useEffect(() => { loadThread(selectedId); }, [selectedId, loadThread]);
 
+    // Load team members for owner filter + composer author dropdown
+    useEffect(() => {
+        loadTeamMembers().then((tm) => {
+            setTeamMembers(tm);
+            if (tm.length && !tm.map((m) => m.name).includes(composerAuthor)) {
+                setComposerAuthor(tm[0].name);
+            }
+        }).catch(() => {});
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
     // Auto-dismiss toast
     useEffect(() => {
         if (!toast) return;
@@ -132,6 +163,19 @@ export default function V2SupportPage() {
         }
     }, [selectedCase]);
 
+    const handleAssignChange = useCallback(async (newOwner) => {
+        if (!selectedCase || selectedCase.assigned_to === newOwner) return;
+        const prevOwner = selectedCase.assigned_to;
+        setCases((s) => s.map((c) => c.id === selectedCase.id ? { ...c, assigned_to: newOwner } : c));
+        try {
+            await upsertCase({ ...selectedCase, assigned_to: newOwner });
+            setToast({ kind: 'info', text: `Assigned to ${newOwner}` });
+        } catch (err) {
+            setCases((s) => s.map((c) => c.id === selectedCase.id ? { ...c, assigned_to: prevOwner } : c));
+            setToast({ kind: 'warn', text: err.message || 'Couldn\'t reassign' });
+        }
+    }, [selectedCase]);
+
     const handleResolve = useCallback(async () => {
         if (!selectedCase) return;
         const prevStatus = selectedCase.status;
@@ -155,7 +199,7 @@ export default function V2SupportPage() {
                 body: composerText.trim(),
                 internal: composerKind === 'note',
                 author_role: 'internal',
-                author_name: 'Peter',
+                author_name: composerAuthor,
             });
             setComposerText('');
             await loadThread(selectedCase.id);
@@ -165,7 +209,7 @@ export default function V2SupportPage() {
         } finally {
             setSending(false);
         }
-    }, [selectedCase, composerText, composerKind, loadThread]);
+    }, [selectedCase, composerText, composerKind, composerAuthor, loadThread]);
 
     const handleDelete = useCallback(async () => {
         if (!deleteTarget) return;
@@ -185,10 +229,63 @@ export default function V2SupportPage() {
     }, [deleteTarget, selectedId, loadCases]);
 
     const stats = useMemo(() => {
-        const open = cases.filter((c) => c.status !== 'resolved' && c.status !== 'closed').length;
-        const awaiting = cases.filter((c) => c.status === 'awaiting_reply' || c.status === 'open').length;
-        return { open, awaiting };
+        const open      = cases.filter((c) => c.status !== 'resolved' && c.status !== 'closed').length;
+        const inProgress= cases.filter((c) => c.status === 'in_progress').length;
+        const waiting   = cases.filter((c) => c.status === 'waiting' || c.status === 'awaiting_reply').length;
+
+        // SLA on-time %: of resolved cases, how many were resolved before
+        // their SLA deadline? Mirrors Mike's slaSummary helper.
+        const resolved = cases.filter((c) => c.status === 'resolved' || c.status === 'closed');
+        let onTime = 0;
+        let breaches = 0;
+        for (const c of resolved) {
+            const dueAt = c.due_at || c.sla_deadline;
+            const resolvedAt = c.resolved_at || c.updated_at;
+            if (!dueAt) continue;
+            const s = slaSummary(dueAt, resolvedAt);
+            if (s?.breached) breaches += 1; else onTime += 1;
+        }
+        const slaPct = (onTime + breaches) > 0
+            ? Math.round((onTime / (onTime + breaches)) * 100)
+            : null;
+
+        return { open, inProgress, waiting, resolvedCount: resolved.length, slaPct };
     }, [cases]);
+
+    // Filtered list — drives both the count + the left pane.
+    const filteredCases = useMemo(() => {
+        const q = search.trim().toLowerCase();
+        return cases.filter((c) => {
+            // Status: 'open' option matches anything not resolved/closed
+            if (statusFilter === 'open') {
+                if (c.status === 'resolved' || c.status === 'closed') return false;
+            } else if (statusFilter !== 'all' && c.status !== statusFilter) {
+                return false;
+            }
+            if (priorityFilter !== 'all' && c.priority !== priorityFilter) return false;
+            if (ownerFilter !== 'all' && (c.assigned_to || '') !== ownerFilter) return false;
+            if (q) {
+                const hay = [
+                    c.title, c.subject, c.client_name, c.company_name,
+                    c.contact_name, c.assigned_to,
+                ].filter(Boolean).join(' ').toLowerCase();
+                if (!hay.includes(q)) return false;
+            }
+            return true;
+        });
+    }, [cases, statusFilter, priorityFilter, ownerFilter, search]);
+
+    const activeFilterCount =
+        (statusFilter !== 'open' ? 1 : 0) +
+        (priorityFilter !== 'all' ? 1 : 0) +
+        (ownerFilter !== 'all' ? 1 : 0) +
+        (search ? 1 : 0);
+    const clearAllFilters = () => {
+        setStatusFilter('open');
+        setPriorityFilter('all');
+        setOwnerFilter('all');
+        setSearch('');
+    };
 
     return (
         <>
@@ -199,12 +296,16 @@ export default function V2SupportPage() {
                         Support
                         {cases.length > 0 && (
                             <span className="v2-page-title__count">
-                                {stats.open} open · {stats.awaiting} awaiting reply
+                                {stats.open} open · {stats.waiting} waiting on client
                             </span>
                         )}
                     </h1>
                     <p className="v2-page-subtitle">
-                        {loading ? 'Loading from Supabase…' : `${cases.length} total · sorted by recent activity`}
+                        {loading
+                            ? 'Loading from Supabase…'
+                            : stats.slaPct !== null
+                                ? `${cases.length} total · ${stats.slaPct}% on time`
+                                : `${cases.length} total · no SLA history yet`}
                     </p>
                 </div>
                 <div className="v2-page-header__actions">
@@ -228,19 +329,25 @@ export default function V2SupportPage() {
                     <div className="v2-stat-card__delta">currently active</div>
                 </div>
                 <div className="v2-stat-card">
-                    <div className="v2-stat-card__label">Awaiting reply</div>
-                    <div className="v2-stat-card__value">{stats.awaiting}</div>
-                    <div className="v2-stat-card__delta">from client</div>
+                    <div className="v2-stat-card__label">In progress</div>
+                    <div className="v2-stat-card__value">{stats.inProgress}</div>
+                    <div className="v2-stat-card__delta">being worked</div>
                 </div>
                 <div className="v2-stat-card">
-                    <div className="v2-stat-card__label">Resolved</div>
-                    <div className="v2-stat-card__value">{cases.filter(c => c.status === 'resolved').length}</div>
-                    <div className="v2-stat-card__delta">closed out</div>
+                    <div className="v2-stat-card__label">Waiting on client</div>
+                    <div className="v2-stat-card__value">{stats.waiting}</div>
+                    <div className="v2-stat-card__delta">reply pending</div>
                 </div>
                 <div className="v2-stat-card">
-                    <div className="v2-stat-card__label">Priorities</div>
-                    <div className="v2-stat-card__value">{CASE_PRIORITIES.length}</div>
-                    <div className="v2-stat-card__delta">levels in use</div>
+                    <div className="v2-stat-card__label">SLA on-time</div>
+                    <div className="v2-stat-card__value">
+                        {stats.slaPct === null ? '—' : `${stats.slaPct}%`}
+                    </div>
+                    <div className="v2-stat-card__delta">
+                        {stats.slaPct === null
+                            ? 'no history yet'
+                            : `over ${stats.resolvedCount} resolved`}
+                    </div>
                 </div>
             </div>
 
@@ -248,8 +355,76 @@ export default function V2SupportPage() {
                 {/* LEFT — cases list */}
                 <div className="v2-cases">
                     <div className="v2-cases__header">
-                        <div className="v2-cases__title">
-                            Cases <span className="v2-cases__title-count">{cases.length} total</span>
+                        <div className="v2-cases__title-row">
+                            <div className="v2-cases__title">
+                                Cases <span className="v2-cases__title-count">{filteredCases.length} of {cases.length}</span>
+                            </div>
+                            {activeFilterCount > 0 && (
+                                <button
+                                    type="button"
+                                    className="v2-cases__clear"
+                                    onClick={clearAllFilters}
+                                >
+                                    Clear filters
+                                </button>
+                            )}
+                        </div>
+
+                        {/* Filter bar — status tabs + priority + owner + search */}
+                        <div className="v2-cases__filters">
+                            <div className="v2-cases__tabs">
+                                {[
+                                    { id: 'open',        label: 'Open' },
+                                    { id: 'in_progress', label: 'In progress' },
+                                    { id: 'waiting',     label: 'Waiting' },
+                                    { id: 'resolved',    label: 'Resolved' },
+                                    { id: 'all',         label: 'All' },
+                                ].map((tab) => (
+                                    <button
+                                        key={tab.id}
+                                        type="button"
+                                        className={`v2-cases__tab ${statusFilter === tab.id ? 'is-active' : ''}`}
+                                        onClick={() => setStatusFilter(tab.id)}
+                                    >
+                                        {tab.label}
+                                    </button>
+                                ))}
+                            </div>
+                            <div className="v2-cases__filter-row">
+                                <div className="v2-select-wrap v2-select-wrap--inline">
+                                    <select
+                                        className="v2-select v2-select--inline"
+                                        value={priorityFilter}
+                                        onChange={(e) => setPriorityFilter(e.target.value)}
+                                    >
+                                        <option value="all">Any priority</option>
+                                        {CASE_PRIORITIES.map((p) => (
+                                            <option key={p.id} value={p.id}>{p.label}</option>
+                                        ))}
+                                    </select>
+                                    <svg className="v2-select__chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+                                </div>
+                                <div className="v2-select-wrap v2-select-wrap--inline">
+                                    <select
+                                        className="v2-select v2-select--inline"
+                                        value={ownerFilter}
+                                        onChange={(e) => setOwnerFilter(e.target.value)}
+                                    >
+                                        <option value="all">Any owner</option>
+                                        {owners.map((o) => <option key={o} value={o}>{o}</option>)}
+                                    </select>
+                                    <svg className="v2-select__chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+                                </div>
+                            </div>
+                            <div className="v2-cases__search">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-5-5"/></svg>
+                                <input
+                                    type="text"
+                                    placeholder="Search title, client, contact…"
+                                    value={search}
+                                    onChange={(e) => setSearch(e.target.value)}
+                                />
+                            </div>
                         </div>
                     </div>
                     <div className="v2-cases__list">
@@ -257,8 +432,15 @@ export default function V2SupportPage() {
                         {!loading && cases.length === 0 && (
                             <div className="v2-empty"><strong>No cases yet</strong>Reach out from any client conversation to create one.</div>
                         )}
-                        {!loading && cases.map((c) => {
+                        {!loading && cases.length > 0 && filteredCases.length === 0 && (
+                            <div className="v2-empty">
+                                <strong>No cases match these filters</strong>
+                                Clear or broaden them to see more.
+                            </div>
+                        )}
+                        {!loading && filteredCases.map((c) => {
                             const active = c.id === selectedId;
+                            const channelKey = c.channel || 'email';
                             return (
                                 <button
                                     key={c.id}
@@ -271,21 +453,33 @@ export default function V2SupportPage() {
                                     </div>
                                     <div className="v2-case-row__body">
                                         <div className="v2-case-row__top">
+                                            <span
+                                                className="v2-case-row__channel"
+                                                title={channelLabel(channelKey)}
+                                                aria-label={`Channel: ${channelLabel(channelKey)}`}
+                                            >
+                                                {channelIcon(channelKey)}
+                                            </span>
                                             <span className="v2-case-row__client">{c.client_name || c.company_name || 'Unknown'}</span>
-                                            {c.case_number && <span className="v2-case-row__num">#{c.case_number}</span>}
+                                            {c.case_number && <span className="v2-case-row__num">#{String(c.case_number).padStart(3, '0')}</span>}
                                         </div>
                                         <div className="v2-case-row__title">{c.title || c.subject || 'Untitled case'}</div>
                                         <div className="v2-case-row__meta">
                                             {c.contact_name && <span>{c.contact_name}</span>}
-                                            {c.sla_deadline && (
-                                                <span className={slaChipClass(c.sla_deadline)}>
-                                                    SLA · {formatRel(c.sla_deadline)}
+                                            {(c.due_at || c.sla_deadline) && (
+                                                <span className={slaChipClass(c.due_at || c.sla_deadline)}>
+                                                    SLA · {formatRel(c.due_at || c.sla_deadline)}
                                                 </span>
                                             )}
                                             {c.status && <span>{caseStatusLabel(c.status)}</span>}
                                         </div>
                                     </div>
-                                    <div className="v2-case-row__right">{formatRel(c.updated_at || c.created_at)}</div>
+                                    <div className="v2-case-row__right">
+                                        <div className="v2-case-row__age">{formatRel(c.updated_at || c.created_at)}</div>
+                                        {c.assigned_to && (
+                                            <div className="v2-case-row__owner">{c.assigned_to}</div>
+                                        )}
+                                    </div>
                                 </button>
                             );
                         })}
@@ -314,6 +508,10 @@ export default function V2SupportPage() {
                                             <span className={`v2-priority-chip__dot ${priorityClass(selectedCase.priority)}`} />
                                             {casePriorityLabel(selectedCase.priority)} priority
                                         </span>
+                                        <span className="v2-thread__chip" title={channelLabel(selectedCase.channel || 'email')}>
+                                            <span style={{ fontSize: 14 }}>{channelIcon(selectedCase.channel || 'email')}</span>
+                                            {channelLabel(selectedCase.channel || 'email')}
+                                        </span>
                                         <div className="v2-thread__status">
                                             <span style={{ color: 'var(--crm-text-3)' }}>Status:</span>
                                             <div className="v2-select-wrap v2-select-wrap--inline">
@@ -325,6 +523,19 @@ export default function V2SupportPage() {
                                                     {CASE_STATUSES.map((s) => (
                                                         <option key={s.id} value={s.id}>{s.label}</option>
                                                     ))}
+                                                </select>
+                                                <svg className="v2-select__chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+                                            </div>
+                                        </div>
+                                        <div className="v2-thread__status">
+                                            <span style={{ color: 'var(--crm-text-3)' }}>Owner:</span>
+                                            <div className="v2-select-wrap v2-select-wrap--inline">
+                                                <select
+                                                    className="v2-select v2-select--inline"
+                                                    value={selectedCase.assigned_to || owners[0] || 'Mike'}
+                                                    onChange={(e) => handleAssignChange(e.target.value)}
+                                                >
+                                                    {owners.map((o) => <option key={o} value={o}>{o}</option>)}
                                                 </select>
                                                 <svg className="v2-select__chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9l6 6 6-6"/></svg>
                                             </div>
@@ -412,11 +623,24 @@ export default function V2SupportPage() {
                                     rows={3}
                                 />
                                 <div className="v2-composer__footer">
-                                    <span className="v2-composer__hint">
-                                        {composerKind === 'reply'
-                                            ? 'Sent · attaches to the timeline'
-                                            : 'Stays on this case · team only'}
-                                    </span>
+                                    <div className="v2-composer__author">
+                                        <span className="v2-composer__hint">From</span>
+                                        <div className="v2-select-wrap v2-select-wrap--inline">
+                                            <select
+                                                className="v2-select v2-select--inline"
+                                                value={composerAuthor}
+                                                onChange={(e) => setComposerAuthor(e.target.value)}
+                                            >
+                                                {owners.map((o) => <option key={o} value={o}>{o}</option>)}
+                                            </select>
+                                            <svg className="v2-select__chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+                                        </div>
+                                        <span className="v2-composer__hint">
+                                            · {composerKind === 'reply'
+                                                ? 'sent · attaches to the timeline'
+                                                : 'stays on this case · team only'}
+                                        </span>
+                                    </div>
                                     <button
                                         type="submit"
                                         className="v2-btn v2-btn--primary"
@@ -465,6 +689,7 @@ export default function V2SupportPage() {
                 {caseModal && (
                     <CaseForm
                         initial={caseModal.mode === 'edit' ? caseModal.target : null}
+                        owners={owners}
                         onSaved={(saved) => {
                             const wasNew = caseModal.mode === 'new';
                             setCaseModal(null);

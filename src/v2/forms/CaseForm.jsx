@@ -2,17 +2,20 @@ import { useState } from 'react';
 import { upsertCase } from '../write-data.js';
 import { CASE_STATUSES, CASE_PRIORITIES, CHANNELS } from '../safe-data.js';
 
+const FALLBACK_OWNERS = ['Mike', 'Pete', 'Jill'];
+
 /**
  * Create or edit a support case. Wraps lib/support.upsertCase.
  * For edit, pass the existing case as `initial`.
  */
-export default function CaseForm({ initial = null, onSaved, onCancel }) {
+export default function CaseForm({ initial = null, owners = FALLBACK_OWNERS, onSaved, onCancel }) {
     const [clientName,  setClientName]  = useState(initial?.client_name  || initial?.company_name || '');
     const [contactName, setContactName] = useState(initial?.contact_name || '');
     const [title,       setTitle]       = useState(initial?.title       || initial?.subject || '');
     const [priority,    setPriority]    = useState(initial?.priority    || CASE_PRIORITIES[1]?.id || 'normal');
     const [status,      setStatus]      = useState(initial?.status      || CASE_STATUSES[0]?.id  || 'open');
     const [channel,     setChannel]     = useState(initial?.channel     || CHANNELS[0]?.id       || 'email');
+    const [assignedTo,  setAssignedTo]  = useState(initial?.assigned_to || owners[0]             || 'Mike');
     const [body,        setBody]        = useState(initial?.body        || initial?.description || '');
     const [saving, setSaving] = useState(false);
     const [error,  setError]  = useState(null);
@@ -32,6 +35,7 @@ export default function CaseForm({ initial = null, onSaved, onCancel }) {
                 priority,
                 status,
                 channel,
+                assigned_to:  assignedTo || null,
                 body:         body.trim() || null,
             });
             onSaved?.(saved);
@@ -108,6 +112,16 @@ export default function CaseForm({ initial = null, onSaved, onCancel }) {
                         </select>
                         <svg className="v2-select__chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9l6 6 6-6"/></svg>
                     </div>
+                </div>
+            </div>
+
+            <div className="v2-form__field">
+                <label className="v2-form__label">Assigned to</label>
+                <div className="v2-select-wrap">
+                    <select className="v2-select" value={assignedTo} onChange={(e) => setAssignedTo(e.target.value)}>
+                        {owners.map((o) => <option key={o} value={o}>{o}</option>)}
+                    </select>
+                    <svg className="v2-select__chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9l6 6 6-6"/></svg>
                 </div>
             </div>
 

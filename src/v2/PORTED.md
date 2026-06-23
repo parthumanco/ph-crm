@@ -81,18 +81,23 @@ Tracked here so they're visible, not silent. Fix in priority order
   not V2. Worth documenting in the UI.
 - **+ New account / inline create** affordance.
 
-### Support — `V2SupportPage`
-- **`assigned_to` (owner)** — missing from case row, thread header,
-  filter, AND composer hard-codes `author_name: 'Peter'`. ⚠ Multi-
-  person team data loss.
-- **Channel icon + label** on the case row (email/chat/etc.).
-- **Owner filter dropdown** on the list.
-- **Priority filter dropdown** on the list.
-- **Status segmented tabs** on the list.
-- **Search box** on the list (title/company/contact).
-- **SLA on-time % stat** instead of meaningless "Priorities count".
-- **Case age column** (Today / 1d ago / Nd ago).
-- Likely double-count in stat — V2 counts `awaiting_reply || open`.
+### Support — `V2SupportPage` ✓ closed in commit fixing urgent gap #2
+- ~~`assigned_to` (owner) missing everywhere~~ — restored on case
+  row (compact owner pill on the right), thread header (reassign
+  dropdown), composer (author selector), CaseForm. Composer no
+  longer hard-codes "Peter".
+- ~~Channel icon + label~~ — channel icon on every row + chip in
+  thread header (uses Mike's `channelIcon`/`channelLabel`).
+- ~~Owner / priority filter dropdowns~~ — both added inline in
+  the cases list filter bar.
+- ~~Status segmented tabs on the list~~ — added (Open / In progress
+  / Waiting / Resolved / All), defaults to Open.
+- ~~Search box on the list~~ — added (title/client/contact/owner).
+- ~~SLA on-time % stat~~ — replaced "Priorities count" with proper
+  SLA on-time percentage computed from `slaSummary`.
+- ~~`awaiting_reply || open` double-count~~ — fixed: stats now
+  show open / in_progress / waiting / SLA on-time separately.
+- Case age now in the right column above the owner pill.
 
 ### Signals — `V2SignalsPage`
 - **Sort control** (icp / signal score / name).

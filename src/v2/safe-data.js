@@ -81,6 +81,8 @@ export {
     loadIcp,
     isWeeklyScanDue,
     loadLastWeeklyScan,
+    loadTeamMembers,
+    DEFAULT_TEAM_MEMBERS,
 } from '../lib/settings.js';
 
 // ── Clients ──────────────────────────────────────────────
