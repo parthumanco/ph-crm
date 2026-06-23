@@ -27,6 +27,7 @@ export {
     fetchMilestones,
     fetchArchivedMilestones,
     fetchProjectTasks,
+    fetchAllTasksByOwner,
     fetchProjectFiles,
     fetchProjectMeetings,
     PROJECT_STATUSES,

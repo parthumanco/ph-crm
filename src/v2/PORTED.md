@@ -14,6 +14,7 @@ the v2 instance at https://ph-crm-v2.netlify.app.
 | Sidebar item | V2 component | Legacy fallback | Status | Notes |
 |---|---|---|---|---|
 | Projects | `V2ProjectsPage` | — | ✅ V2 | Full CRUD via `write-data.js` |
+| Team Tasks | `V2TeamTasksPage` | — | ✅ V2 | Per-owner task triage; toggle complete; edit goes to legacy |
 | Project detail | `V2ProjectPage` | — | ✅ V2 | Hero + Gantt + milestones with inline tasks + files |
 | Deals | `V2DealsPage` | — | ✅ V2 | Drag-drop kanban + Won-creates-project |
 | Accounts | `V2AccountsPage` | — | ✅ V2 | Derived from projects+deals+cases (no accounts table) |
@@ -66,9 +67,15 @@ Tracked here so they're visible, not silent. Fix in priority order
   parsed proposal** (lives in legacy DealDetailModal).
 
 ### Projects list — `V2ProjectsPage`
-- **Team Tasks ("Assigned") view** — per-owner task triage with
-  rejected/active/completed groups. No V2 entry point. ⚠ Daily-use
-  workflow gone.
+- ~~**Team Tasks ("Assigned") view**~~ — closed in commit fixing
+  urgent gap #3. New `V2TeamTasksPage` lives at sidebar
+  Work → Team Tasks. Owner picker + Unassigned, refresh button,
+  three sticky group dividers (Changes requested / Active /
+  Completed), per-task row with checkbox toggle, project crumb
+  (clickable into project detail), milestone chip with status
+  color, overdue red, file count, "via {owner}" inherited badge,
+  rejection notes preview. Edit/approve/reject stay in legacy
+  via per-row edit ↗ link.
 - **Archived projects collapsible** with Restore / hard-delete.
 - **File-count badge**, **contact_name**, **end_date** on the row.
 - Dead `review` status filter (no matching data).

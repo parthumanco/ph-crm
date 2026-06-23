@@ -10,6 +10,7 @@ import V2AccountPage from './V2AccountPage.jsx';
 import V2SupportPage from './V2SupportPage.jsx';
 import V2SignalsPage from './V2SignalsPage.jsx';
 import V2SettingsPage from './V2SettingsPage.jsx';
+import V2TeamTasksPage from './V2TeamTasksPage.jsx';
 
 // Legacy pages — rendered inside the v2 shell until ported
 import LegacyDiscoverPage from '../pages/DiscoverPage.jsx';
@@ -54,12 +55,13 @@ const NAV_SECTIONS = [
     {
         label: 'work',
         items: [
-            { id: 'projects',  label: 'Projects',  icon: 'folder' },
-            { id: 'deals',     label: 'Deals',     icon: 'cash' },
-            { id: 'accounts',  label: 'Accounts',  icon: 'list' },
-            { id: 'clients',   label: 'Clients',   icon: 'building' },
-            { id: 'documents', label: 'Documents', icon: 'doc' },
-            { id: 'support',   label: 'Support',   icon: 'support' },
+            { id: 'projects',   label: 'Projects',   icon: 'folder' },
+            { id: 'team-tasks', label: 'Team Tasks', icon: 'check' },
+            { id: 'deals',      label: 'Deals',      icon: 'cash' },
+            { id: 'accounts',   label: 'Accounts',   icon: 'list' },
+            { id: 'clients',    label: 'Clients',    icon: 'building' },
+            { id: 'documents',  label: 'Documents',  icon: 'doc' },
+            { id: 'support',    label: 'Support',    icon: 'support' },
         ],
     },
     {
@@ -84,6 +86,7 @@ const NAV_SECTIONS = [
 const PAGE_META = {
     projects:        { breadcrumb: 'Projects' },
     'project-detail':{ breadcrumb: 'Project detail' },
+    'team-tasks':    { breadcrumb: 'Team Tasks' },
     deals:           { breadcrumb: 'Deals' },
     accounts:        { breadcrumb: 'Accounts' },
     'account-detail':{ breadcrumb: 'Account' },
@@ -102,7 +105,7 @@ const PAGE_META = {
 // Pages with a V2-native component. Everything else in NAV_SECTIONS falls
 // back to its legacy component inside the v2 shell.
 const PORTED = new Set([
-    'projects', 'project-detail', 'deals',
+    'projects', 'project-detail', 'team-tasks', 'deals',
     'accounts', 'account-detail', 'support', 'signals',
     'settings',
 ]);
@@ -123,6 +126,7 @@ function Icon({ name }) {
         case 'building':return <svg className="v2-nav-item__icon" viewBox="0 0 24 24" {...stroke}><path d="M3 21V7l9-4 9 4v14"/><path d="M9 21V11h6v10"/></svg>;
         case 'coin':    return <svg className="v2-nav-item__icon" viewBox="0 0 24 24" {...stroke}><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4"/></svg>;
         case 'report':  return <svg className="v2-nav-item__icon" viewBox="0 0 24 24" {...stroke}><path d="M6 4h12v16l-6-3-6 3z"/></svg>;
+        case 'check':   return <svg className="v2-nav-item__icon" viewBox="0 0 24 24" {...stroke}><polyline points="20 6 9 17 4 12"/><polyline points="20 11 9 22 4 17"/></svg>;
         default: return null;
     }
 }
@@ -239,6 +243,11 @@ export default function V2App() {
                 <div className="v2-content">
                     {view.page === 'projects' && (
                         <V2ProjectsPage onSelect={(id) => setView({ page: 'project-detail', projectId: id, accountName: null })} />
+                    )}
+                    {view.page === 'team-tasks' && (
+                        <V2TeamTasksPage
+                            onSelectProject={(id) => setView({ page: 'project-detail', projectId: id, accountName: null })}
+                        />
                     )}
                     {view.page === 'project-detail' && (
                         <V2ProjectPage projectId={view.projectId} onBack={() => goTo('projects')} />
