@@ -1,21 +1,25 @@
 # ============================================================================
 # Branch Boundaries — keep main and ux/redesign-v2 from stepping on each other.
 #
-#   • Pushes / PRs targeting `main` may NOT touch `src/v2/**` or PORTED.md.
-#     (the v2 design system lives entirely on ux/redesign-v2)
+#   • Pushes / PRs targeting `main` may NOT add or modify `src/v2/**` or
+#     `PORTED.md`. The v2 design system lives entirely on ux/redesign-v2.
 #
-#   • Pushes / PRs targeting `ux/redesign-v2` may NOT touch:
+#   • Pushes / PRs targeting `ux/redesign-v2` may NOT have legacy-file changes
+#     that aren't in `main`:
 #       src/lib/**          (Mike owns the data layer)
 #       src/pages/**        (Mike owns the legacy pages)
 #       src/components/**   (Mike owns legacy components)
 #       src/App.jsx         (Mike owns the legacy shell)
 #       src/index.css       (legacy global CSS)
 #
+#     Critically, this is a TREE comparison against `origin/main`, not a
+#     push-range diff. That means a `main → ux/redesign-v2` merge commit
+#     passes cleanly: the merge brings in main's legacy changes, but the
+#     resulting tree matches main's for those files, so there's nothing
+#     v2-introduced to fail on.
+#
 #   • `src/main.jsx` is the boundary file — both sides may touch it but it
 #     deserves human review on every change. We warn but do not fail.
-#
-# When a check fails, the PR explains why and points at the alternative
-# (e.g. "v2 pages live in src/v2/, not src/pages/").
 # ============================================================================
 
 name: branch-boundaries
@@ -38,49 +42,38 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Determine target branch and changed files
-        id: diff
+      - name: Resolve target branch
+        id: target
         run: |
-          # Resolve the comparison base depending on event type.
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            BASE="${{ github.base_ref }}"
-            TARGET="$BASE"
-            git fetch --depth=1 origin "$BASE"
-            CHANGED=$(git diff --name-only "origin/$BASE...HEAD")
+            TARGET="${{ github.base_ref }}"
           else
             TARGET="${{ github.ref_name }}"
-            # On push: compare to previous tip of the same branch.
-            BEFORE="${{ github.event.before }}"
-            if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
-              # First push on a new branch — nothing to compare to.
-              CHANGED=""
-            else
-              CHANGED=$(git diff --name-only "$BEFORE" "${{ github.sha }}")
-            fi
           fi
+          echo "name=$TARGET" >> "$GITHUB_OUTPUT"
+          echo "Target branch: $TARGET"
 
-          echo "target=$TARGET" >> "$GITHUB_OUTPUT"
-          {
-            echo "changed<<EOF"
-            echo "$CHANGED"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
-
-          echo "Target: $TARGET"
-          echo "Changed files:"
-          echo "$CHANGED"
-
-      - name: Check main → must not touch src/v2/
-        if: steps.diff.outputs.target == 'main'
-        env:
-          CHANGED: ${{ steps.diff.outputs.changed }}
+      # ─────────────────────────────────────────────────────────────────
+      # main branch checks: this side must NOT add/edit v2 files at all.
+      # Compare the resulting tree to ux/redesign-v2's tip and look for
+      # v2 files added on main.
+      # ─────────────────────────────────────────────────────────────────
+      - name: main → must not touch src/v2/
+        if: steps.target.outputs.name == 'main'
         run: |
           set -e
-          # Anything inside src/v2/* or PORTED.md is owned by ux/redesign-v2.
-          VIOLATIONS=$(printf '%s\n' "$CHANGED" | grep -E '^src/v2/|^src/v2$|^PORTED\.md$' || true)
+          git fetch --depth=1 origin ux/redesign-v2 || true
+
+          # Files that exist on main but should only exist on ux/redesign-v2.
+          # Use ls-tree against HEAD — anything matching the guarded paths is
+          # an invasion of v2's territory onto main.
+          VIOLATIONS=$(git ls-tree -r --name-only HEAD \
+            | grep -E '^src/v2/|^PORTED\.md$' \
+            || true)
+
           if [ -n "$VIOLATIONS" ]; then
-            echo "::error::main branch touched files owned by ux/redesign-v2:"
-            echo "$VIOLATIONS" | sed 's/^/  /'
+            echo "::error::main branch contains files owned by ux/redesign-v2:"
+            printf '%s\n' "$VIOLATIONS" | sed 's/^/  /'
             echo ""
             echo "The v2 design system lives entirely on the ux/redesign-v2 branch."
             echo "If you meant to change v2:"
@@ -88,36 +81,60 @@ jobs:
             echo "  (move your changes there)"
             exit 1
           fi
-          echo "OK — no v2 files touched on main."
+          echo "OK — no v2 files present on main."
 
-      - name: Check ux/redesign-v2 → must not touch legacy code
-        if: steps.diff.outputs.target == 'ux/redesign-v2'
-        env:
-          CHANGED: ${{ steps.diff.outputs.changed }}
+      # ─────────────────────────────────────────────────────────────────
+      # ux/redesign-v2 checks: this side must NOT have legacy-file
+      # changes vs. main. Diff the trees, not the push range, so merging
+      # main into ux/redesign-v2 doesn't trip the guard.
+      # ─────────────────────────────────────────────────────────────────
+      - name: ux/redesign-v2 → must not change legacy files vs. main
+        if: steps.target.outputs.name == 'ux/redesign-v2'
         run: |
           set -e
-          # Legacy paths are Mike's. v2 reads them via safe-data.js, never edits.
-          VIOLATIONS=$(printf '%s\n' "$CHANGED" \
+          git fetch --depth=100 origin main
+
+          # Tree diff: files that differ between main's tip and our HEAD.
+          # If a legacy file shows up here, it means v2 has changes to it
+          # that aren't in main. After a merge from main, the trees match
+          # for everything main brought in, so nothing shows up.
+          DIVERGED=$(git diff --name-only origin/main..HEAD)
+          VIOLATIONS=$(printf '%s\n' "$DIVERGED" \
             | grep -E '^src/lib/|^src/pages/|^src/components/|^src/App\.jsx$|^src/index\.css$' \
             || true)
+
           if [ -n "$VIOLATIONS" ]; then
-            echo "::error::ux/redesign-v2 branch touched legacy code owned by main:"
-            echo "$VIOLATIONS" | sed 's/^/  /'
+            echo "::error::ux/redesign-v2 has legacy-file changes that are NOT in main:"
+            printf '%s\n' "$VIOLATIONS" | sed 's/^/  /'
             echo ""
             echo "Legacy code lives on main. From ux/redesign-v2 you can:"
             echo "  • Read legacy lib/* through src/v2/safe-data.js (re-export it)"
             echo "  • Render a legacy page inside the v2 shell (already wired in V2App)"
-            echo "  • To genuinely fix legacy behavior, do it on main and merge."
+            echo "  • To genuinely fix legacy behavior, do it on main and merge back."
+            echo ""
+            echo "If you intended to merge main, run:"
+            echo "  git merge origin/main"
+            echo "and the inherited legacy changes won't trip this check (trees match)."
             exit 1
           fi
-          echo "OK — no legacy files touched on ux/redesign-v2."
+          echo "OK — ux/redesign-v2's legacy files match main."
 
       - name: Note main.jsx boundary changes
         env:
-          CHANGED: ${{ steps.diff.outputs.changed }}
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.base_ref }}
         run: |
+          # Compare against the natural base so the warning fires whenever
+          # someone proposes a main.jsx change in either direction.
+          if [ "$EVENT" = "pull_request" ]; then
+            git fetch --depth=20 origin "$BASE"
+            CHANGED=$(git diff --name-only "origin/$BASE...HEAD" || true)
+          else
+            git fetch --depth=20 origin main || true
+            CHANGED=$(git diff --name-only origin/main..HEAD || true)
+          fi
           if printf '%s\n' "$CHANGED" | grep -qE '^src/main\.jsx$'; then
             echo "::warning::src/main.jsx is the boundary file between main and ux/redesign-v2."
             echo "Both sides may edit it but every change deserves coordination."
-            echo "Make sure the three-way routing (portal / legacy / v2) still works."
+            echo "Verify the three-way routing (portal / legacy / v2) still works."
           fi
