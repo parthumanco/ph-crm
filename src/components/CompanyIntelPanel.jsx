@@ -120,20 +120,36 @@ export default function CompanyIntelPanel({ intel, extraSources = [], emptyMessa
         </div>
       )}
 
-      {/* Contact angles */}
-      {(intel.contact_angles || []).length > 0 && (
-        <div>
-          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 10 }}>Contact Angles</div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {intel.contact_angles.map((ca, i) => (
-              <div key={i} style={{ padding: '12px 14px', background: 'var(--surface)', borderRadius: 9, border: '1px solid var(--border)' }}>
-                <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)', marginBottom: 3 }}>{ca.name} {ca.title ? <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>· {ca.title}</span> : null}</div>
-                <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.5, fontStyle: 'italic' }}>"{ca.angle}"</div>
-              </div>
-            ))}
+      {/* Contacts — companies.contacts (the shared roster also shown on Watch
+          List/Old Gold/Pipeline) merged with contact_angles for angle/hook text */}
+      {(() => {
+        const merged = new Map();
+        (intel.contacts || []).forEach(c => {
+          if (!c.name?.trim()) return;
+          merged.set(c.name.trim().toLowerCase(), { name: c.name.trim(), title: c.title || '' });
+        });
+        (intel.contact_angles || []).forEach(ca => {
+          if (!ca.name?.trim()) return;
+          const key = ca.name.trim().toLowerCase();
+          const existing = merged.get(key) || { name: ca.name.trim(), title: ca.title || '' };
+          merged.set(key, { ...existing, angle: ca.angle, hook: ca.hook });
+        });
+        const list = Array.from(merged.values());
+        if (!list.length) return null;
+        return (
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 10 }}>Contacts</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {list.map((ca, i) => (
+                <div key={i} style={{ padding: '12px 14px', background: 'var(--surface)', borderRadius: 9, border: '1px solid var(--border)' }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)', marginBottom: ca.angle ? 3 : 0 }}>{ca.name} {ca.title ? <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>· {ca.title}</span> : null}</div>
+                  {ca.angle && <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.5, fontStyle: 'italic' }}>"{ca.angle}"</div>}
+                </div>
+              ))}
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* ── Full Thesis (only if thesis_built) ── */}
       {intel.thesis_built && intel.thesis && (
@@ -145,16 +161,22 @@ export default function CompanyIntelPanel({ intel, extraSources = [], emptyMessa
           <div style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.8, whiteSpace: 'pre-wrap', padding: '14px 16px', background: 'var(--surface)', borderRadius: 10, border: '1px solid var(--border)' }}>
             {intel.thesis}
           </div>
-          {/* Entry contact */}
+          {/* Entry contact — prefer the shared contacts roster's primary (kept
+              up to date by Watch List/Old Gold/Pipeline), fall back to the
+              thesis-derived contact_angles primary if no contacts exist yet */}
           {(() => {
-            const entry = (intel.contact_angles || []).find(ca => ca.is_primary);
+            const primaryContact = (intel.contacts || []).find(c => c.is_primary);
+            const matchingAngle = primaryContact && (intel.contact_angles || []).find(ca => ca.name?.trim().toLowerCase() === primaryContact.name?.trim().toLowerCase());
+            const entry = primaryContact
+              ? { name: primaryContact.name, title: primaryContact.title, linkedin: primaryContact.linkedin, angle: matchingAngle?.angle, hook: matchingAngle?.hook }
+              : (intel.contact_angles || []).find(ca => ca.is_primary);
             if (!entry) return null;
             return (
               <div style={{ padding: '14px 16px', background: '#f0fdf4', borderRadius: 10, border: '1px solid #bbf7d0' }}>
                 <div style={{ fontSize: 10, fontWeight: 700, color: '#059669', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 8 }}>Primary Entry Point</div>
                 <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>{entry.name} {entry.title && <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>· {entry.title}</span>}</div>
                 {entry.linkedin && <a href={entry.linkedin} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: '#0077b5', textDecoration: 'none', display: 'block', marginTop: 2 }}>↗ LinkedIn</a>}
-                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 6, lineHeight: 1.5, fontStyle: 'italic' }}>"{entry.angle}"</div>
+                {entry.angle && <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 6, lineHeight: 1.5, fontStyle: 'italic' }}>"{entry.angle}"</div>}
                 {entry.hook && <div style={{ fontSize: 12, color: '#059669', marginTop: 6, lineHeight: 1.5 }}>Hook: {entry.hook}</div>}
               </div>
             );

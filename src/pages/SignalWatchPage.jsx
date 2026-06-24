@@ -2,7 +2,9 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { scanBatch, scanDeepDive, weeklyRescanBatch, geocodeHqBatch, enrichContactsWithSearch, scanLinkedInPosts, ENGAGEMENT_META, ENGAGEMENT_OPTIONS } from '../lib/anthropic';
 import { loadLastWeeklyScan, saveLastWeeklyScan, isWeeklyScanDue, markWeeklyScanViewed } from '../lib/settings';
-import { mergeContactAngles, mergeTriggers } from '../lib/clients';
+import { mergeContactAngles, mergeTriggers, sortContactsOldGoldFirst } from '../lib/clients';
+import { parseCsvLine } from '../lib/csv';
+import { upsertDeal, moveStage } from '../lib/deals';
 
 const TRIGGER_CATEGORIES = [
   { id: 'leadership', label: 'Leadership Change', color: '#f59e0b' },
@@ -84,36 +86,20 @@ function inferEngagementType(aiRecommended, employeeCount, fundingStage, trigger
 const BATCH_SIZE = 5;
 const SCAN_DELAY = 3000;
 const DEEP_SCAN_DELAY = 6000;
+const ONE_WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 
-function parseCsvLine(line) {
-  const vals = [];
-  let i = 0;
-  while (i <= line.length) {
-    if (line[i] === '"') {
-      let val = ''; i++;
-      while (i < line.length) {
-        if (line[i] === '"' && line[i + 1] === '"') { val += '"'; i += 2; }
-        else if (line[i] === '"') { i++; break; }
-        else val += line[i++];
-      }
-      vals.push(val.trim());
-      if (line[i] === ',') i++;
-    } else {
-      const end = line.indexOf(',', i);
-      if (end === -1) { vals.push(line.slice(i).trim()); break; }
-      vals.push(line.slice(i, end).trim());
-      i = end + 1;
-    }
-  }
-  return vals;
-}
 
 function parseCSV(text) {
   const lines = text.trim().split(/\r?\n/);
   if (lines.length < 2) return [];
-  const headers = parseCsvLine(lines[0]).map(h => h.toLowerCase().replace(/[^a-z0-9]/g, '_'));
+  // Skip any leading preamble lines that aren't a real header row (e.g. a
+  // "Notes:" line some exports prepend) — a header row always has multiple
+  // comma-separated columns; prose preamble lines typically don't.
+  let headerIdx = lines.findIndex(l => l.includes(','));
+  if (headerIdx === -1) headerIdx = 0;
+  const headers = parseCsvLine(lines[headerIdx]).map(h => h.toLowerCase().replace(/[^a-z0-9]/g, '_'));
 
-  return lines.slice(1).map((line, idx) => {
+  return lines.slice(headerIdx + 1).map((line, idx) => {
     const vals = parseCsvLine(line);
     const row = {};
     headers.forEach((h, i) => { row[h] = vals[i] || ''; });
@@ -152,6 +138,8 @@ export default function SignalWatchPage({ onNavigate, icp, refreshKey = 0, isAct
   const [sortBy, setSortBy]           = useState('icp');
   const [addingToPipeline, setAddingToPipeline] = useState({});
   const [addedToPipeline, setAddedToPipeline]   = useState({});
+  const [addingToDeals, setAddingToDeals]       = useState({});
+  const [addedToDeals, setAddedToDeals]         = useState({});
   const [watchListEntries, setWatchListEntries] = useState({}); // company_id → pipeline_entry_id for watch_list status
   const [loading, setLoading]         = useState(true);
   const [importing, setImporting]     = useState(false);
@@ -166,6 +154,7 @@ export default function SignalWatchPage({ onNavigate, icp, refreshKey = 0, isAct
     engagement: 'all',
     deepScan: 'all',
     scanDate: 'all',
+    oldGold: 'all',
   });
   const [autoDeepQueue, setAutoDeepQueue]           = useState([]);
   const [autoDeepProgress, setAutoDeepProgress]     = useState({ done: 0, total: 0 });
@@ -217,17 +206,39 @@ export default function SignalWatchPage({ onNavigate, icp, refreshKey = 0, isAct
           if (data.length < PAGE) break;
           from += PAGE;
         }
+        // Paginate deals too, past the same 1000-row default cap as companies above.
+        // Excludes 'nurture' (moved back to Watch List from a deal card) and 'lost'
+        // deals — those shouldn't keep a company pinned as "already in pipeline".
+        async function fetchAllDealNames() {
+          let rows = [], from = 0;
+          while (true) {
+            const { data, error } = await supabase.from('deals').select('company_name').not('stage', 'in', '(nurture,lost)').range(from, from + 999);
+            if (error || !data?.length) break;
+            rows = rows.concat(data);
+            if (data.length < 1000) break;
+            from += 1000;
+          }
+          return rows;
+        }
+
         if (allData.length) {
-          const [{ data: pipelineEntries }, { data: watchEntries }] = await Promise.all([
+          const [{ data: pipelineEntries }, { data: watchEntries }, dealRows] = await Promise.all([
             supabase.from('pipeline_entries').select('company_id').neq('status', 'won').neq('status', 'watch_list'),
             supabase.from('pipeline_entries').select('id, company_id').eq('status', 'watch_list'),
+            fetchAllDealNames(),
           ]);
           const inPipeline = new Set((pipelineEntries || []).map(e => e.company_id));
+          const dealCompanyNames = new Set((dealRows || []).map(d => d.company_name?.toLowerCase().trim()));
           const loaded = allData.map(c => ({ ...c, _key: c.id }));
           setCompanies(loaded);
           const alreadyAdded = {};
-          loaded.forEach(c => { if (inPipeline.has(c.id)) alreadyAdded[c.id] = true; });
+          const alreadyInDeals = {};
+          loaded.forEach(c => {
+            if (inPipeline.has(c.id)) alreadyAdded[c.id] = true;
+            if (dealCompanyNames.has(c.name?.toLowerCase().trim())) alreadyInDeals[c.id] = true;
+          });
           setAddedToPipeline(alreadyAdded);
+          setAddedToDeals(alreadyInDeals);
           const wlMap = {};
           (watchEntries || []).forEach(e => { wlMap[e.company_id] = e.id; });
           setWatchListEntries(wlMap);
@@ -316,7 +327,7 @@ export default function SignalWatchPage({ onNavigate, icp, refreshKey = 0, isAct
         const existingNames = new Set(existingContacts.map(ct => ct.name?.toLowerCase()));
         const newContacts = c.contacts.filter(ct => ct.name && !existingNames.has(ct.name.toLowerCase()));
         if (newContacts.length > 0) {
-          const merged = [...existingContacts, ...newContacts];
+          const merged = sortContactsOldGoldFirst([...existingContacts, ...newContacts]);
           await supabase.from('companies').update({ contacts: merged }).eq('id', existing.id);
           setCompanies(prev => prev.map(co => co.id === existing.id ? { ...co, contacts: merged } : co));
           mergedContactCount += newContacts.length;
@@ -471,6 +482,7 @@ export default function SignalWatchPage({ onNavigate, icp, refreshKey = 0, isAct
           }
         }
 
+        mergedContacts = sortContactsOldGoldFirst(mergedContacts);
         const contactsChanged = JSON.stringify(mergedContacts) !== JSON.stringify(existingContacts);
         if (contactsChanged) {
           await supabase.from('companies').update({ contacts: mergedContacts }).eq('id', companyId);
@@ -486,6 +498,18 @@ export default function SignalWatchPage({ onNavigate, icp, refreshKey = 0, isAct
 
   const scanOne = useCallback(async (company) => {
     const key = company.id || company._tempId;
+    // Guard: skip if scanned within the last 7 days
+    if (company.scan_date) {
+      const ageMs = Date.now() - new Date(company.scan_date).getTime();
+      if (ageMs < ONE_WEEK_MS) {
+        const days = Math.floor(ageMs / (24 * 60 * 60 * 1000));
+        const hrs  = Math.floor((ageMs % (24 * 60 * 60 * 1000)) / (60 * 60 * 1000));
+        const msg  = days > 0 ? `${days}d ${hrs}h ago` : `${hrs}h ago`;
+        setScanStatus(s => ({ ...s, [key]: `Scanned ${msg} — wait 7 days` }));
+        setTimeout(() => setScanStatus(s => ({ ...s, [key]: null })), 4000);
+        return;
+      }
+    }
     setActiveScanId(key);
     setScanning(s => ({ ...s, [key]: true }));
     setScanStatus(s => ({ ...s, [key]: 'Searching the web…' }));
@@ -579,6 +603,7 @@ export default function SignalWatchPage({ onNavigate, icp, refreshKey = 0, isAct
     } catch (e) {
       setCompanies(prev => prev.map(c => (c.id || c._tempId) === key ? { ...c, _error: e.message } : c));
       setScanStatus(s => ({ ...s, [key]: 'Error' }));
+      setTimeout(() => setScanStatus(s => ({ ...s, [key]: null })), 5000);
     } finally {
       setScanning(s => ({ ...s, [key]: false }));
       setActiveScanId(null);
@@ -832,11 +857,13 @@ export default function SignalWatchPage({ onNavigate, icp, refreshKey = 0, isAct
           .eq('id', existing[0].id);
         if (error) throw error;
       } else {
+        const primaryIdx = (company.contacts || []).findIndex(c => c.is_primary || c.source === 'old_gold');
         const { error } = await supabase.from('pipeline_entries').insert({
           company_id: company.id,
           current_touch: 0,
           status: 'active',
           week_start: weekStart,
+          ...(primaryIdx !== -1 ? { primary_contact_index: primaryIdx } : {}),
         });
         if (error && !error.message.includes('duplicate')) throw error;
       }
@@ -845,6 +872,78 @@ export default function SignalWatchPage({ onNavigate, icp, refreshKey = 0, isAct
       alert('Error adding to pipeline: ' + e.message);
     } finally {
       setAddingToPipeline(s => ({ ...s, [company.id]: false }));
+    }
+  }, []);
+
+  // ── Add directly to Prospects (Pipeline kanban, Outreach stage) ─────────────
+
+  const addToDeals = useCallback(async (company) => {
+    if (!company.id) return;
+    setAddingToDeals(s => ({ ...s, [company.id]: true }));
+    try {
+      const { data: existing } = await supabase
+        .from('deals')
+        .select('id, stage')
+        .ilike('company_name', company.name)
+        .order('created_at', { ascending: false })
+        .limit(1);
+      if (existing?.length && ['nurture', 'lost'].includes(existing[0].stage)) {
+        // Revive a deal that was previously sent back to Watch List, rather
+        // than leaving it stuck and silently no-op'ing.
+        await moveStage(existing[0].id, 'outreach');
+      } else if (!existing?.length) {
+        const contacts = company.contacts || [];
+        const primary = contacts.find(c => c.is_primary) || contacts.find(c => c.source === 'old_gold') || contacts[0];
+        const newDeal = await upsertDeal({
+          company_id:    company.id,
+          company_name:  company.name,
+          contact_name:  primary?.name  || null,
+          contact_email: primary?.email || null,
+          stage:         'outreach',
+          assigned_to:   'Mike',
+        });
+
+        // Carry over open Old Gold tasks for this company's prospects
+        if (newDeal?.id) {
+          const { data: ogProspects } = await supabase
+            .from('old_gold_prospects')
+            .select('id')
+            .ilike('company', company.name);
+          if (ogProspects?.length) {
+            const prospectIds = ogProspects.map(p => p.id);
+            const { data: ogTasks } = await supabase
+              .from('old_gold_tasks')
+              .select('title, due_date, notes')
+              .in('prospect_id', prospectIds)
+              .eq('completed', false);
+            if (ogTasks?.length) {
+              const INTERNAL = ['mike', 'pete', 'jill'];
+              await supabase.from('tasks').insert(
+                ogTasks.map(t => {
+                  const ownerMatch = (t.notes || '').match(/^Owner:\s*(.+)/i);
+                  const owner = ownerMatch ? ownerMatch[1].trim() : 'Pete';
+                  const assignedTo = INTERNAL.includes(owner.toLowerCase()) ? owner : 'Pete';
+                  return {
+                    title:       t.title,
+                    due_date:    t.due_date || null,
+                    assigned_to: assignedTo,
+                    deal_id:     newDeal.id,
+                    company_id:  company.id,
+                    completed:   false,
+                    created_at:  new Date().toISOString(),
+                    notes:       'Carried over from Old Gold',
+                  };
+                })
+              );
+            }
+          }
+        }
+      }
+      setAddedToDeals(s => ({ ...s, [company.id]: true }));
+    } catch (e) {
+      alert('Error adding to prospects: ' + e.message);
+    } finally {
+      setAddingToDeals(s => ({ ...s, [company.id]: false }));
     }
   }, []);
 
@@ -984,6 +1083,8 @@ export default function SignalWatchPage({ onNavigate, icp, refreshKey = 0, isAct
         if (new Date(c.scan_date).getTime() < cutoff) return false;
       }
 
+      if (filters.oldGold === 'yes' && !(c.tags || []).includes('Old Gold')) return false;
+
       return true;
     });
   };
@@ -1009,6 +1110,7 @@ export default function SignalWatchPage({ onNavigate, icp, refreshKey = 0, isAct
   // Companies in the current filtered view that are eligible for deep scan
   const filteredDeepScanQueue = filtered.filter(c => {
     if (!c.scan_date || c.deep_scanned || c._error || !c.id) return false;
+    if (Date.now() - new Date(c.scan_date).getTime() < ONE_WEEK_MS) return false;
     if (deepScanMinIcp !== 'all' && (c.icp_score || 0) < parseInt(deepScanMinIcp)) return false;
     return true;
   }).sort((a, b) => Math.max(b.overall_score || 0, b.icp_score || 0) - Math.max(a.overall_score || 0, a.icp_score || 0));
@@ -1028,7 +1130,7 @@ export default function SignalWatchPage({ onNavigate, icp, refreshKey = 0, isAct
     const id = company.id || company._tempId;
     setExpandedCards(prev => ({ ...prev, [id]: true }));
     // Clear filters so the card is visible
-    setFilters({ series: 'all', employees: 'all', distance: 'all', icp: 'all', sig: 'all', industry: 'all', engagement: 'all', deepScan: 'all', scanDate: 'all' });
+    setFilters({ series: 'all', employees: 'all', distance: 'all', icp: 'all', sig: 'all', industry: 'all', engagement: 'all', deepScan: 'all', scanDate: 'all', oldGold: 'all' });
     setSearch('');
     setTimeout(() => {
       cardRefs.current[id]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -1417,46 +1519,23 @@ export default function SignalWatchPage({ onNavigate, icp, refreshKey = 0, isAct
                     ))}
                   </div>
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', whiteSpace: 'nowrap' }}>Employees</span>
-                  <div style={{ display: 'flex', gap: 4 }}>
-                    {[['all','All'],['1_30','1–30'],['30_100','30–100'],['100_500','100–500'],['500_plus','500+']].map(([v,l]) => (
-                      <button key={v} className={`filter-btn${filters.employees === v ? ' active' : ''}`} onClick={() => setFilter('employees', v)}>{l}</button>
-                    ))}
-                  </div>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', whiteSpace: 'nowrap' }}>From Andover MA</span>
-                  <div style={{ display: 'flex', gap: 4 }}>
-                    {[['all','All'],['50','<50mi'],['100','<100mi'],['250','<250mi'],['500','<500mi']].map(([v,l]) => (
-                      <button key={v} className={`filter-btn${filters.distance === v ? ' active' : ''}`} onClick={() => setFilter('distance', v)}>{l}</button>
-                    ))}
-                  </div>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', whiteSpace: 'nowrap' }}>ICP Score</span>
-                  <div style={{ display: 'flex', gap: 4 }}>
-                    {[['all','All'],['7','7+'],['5','5+'],['3','3+']].map(([v,l]) => (
-                      <button key={v} className={`filter-btn${filters.icp === v ? ' active' : ''}`} onClick={() => setFilter('icp', v)}>{l}</button>
-                    ))}
-                  </div>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', whiteSpace: 'nowrap' }}>Entry Point</span>
-                  <div style={{ display: 'flex', gap: 4 }}>
-                    {[['all','All'],['Sprint','Sprint'],['Foundation','Foundation'],['Growth','Growth'],['Acceleration','Accel.'],['Enterprise','Enterprise']].map(([v,l]) => (
-                      <button key={v} className={`filter-btn${filters.engagement === v ? ' active' : ''}`} onClick={() => setFilter('engagement', v)}>{l}</button>
-                    ))}
-                  </div>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', whiteSpace: 'nowrap' }}>SIG Score</span>
-                  <div style={{ display: 'flex', gap: 4 }}>
-                    {[['all','All'],['7','7+'],['5','5+'],['3','3+']].map(([v,l]) => (
-                      <button key={v} className={`filter-btn${filters.sig === v ? ' active' : ''}`} onClick={() => setFilter('sig', v)}>{l}</button>
-                    ))}
-                  </div>
-                </div>
+                {(() => {
+                  const dd = (label, val, setter, opts) => (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', whiteSpace: 'nowrap' }}>{label}</span>
+                      <select value={val} onChange={e => setter(e.target.value)} style={{ fontSize: 12, padding: '4px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface)', color: val !== 'all' ? 'var(--accent)' : 'var(--text)', fontWeight: val !== 'all' ? 700 : 400, cursor: 'pointer' }}>
+                        {opts.map(([v,l]) => <option key={v} value={v}>{l}</option>)}
+                      </select>
+                    </div>
+                  );
+                  return (<>
+                    {dd('Employees', filters.employees, v => setFilter('employees', v), [['all','All employees'],['1_30','1–30'],['30_100','30–100'],['100_500','100–500'],['500_plus','500+']])}
+                    {dd('Distance', filters.distance, v => setFilter('distance', v), [['all','Any distance'],['50','< 50 mi'],['100','< 100 mi'],['250','< 250 mi'],['500','< 500 mi']])}
+                    {dd('ICP Score', filters.icp, v => setFilter('icp', v), [['all','Any ICP'],['7','ICP 7+'],['5','ICP 5+'],['3','ICP 3+']])}
+                    {dd('SIG Score', filters.sig, v => setFilter('sig', v), [['all','Any SIG'],['7','SIG 7+'],['5','SIG 5+'],['3','SIG 3+']])}
+                    {dd('Entry Point', filters.engagement, v => setFilter('engagement', v), [['all','All entry points'],['Sprint','Sprint'],['Foundation','Foundation'],['Growth','Growth'],['Acceleration','Accel.'],['Enterprise','Enterprise']])}
+                  </>);
+                })()}
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                   <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', whiteSpace: 'nowrap' }}>Deep Scan</span>
                   <div style={{ display: 'flex', gap: 4 }}>
@@ -1470,6 +1549,14 @@ export default function SignalWatchPage({ onNavigate, icp, refreshKey = 0, isAct
                   <div style={{ display: 'flex', gap: 4 }}>
                     {[['all','All'],['today','Today'],['week','Last Week'],['month','Last Month'],['six_months','Last 6 Months']].map(([v,l]) => (
                       <button key={v} className={`filter-btn${filters.scanDate === v ? ' active' : ''}`} onClick={() => setFilter('scanDate', v)}>{l}</button>
+                    ))}
+                  </div>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', whiteSpace: 'nowrap' }}>Source</span>
+                  <div style={{ display: 'flex', gap: 4 }}>
+                    {[['all','All'],['yes','🪙 Old Gold']].map(([v,l]) => (
+                      <button key={v} className={`filter-btn${filters.oldGold === v ? ' active' : ''}`} onClick={() => setFilter('oldGold', v)}>{l}</button>
                     ))}
                   </div>
                 </div>
@@ -1512,14 +1599,21 @@ export default function SignalWatchPage({ onNavigate, icp, refreshKey = 0, isAct
                   style={{ width: 160, padding: '5px 10px', fontSize: 12 }}
                 />
               </div>
-              {(filters.series !== 'all' || filters.employees !== 'all' || filters.distance !== 'all' || filters.icp !== 'all' || filters.sig !== 'all' || filters.industry !== 'all' || filters.engagement !== 'all' || filters.deepScan !== 'all' || search) && (
-                <div style={{ marginTop: 8, fontSize: 12, color: 'var(--text-muted)' }}>
-                  Showing {filtered.length} of {companies.length} companies &nbsp;
-                  <button className="btn btn-ghost btn-xs" onClick={() => { setFilters({ series: 'all', employees: 'all', distance: 'all', icp: 'all', sig: 'all', industry: 'all', engagement: 'all', deepScan: 'all', scanDate: 'all' }); setSearch(''); }}>
-                    Clear filters
-                  </button>
-                </div>
-              )}
+              {(() => {
+                const isFiltered = filters.series !== 'all' || filters.employees !== 'all' || filters.distance !== 'all' || filters.icp !== 'all' || filters.sig !== 'all' || filters.industry !== 'all' || filters.engagement !== 'all' || filters.deepScan !== 'all' || filters.scanDate !== 'all' || filters.oldGold !== 'all' || search;
+                return (
+                  <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: isFiltered ? 'var(--accent)' : 'var(--text-muted)' }}>
+                      {filtered.length.toLocaleString()} <span style={{ fontWeight: 400, color: 'var(--text-faint)' }}>of</span> {companies.length.toLocaleString()} companies
+                    </span>
+                    {isFiltered && (
+                      <button className="btn btn-ghost btn-xs" onClick={() => { setFilters({ series: 'all', employees: 'all', distance: 'all', icp: 'all', sig: 'all', industry: 'all', engagement: 'all', deepScan: 'all', scanDate: 'all', oldGold: 'all' }); setSearch(''); }}>
+                        Clear filters
+                      </button>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -1539,11 +1633,15 @@ export default function SignalWatchPage({ onNavigate, icp, refreshKey = 0, isAct
                     weeklyScanRunning={weeklyScanRunning}
                     isAddingToPipeline={addingToPipeline[key]}
                     isAddedToPipeline={addedToPipeline[company.id]}
+                    isAddingToDeals={addingToDeals[key]}
+                    isAddedToDeals={addedToDeals[company.id]}
                     isOnWatchList={!!watchListEntries[company.id]}
                     onScan={() => scanOne(company)}
                     onAddToPipeline={() => addToPipeline(company)}
+                    onAddToDeals={() => addToDeals(company)}
                     onResumeOutreach={() => resumeOutreach(company)}
                     onNavigatePipeline={() => onNavigate('pipeline')}
+                    onNavigateDeals={() => onNavigate('deals')}
                     onDelete={() => deleteCompany(company)}
                     forceExpanded={expandedCards[key]}
                     onExpandedChange={(val) => setExpandedCards(prev => ({ ...prev, [key]: val }))}
@@ -1573,7 +1671,7 @@ function AddContactForm({ companyId, existingContacts, onSaved }) {
     if (!form.name.trim()) return;
     setSaving(true);
     try {
-      const updated = [...existingContacts, { name: form.name.trim(), title: form.title.trim(), email: form.email.trim(), linkedin: form.linkedin.trim() }];
+      const updated = sortContactsOldGoldFirst([...existingContacts, { name: form.name.trim(), title: form.title.trim(), email: form.email.trim(), linkedin: form.linkedin.trim() }]);
       const { error } = await supabase.from('companies').update({ contacts: updated }).eq('id', companyId);
       if (error) throw error;
       onSaved(updated);
@@ -1606,7 +1704,7 @@ function AddContactForm({ companyId, existingContacts, onSaved }) {
   );
 }
 
-function CompanyCard({ company, distMiles, status, isScanning, scanningAll, weeklyScanRunning, isAddingToPipeline, isAddedToPipeline, isOnWatchList, onScan, onAddToPipeline, onResumeOutreach, onNavigatePipeline, onDelete, forceExpanded, onExpandedChange, cardRef, onUpdateContacts, onUpdateEngagement }) {
+function CompanyCard({ company, distMiles, status, isScanning, scanningAll, weeklyScanRunning, isAddingToPipeline, isAddedToPipeline, isAddingToDeals, isAddedToDeals, isOnWatchList, onScan, onAddToPipeline, onAddToDeals, onResumeOutreach, onNavigatePipeline, onNavigateDeals, onDelete, forceExpanded, onExpandedChange, cardRef, onUpdateContacts, onUpdateEngagement }) {
   const [expanded, setExpanded] = useState(false);
   const [editingIdx, setEditingIdx] = useState(null);
   const [editForm, setEditForm] = useState({});
@@ -1749,95 +1847,117 @@ function CompanyCard({ company, distMiles, status, isScanning, scanningAll, week
 
   return (
     <div className="card" ref={cardRef} style={cardBorderStyle}>
-      <div className="card-header" style={{ cursor: hasResult ? 'pointer' : 'default' }} onClick={() => hasResult && handleSetExpanded(!expanded)}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 0 }}>
-          {company.website ? (
-            <a href={company.website.startsWith('http') ? company.website : `https://${company.website}`} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()} style={{ fontWeight: 800, fontSize: 14, color: 'inherit', textDecoration: 'none' }}>{company.name}</a>
-          ) : (
-            <span style={{ fontWeight: 800, fontSize: 14 }}>{company.name}</span>
+      <div className="card-header" style={{ cursor: hasResult ? 'pointer' : 'default', flexDirection: 'column', gap: 8, alignItems: 'stretch' }} onClick={() => hasResult && handleSetExpanded(!expanded)}>
+
+        {/* ── Row 1: Name / badges / scores / actions / delete ── */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+
+          {/* Company name */}
+          <div style={{ minWidth: 0 }}>
+            {company.website ? (
+              <a href={company.website.startsWith('http') ? company.website : `https://${company.website}`} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()} style={{ fontWeight: 800, fontSize: 15, color: 'inherit', textDecoration: 'none', whiteSpace: 'nowrap' }}>{company.name}</a>
+            ) : (
+              <span style={{ fontWeight: 800, fontSize: 15, whiteSpace: 'nowrap' }}>{company.name}</span>
+            )}
+          </div>
+
+          {/* Identity badges */}
+          <div style={{ display: 'flex', gap: 5, alignItems: 'center', flexWrap: 'wrap', flex: 1, minWidth: 0 }}>
+            {(company.tags || []).includes('Old Gold') && (
+              <span title="Old Gold contact" style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 10, background: '#fef3c7', color: '#92400e', border: '1px solid #fde68a', whiteSpace: 'nowrap' }}>🪙 Old Gold</span>
+            )}
+            {company.funding_stage && company.funding_stage !== 'Unknown' && (
+              <span className="badge badge-blue" style={{ fontSize: 10, whiteSpace: 'nowrap' }}>{company.funding_stage}</span>
+            )}
+            {company.icp_tier && (
+              <span className="badge badge-gray" style={{ fontSize: 10, whiteSpace: 'nowrap' }}>{company.icp_tier}</span>
+            )}
+          </div>
+
+          {/* SIG / ICP scores */}
+          {hasResult && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 3, alignItems: 'flex-end', flexShrink: 0 }}>
+              <span style={{ fontSize: 11, fontWeight: 700, padding: '2px 9px', borderRadius: 6, background: sc + '18', color: sc, border: `1px solid ${sc}44` }}>SIG {company.overall_score}/10</span>
+              {company.icp_score && (
+                <span style={{ fontSize: 11, fontWeight: 700, padding: '2px 9px', borderRadius: 6, background: scoreColor(company.icp_score) + '18', color: scoreColor(company.icp_score), border: `1px solid ${scoreColor(company.icp_score)}44` }}>ICP {company.icp_score}/10</span>
+              )}
+            </div>
           )}
-          {company.funding_stage && company.funding_stage !== 'Unknown' && (
-            <span className="badge badge-blue" style={{ fontSize: 10 }}>{company.funding_stage}</span>
+
+          {/* Action buttons / status labels */}
+          {hasResult && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'stretch', flexShrink: 0, minWidth: 138 }}>
+              {isAddedToDeals ? (
+                <span style={{ fontSize: 11, fontWeight: 700, color: '#15803d', background: '#dcfce7', padding: '4px 10px', borderRadius: 6, border: '1px solid #86efac', textAlign: 'center', cursor: 'pointer' }} onClick={e => { e.stopPropagation(); onNavigateDeals(); }}>In Pipeline →</span>
+              ) : (
+                <button className="btn btn-secondary btn-sm" style={{ borderRadius: 6 }} onClick={e => { e.stopPropagation(); onAddToDeals(); }} disabled={isAddingToDeals}>
+                  {isAddingToDeals ? <><span className="spinner" /> Adding…</> : '+ Pipeline'}
+                </button>
+              )}
+              {isAddedToPipeline ? (
+                <span style={{ fontSize: 11, fontWeight: 700, color: '#0369a1', background: '#e0f2fe', padding: '4px 10px', borderRadius: 6, border: '1px solid #7dd3fc', textAlign: 'center', cursor: 'pointer' }} onClick={e => { e.stopPropagation(); onNavigatePipeline(); }}>In Cold Outreach →</span>
+              ) : isOnWatchList ? (
+                <button className="btn btn-secondary btn-sm" style={{ borderRadius: 6, color: 'var(--accent)', borderColor: 'var(--accent)' }} onClick={e => { e.stopPropagation(); onResumeOutreach(); }}>↩ Resume Outreach</button>
+              ) : (
+                <button className="btn btn-green btn-sm" style={{ borderRadius: 6 }} onClick={e => { e.stopPropagation(); onAddToPipeline(); }} disabled={isAddingToPipeline}>
+                  {isAddingToPipeline ? <><span className="spinner" /> Adding…</> : '+ Cold Outreach'}
+                </button>
+              )}
+            </div>
           )}
-          {company.icp_tier && (
-            <span className="badge badge-gray" style={{ fontSize: 10 }}>{company.icp_tier}</span>
-          )}
+
+          {/* Delete */}
+          <button className="btn btn-ghost btn-xs" onClick={e => { e.stopPropagation(); onDelete(); }} title="Remove" style={{ color: 'var(--text-faint)', padding: '3px 6px', flexShrink: 0, alignSelf: 'flex-start' }}>✕</button>
+        </div>
+
+        {/* ── Row 2: Meta / engagement / scan ── */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+
+          {/* Engagement type */}
           {hasEngagement ? (
             <select
               value={engType}
               onClick={e => e.stopPropagation()}
               onChange={e => { e.stopPropagation(); onUpdateEngagement?.(company.id, e.target.value); }}
-              style={{ fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 10, border: `1px solid ${engMeta.color}40`, background: engMeta.color + '18', color: engMeta.color, cursor: 'pointer', outline: 'none', width: 'fit-content', maxWidth: 110 }}
-              title="Engagement type — drives email messaging"
+              style={{ fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 8, border: `1px solid ${engMeta.color}40`, background: engMeta.color + '18', color: engMeta.color, cursor: 'pointer', outline: 'none', width: 'fit-content' }}
+              title="Engagement type"
             >
               {ENGAGEMENT_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
             </select>
           ) : company.scan_date ? (
-            <span
-              onClick={e => e.stopPropagation()}
-              title="Deep scan this company to get an engagement type recommendation"
-              style={{ fontSize: 10, color: 'var(--text-muted)', background: 'var(--surface)', border: '1px dashed var(--border)', padding: '2px 7px', borderRadius: 10, cursor: 'default', whiteSpace: 'nowrap' }}
-            >
-              Deep scan to set
-            </span>
+            <span onClick={e => e.stopPropagation()} style={{ fontSize: 10, color: 'var(--text-faint)', background: 'var(--surface)', border: '1px dashed var(--border)', padding: '2px 7px', borderRadius: 8, whiteSpace: 'nowrap' }}>No entry point</span>
           ) : null}
+
           {distMiles !== null && (
-            <span style={{ fontSize: 10, color: distMiles < 100 ? 'var(--green)' : 'var(--text-faint)', fontWeight: 600 }}>
-              📍 {distMiles}mi
-            </span>
+            <span style={{ fontSize: 11, color: distMiles < 100 ? 'var(--green)' : 'var(--text-faint)', fontWeight: 600 }}>📍 {distMiles}mi</span>
           )}
           {company.employee_count_num && (
-            <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>👥 {company.employee_count_num}</span>
+            <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>👥 {company.employee_count_num}</span>
           )}
-        </div>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexShrink: 0 }}>
-          {hasResult && (
-            <>
-              <span style={{ fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 20, background: sc + '22', color: sc, border: `1px solid ${sc}` }}>SIG {company.overall_score}/10</span>
-              {company.icp_score && (
-                <span style={{ fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 20, background: scoreColor(company.icp_score) + '22', color: scoreColor(company.icp_score), border: `1px solid ${scoreColor(company.icp_score)}` }}>
-                  ICP {company.icp_score}/10
-                </span>
-              )}
-            </>
-          )}
-          {isQueued && (
-            <span style={{ fontSize: 10, fontWeight: 700, color: '#92400e', background: '#fef3c7', padding: '3px 10px', borderRadius: 20, border: '1px solid #fde047' }}>Queued</span>
-          )}
-          {isDone && (
-            <span style={{ fontSize: 10, fontWeight: 700, color: '#15803d', background: '#dcfce7', padding: '3px 10px', borderRadius: 20, border: '1px solid #86efac' }}>Done</span>
-          )}
-          {(isScanning || status === 'Scanning…') && (
-            <span style={{ fontSize: 11, color: 'var(--accent)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 4 }}>
-              <span className="spinner" />{status || 'Scanning…'}
+
+          {/* Spacer */}
+          <div style={{ flex: 1 }} />
+
+          {/* Scan state */}
+          {isQueued && <span style={{ fontSize: 10, fontWeight: 700, color: '#92400e', background: '#fef3c7', padding: '2px 8px', borderRadius: 8, border: '1px solid #fde047' }}>Queued</span>}
+          {(isScanning || (status && status !== 'Done')) && !isQueued && (
+            <span style={{ fontSize: 11, color: 'var(--accent)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap' }}>
+              {isScanning && <span className="spinner" />}{status || 'Scanning…'}
             </span>
           )}
-          {company.scan_date && (
-            <span style={{ fontSize: 10, color: 'var(--text-faint)', whiteSpace: 'nowrap' }}>
-              Last scanned: {ddmyy(company.scan_date)}
-            </span>
+          {company.scan_date && !isScanning && (
+            <span style={{ fontSize: 10, color: 'var(--text-faint)', whiteSpace: 'nowrap' }}>Scanned {ddmyy(company.scan_date)}</span>
           )}
           <button
-            className="btn btn-sm"
-            title={company.deep_scanned && company.scan_date ? `Deep scanned ${new Date(company.scan_date).toLocaleDateString()} — click to rescan` : 'Run a deep scan'}
-            style={{ borderRadius: 20, ...(company.deep_scanned ? { background: '#dcfce7', color: '#15803d', border: '1px solid #86efac' } : {}) }}
+            className="btn btn-xs"
+            title={company.deep_scanned ? `Scanned ${new Date(company.scan_date).toLocaleDateString()} — click to rescan` : 'Run a deep scan'}
+            style={{ borderRadius: 8, ...(company.deep_scanned ? { background: 'var(--surface)', color: 'var(--text-muted)', border: '1px solid var(--border)' } : {}) }}
             onClick={e => { e.stopPropagation(); onScan(); }}
             disabled={isScanning}
           >
-            {isScanning ? <><span className="spinner" /> Scanning…</> : company.deep_scanned ? '✓ Scanned — Rescan' : 'Deep Scan'}
+            {isScanning ? <><span className="spinner" /> Scanning…</> : company.deep_scanned ? '↻ Rescan' : 'Deep Scan'}
           </button>
-          {hasResult && (
-            isAddedToPipeline ? (
-              <button className="btn btn-ghost btn-sm" style={{ borderRadius: 20 }} onClick={e => { e.stopPropagation(); onNavigatePipeline(); }}>In Prospects →</button>
-            ) : isOnWatchList ? (
-              <button className="btn btn-secondary btn-sm" style={{ borderRadius: 20, color: 'var(--accent)', borderColor: 'var(--accent)' }} onClick={e => { e.stopPropagation(); onResumeOutreach(); }}>↩ Resume Outreach</button>
-            ) : (
-              <button className="btn btn-green btn-sm" style={{ borderRadius: 20 }} onClick={e => { e.stopPropagation(); onAddToPipeline(); }} disabled={isAddingToPipeline}>
-                {isAddingToPipeline ? <><span className="spinner" /> Adding…</> : '+ Add to Prospects'}
-              </button>
-            )
-          )}
-          <button className="btn btn-ghost btn-xs" onClick={e => { e.stopPropagation(); onDelete(); }} title="Remove" style={{ color: 'var(--text-faint)', padding: '3px 6px' }}>✕</button>
+
         </div>
       </div>
 
@@ -1932,6 +2052,12 @@ function CompanyCard({ company, distMiles, status, isScanning, scanningAll, week
                         <span style={{ fontWeight: 700, fontSize: 13 }}>
                           {ct.linkedin ? <a href={ct.linkedin} target="_blank" rel="noreferrer" style={{ color: 'var(--accent)' }}>{ct.name}</a> : ct.name}
                         </span>
+                        {ct.source === 'old_gold' && (
+                          <span title="Imported from Old Gold" style={{ fontSize: 10, fontWeight: 700, padding: '1px 7px', borderRadius: 9, background: '#fef3c7', color: '#92400e', border: '1px solid #fde68a' }}>🪙 Old Gold</span>
+                        )}
+                        {ct.is_primary && (
+                          <span title="Default primary contact" style={{ fontSize: 10, fontWeight: 700, padding: '1px 7px', borderRadius: 9, background: '#dbeafe', color: '#1e40af', border: '1px solid #bfdbfe' }}>★ Primary</span>
+                        )}
                         {ct.title && <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{ct.title}</span>}
                         {ct.email && <a href={`https://mail.google.com/mail/?view=cm&to=${encodeURIComponent(ct.email)}`} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: 'var(--accent)' }}>{ct.email}</a>}
                         {ct.linkedin && <a href={ct.linkedin} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: '#0a66c2', background: '#e8f0fe', border: '1px solid #c7d7f7', padding: '1px 8px', borderRadius: 3, fontWeight: 600, textDecoration: 'none' }}>LinkedIn ↗</a>}

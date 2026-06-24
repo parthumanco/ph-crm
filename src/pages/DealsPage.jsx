@@ -5,7 +5,7 @@ import {
   stageColor, stageLabel, dealValue, fmt$, daysSince,
 } from '../lib/deals';
 import { upsertProject, buildTimelineFromParsed, bulkInsertMilestones, bulkInsertTasks, migrateDealMeetingsToProject, migrateDealTasksToProject, migrateDealFilesToProject } from '../lib/projects';
-import { upsertClientContacts } from '../lib/clients';
+import { upsertClientContacts, transferCompanyContactsToClient } from '../lib/clients';
 import DealDetailModal from '../components/DealDetailModal';
 import ProposalImporter from '../components/ProposalImporter';
 import TranscriptImporter from '../components/TranscriptImporter';
@@ -173,7 +173,11 @@ export default function DealsPage({ refreshKey = 0, targetDealId = null, onTarge
   const byStage = id => deals.filter(d => d.stage === id);
 
   // ── Stats ──────────────────────────────────────────────────────────────────
-  const activeDeals   = deals.filter(d => !['won','lost'].includes(d.stage));
+  // Match the kanban's own definition of "active" (ACTIVE_STAGES) — excludes
+  // 'prospect' (not yet worked) and 'nurture' (parked/sent back) in addition
+  // to won/lost, so the stat card agrees with what's actually visible below.
+  const activeStageIds = new Set(ACTIVE_STAGES.map(s => s.id));
+  const activeDeals   = deals.filter(d => activeStageIds.has(d.stage));
   const wonDeals      = deals.filter(d => d.stage === 'won');
   const lostDeals     = deals.filter(d => d.stage === 'lost');
   const totalPipeline = activeDeals.reduce((s, d) => s + dealValue(d), 0);
@@ -231,13 +235,21 @@ export default function DealsPage({ refreshKey = 0, targetDealId = null, onTarge
         start_date:  today,
         source_deal_id: deal.id,
       });
-      // Push the deal's primary contact into the client record
-      if (proj.client_id && deal.contact_name) {
-        upsertClientContacts(proj.client_id, [{
-          name:  deal.contact_name,
-          email: deal.contact_email || null,
-          title: deal.contact_title || null,
-        }]).catch(e => console.warn('Won contact sync:', e.message));
+      // Push the deal's primary contact, then carry over the full prospecting
+      // contact roster from the matching companies row (if any) so research
+      // done before the win isn't lost. Awaited sequentially (not fired
+      // concurrently) — both do read-merge-write on the same clients.contacts
+      // row, so running them in parallel would race and one write could
+      // silently clobber the other.
+      if (proj.client_id) {
+        if (deal.contact_name) {
+          await upsertClientContacts(proj.client_id, [{
+            name:  deal.contact_name,
+            email: deal.contact_email || null,
+            title: deal.contact_title || null,
+          }]).catch(e => console.warn('Won contact sync:', e.message));
+        }
+        await transferCompanyContactsToClient(proj.client_id, deal.company_name).catch(e => console.warn('Company contact transfer:', e.message));
       }
 
       // Migrate any deal meetings, tasks, and files into the new project
@@ -361,13 +373,19 @@ export default function DealsPage({ refreshKey = 0, targetDealId = null, onTarge
       if (msRows.length > 0) await bulkInsertMilestones(msRows);
       if (taskRows.length > 0) await bulkInsertTasks(taskRows);
 
-      // 3. Push the deal's primary contact into the client record
-      if (proj.client_id && deal.contact_name) {
-        upsertClientContacts(proj.client_id, [{
-          name:  deal.contact_name,
-          email: deal.contact_email || null,
-          title: deal.contact_title || null,
-        }]).catch(e => console.warn('Proposal contact sync:', e.message));
+      // 3. Push the deal's primary contact, then carry over the full
+      // prospecting contact roster from the matching companies row (if any).
+      // Awaited sequentially, not fired concurrently — see comment in
+      // createProjectFromDeal for why (both read-merge-write the same row).
+      if (proj.client_id) {
+        if (deal.contact_name) {
+          await upsertClientContacts(proj.client_id, [{
+            name:  deal.contact_name,
+            email: deal.contact_email || null,
+            title: deal.contact_title || null,
+          }]).catch(e => console.warn('Proposal contact sync:', e.message));
+        }
+        await transferCompanyContactsToClient(proj.client_id, deal.company_name).catch(e => console.warn('Company contact transfer:', e.message));
       }
 
       // 4. Migrate any deal meetings, tasks, and files over to the new project

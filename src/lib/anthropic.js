@@ -922,6 +922,38 @@ Return JSON: {"subject":"str","body":"str"}. Body uses \\n for line breaks.`;
   },
 };
 
+// ── Activity insight extraction ───────────────────────────────────────────────
+// Breaks down a logged deal activity (a pasted email thread, call note, or
+// meeting note) into a summary and concrete follow-up action items — the same
+// treatment Old Gold's transcript import gives a pasted transcript, applied
+// here so raw correspondence logged on a deal is just as useful.
+export async function extractActivityInsights(activityText, companyName) {
+  if (!activityText?.trim()) return null;
+
+  const data = await withTimeout(callClaude({
+    model: 'claude-haiku-4-5-20251001',
+    max_tokens: 1200,
+    system: `You are a sales operations assistant extracting structured signal from a logged CRM activity (an email thread, call note, or meeting note) for a deal with ${companyName || 'a prospect'}. Only extract what is actually present in the text — never invent dates, names, or commitments. Return only valid JSON, no markdown.`,
+    messages: [{ role: 'user', content:
+`Today's date is ${new Date().toISOString().slice(0, 10)} — resolve any relative dates ("this Friday", "next Monday") against that, not your training cutoff.
+
+Read this activity and extract:
+1. A concise 1-2 sentence summary of what happened or was discussed.
+2. Concrete follow-up action items — only ones explicitly stated or clearly implied (e.g. "I'll send X", "let's talk Friday"). For each: a short title, an owner (first name of whoever owns it — our side or the prospect's — or null if unclear), and a due date (YYYY-MM-DD) only if a specific date/day is mentioned, otherwise null.
+
+ACTIVITY:
+${activityText.slice(0, 6000)}
+
+Return JSON only:
+{
+  "summary": "...",
+  "action_items": [{ "title": "...", "owner": "..." or null, "due_date": "YYYY-MM-DD" or null }]
+}` }],
+  }), 60000);
+
+  return extractJsonBlock(data) || null;
+}
+
 // ── Contact dossier enrichment ────────────────────────────────────────────────
 // Builds a detailed personal profile for one contact via web search.
 export async function enrichContactDossier(contact, companyName) {
@@ -1232,10 +1264,16 @@ CONTACT TO REACH:
 - Title: ${contact.title || 'unknown role'}
 - Email: ${contact.email || 'not on file'}
 
-COMPANY INTEL (from thesis):
+COMPANY INTEL (from Watch List scans and/or thesis):
 ${companyIntel?.summary ? `Summary: ${companyIntel.summary}` : 'No summary.'}
 ${companyIntel?.recommended_angle ? `Best angle: ${companyIntel.recommended_angle}` : ''}
 ${companyIntel?.entry_contact?.hook ? `Entry hook for ${companyIntel.entry_contact.name || 'primary contact'}: ${companyIntel.entry_contact.hook}` : ''}
+${(() => {
+  const ca = (companyIntel?.contact_angles || []).find(c => c.name?.trim().toLowerCase() === contact.name?.trim().toLowerCase());
+  if (!ca?.angle && !ca?.hook) return '';
+  return `Outreach angle for ${contact.name}: ${ca.angle || ''}${ca.hook ? ` Hook: ${ca.hook}` : ''}`;
+})()}
+${(companyIntel?.triggers || []).length > 0 ? `Trigger events (why now):\n${companyIntel.triggers.slice(0, 5).map(t => `- [${t.category || 'signal'}] ${t.headline}: ${t.detail}`).join('\n')}` : ''}
 ${companyIntel?.thesis ? `Thesis (excerpt): ${companyIntel.thesis.slice(0, 600)}` : 'No thesis built yet.'}
 
 DEAL NOTES (outreach history, prospect replies, internal context):

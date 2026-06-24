@@ -396,7 +396,7 @@ export default function WeeklyReportPage({ icp = DEFAULT_ICP, refreshKey = 0 }) 
     <>
       <div className="page-header">
         <div className="page-header-left">
-          <h2>📋 Weekly Outreach</h2>
+          <h2>📋 Outreach Planner</h2>
           <p>{weekLabel} · {totalActions} action{totalActions !== 1 ? 's' : ''} due</p>
         </div>
         <div className="page-header-actions">

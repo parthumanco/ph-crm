@@ -2751,7 +2751,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
             </div>
 
             {/* Selected contacts */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 8 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 8, maxHeight: 220, overflowY: 'auto', paddingRight: 2 }}>
               {(activeProject.contacts || []).length === 0 && !addingContact && (
                 <div style={{ fontSize: 12, color: 'var(--text-faint)', fontStyle: 'italic' }}>No contacts added</div>
               )}
@@ -4358,15 +4358,23 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
             discovered={(() => {
               const addedNames = new Set((clientRecord?.contacts || []).map(c => c.name?.trim().toLowerCase()));
               const pool = new Map();
-              (projectCompany?.contact_angles || []).forEach(c => {
-                if (!c.name?.trim()) return;
-                const key = c.name.trim().toLowerCase();
-                if (!addedNames.has(key)) pool.set(key, { name: c.name.trim(), title: c.title || '', email: c.email || '', linkedin: c.linkedinUrl || c.linkedin || '' });
+              // companies.contacts (shared with Watch List/Old Gold/Pipeline) first,
+              // then contact_angles layered on top for title/linkedin only.
+              [projectCompany, dealCompanyIntel].forEach(company => {
+                (company?.contacts || []).forEach(c => {
+                  if (!c.name?.trim()) return;
+                  const key = c.name.trim().toLowerCase();
+                  if (!addedNames.has(key)) pool.set(key, { name: c.name.trim(), title: c.title || '', email: c.email || '', linkedin: c.linkedin || '' });
+                });
               });
-              (dealCompanyIntel?.contact_angles || []).forEach(c => {
-                if (!c.name?.trim()) return;
-                const key = c.name.trim().toLowerCase();
-                if (!addedNames.has(key) && !pool.has(key)) pool.set(key, { name: c.name.trim(), title: c.title || '', email: c.email || '', linkedin: c.linkedinUrl || c.linkedin || '' });
+              [projectCompany, dealCompanyIntel].forEach(company => {
+                (company?.contact_angles || []).forEach(c => {
+                  if (!c.name?.trim()) return;
+                  const key = c.name.trim().toLowerCase();
+                  if (addedNames.has(key)) return;
+                  const existing = pool.get(key) || {};
+                  pool.set(key, { name: c.name.trim(), title: existing.title || c.title || '', email: existing.email || c.email || '', linkedin: existing.linkedin || c.linkedinUrl || c.linkedin || '' });
+                });
               });
               return Array.from(pool.values());
             })()}

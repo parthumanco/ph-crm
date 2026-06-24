@@ -10,7 +10,8 @@ import {
 } from '../lib/deals';
 import { fetchDealMeetings, deleteProjectMeeting } from '../lib/projects';
 import { fetchCompanyFiles, deleteCompanyFile } from '../lib/documents';
-import { fetchCompanyIntel, runBuildThesis, findOrCreateCompany, addCompanyResearchItem, removeCompanyResearchItem, addCompanyContact, updateCompanyContact, deleteCompanyContact, setPrimaryContact } from '../lib/clients';
+import { fetchCompanyIntel, runBuildThesis, findOrCreateCompany, addCompanyResearchItem, removeCompanyResearchItem, upsertCompanyContacts, deleteCompanyContactFromContacts, updateCompanyContactInContacts, setPrimaryCompanyContact, enrichCompanyContact } from '../lib/clients';
+import ContactDossier from './ContactDossier';
 import { loadIcp } from '../lib/settings';
 import { requestAndSave, clearReminder, hasReminder } from '../lib/reminders';
 import TranscriptImporter from './TranscriptImporter';
@@ -43,6 +44,7 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
   const [addingAct, setAddingAct] = useState(false);
   const [addingTask, setAddingTask] = useState(false);
   const [savingAct, setSavingAct] = useState(false);
+  const [activityInsightToast, setActivityInsightToast] = useState(null); // { count } after extracting next steps from a logged activity
   const [savingTask, setSavingTask] = useState(false);
   const [confirmDeleteActId, setConfirmDeleteActId] = useState(null); // activity id pending delete confirm
   const [tab, setTab]             = useState('nextsteps');
@@ -90,6 +92,7 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
   const [editingContact, setEditingContact]   = useState(null); // contact name being edited
   const [editDraft, setEditDraft]             = useState({});
   const [savingEdit, setSavingEdit]           = useState(false);
+  const [buildingDossierFor, setBuildingDossierFor] = useState(null); // contact name being enriched
 
   // Compose email state
   const [composeEmail, setComposeEmail] = useState(null); // { to, toName } | null
@@ -115,6 +118,10 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
   const [meetingSummaryPrompt, setMeetingSummaryPrompt] = useState(null); // { meeting, tasks } after transcript import
   const [uploadingDealFile, setUploadingDealFile] = useState(false);
 
+  // Old Gold history tab state
+  const [ogHistory, setOgHistory]       = useState(null);  // null = not loaded, [] = loaded empty
+  const [ogHistoryLoading, setOgHistoryLoading] = useState(false);
+
   // AI email draft state
   const [draftingEmail, setDraftingEmail] = useState(false);
   const [emailDraftError, setEmailDraftError] = useState(null);
@@ -123,6 +130,45 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
 
   const isNew = !initialDeal.id;
   const [showEditForm, setShowEditForm]   = useState(isNew); // open for new deals, collapsed for existing
+  const [refreshing, setRefreshing] = useState(false);
+
+  // Re-run every load query for this deal — the deal record itself, activities,
+  // next steps/tasks (+ their attached files), meetings, deal files, company
+  // files, and company intel (which covers Research, Contacts, and per-contact
+  // dossiers, all stored on the same companies row) — so anything changed
+  // elsewhere (kanban drag, another tab, a background AI job) shows up without
+  // closing and reopening the modal.
+  const refreshAll = async () => {
+    if (isNew || refreshing) return;
+    setRefreshing(true);
+    try {
+      const [dealRow, acts, ts, mts, dfiles, cfiles, intel] = await Promise.all([
+        supabase.from('deals').select('*').eq('id', deal.id).single().then(r => r.data).catch(() => null),
+        fetchActivities(deal.id).catch(() => activities),
+        fetchTasks(deal.id).catch(() => tasks),
+        fetchDealMeetings(deal.id).catch(() => meetings),
+        fetchDealFiles(deal.id).catch(() => dealFiles),
+        deal.company_name ? fetchCompanyFiles(deal.company_name).catch(() => companyFiles) : Promise.resolve(companyFiles),
+        deal.company_name ? fetchCompanyIntel(deal.company_name).catch(() => companyIntel) : Promise.resolve(companyIntel),
+      ]);
+      if (dealRow) { setDeal(dealRow); onSaved?.(dealRow); }
+      setActivities(acts);
+      setTasks(ts);
+      setMeetings(mts);
+      setDealFiles(dfiles);
+      setCompanyFiles(cfiles);
+      setCompanyIntel(intel);
+      if (ts.length) {
+        const ids = ts.map(t => t.id);
+        const files = await fetchDealTaskFiles(ids).catch(() => []);
+        const fileMap = {};
+        files.forEach(f => { if (!fileMap[f.task_id]) fileMap[f.task_id] = []; fileMap[f.task_id].push(f); });
+        setTaskFiles(fileMap);
+      }
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   useEffect(() => {
     if (!isNew) {
@@ -145,6 +191,36 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
     }
   }, [initialDeal.id, isNew]);
 
+  // Load Old Gold history when that tab is first opened
+  useEffect(() => {
+    if (tab !== 'oldgold' || ogHistory !== null || ogHistoryLoading || !deal.company_name) return;
+    setOgHistoryLoading(true);
+    (async () => {
+      try {
+        const { data: prospects } = await supabase
+          .from('old_gold_prospects')
+          .select('id, name, status, company')
+          .ilike('company', deal.company_name);
+        if (!prospects?.length) { setOgHistory([]); return; }
+        const { data: meetings } = await supabase
+          .from('old_gold_meetings')
+          .select('id, prospect_id, title, meeting_date, summary, action_items')
+          .in('prospect_id', prospects.map(p => p.id))
+          .order('meeting_date', { ascending: false });
+        const byProspect = {};
+        (meetings || []).forEach(m => {
+          if (!byProspect[m.prospect_id]) byProspect[m.prospect_id] = [];
+          byProspect[m.prospect_id].push(m);
+        });
+        setOgHistory(prospects.map(p => ({ ...p, meetings: byProspect[p.id] || [] })));
+      } catch (e) {
+        setOgHistory([]);
+      } finally {
+        setOgHistoryLoading(false);
+      }
+    })();
+  }, [tab, ogHistory, ogHistoryLoading, deal.company_name]);
+
   // Load company intel silently on mount so AI suggestions are ready on first tab
   useEffect(() => {
     if (!isNew && deal.company_name) {
@@ -154,7 +230,9 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
           setCompanyIntel(intel);
           // Sync deal.contact_name to the primary contact if they differ.
           // Use dealRef.current so we always patch the latest deal state, not a stale closure.
-          const primary = (intel?.contact_angles || []).find(c => c.is_primary);
+          // Prefer companies.contacts (the canonical roster "Set as primary" writes
+          // to) over the stale thesis-era contact_angles.is_primary flag.
+          const primary = (intel?.contacts || []).find(c => c.is_primary) || (intel?.contact_angles || []).find(c => c.is_primary);
           const currentDeal = dealRef.current;
           if (primary?.name && primary.name.trim() !== currentDeal.contact_name?.trim()) {
             try {
@@ -289,8 +367,39 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
       await addActivity({ ...actForm, deal_id: deal.id, company_id: deal.company_id });
       const updated = await fetchActivities(deal.id);
       setActivities(updated);
+      const loggedText = actForm.summary;
       setActForm(f => ({ ...f, summary: '' }));
       setAddingAct(false);
+
+      // Break this activity down the same way a transcript is — extract any
+      // concrete follow-ups and turn them into real Next Steps automatically.
+      try {
+        const { extractActivityInsights } = await import('../lib/anthropic.js');
+        const insights = await extractActivityInsights(loggedText, deal.company_name);
+        const items = (insights?.action_items || []).filter(i => i.title?.trim());
+        if (items.length) {
+          await Promise.all(items.map(item => {
+            // assigned_to must be an internal team member (DB constraint) — if the
+            // AI attributed this item to the prospect, keep that name in the title
+            // instead, so whose follow-up it is doesn't get lost.
+            const ownerMatch = OWNERS.find(o => o.toLowerCase() === item.owner?.trim().toLowerCase());
+            const title = ownerMatch ? item.title.trim() : `${item.owner?.trim() ? `[${item.owner.trim()}] ` : ''}${item.title.trim()}`;
+            return addTask({
+              title,
+              due_date: item.due_date || null,
+              assigned_to: ownerMatch || deal.assigned_to || 'Mike',
+              deal_id: deal.id,
+              company_id: deal.company_id,
+            });
+          }));
+          const freshTasks = await fetchTasks(deal.id);
+          setTasks(freshTasks);
+          setActivityInsightToast({ count: items.length });
+          setTimeout(() => setActivityInsightToast(null), 6000);
+        }
+      } catch (e) {
+        console.warn('Activity insight extraction failed (non-fatal):', e.message);
+      }
     } catch (e) {
       alert('Error logging activity: ' + e.message);
     } finally {
@@ -429,11 +538,11 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
       return;
     }
 
-    // All other sources: remove from company contact_angles
+    // All other sources: remove from the shared companies.contacts roster
     if (!companyIntel?.id) return;
     try {
-      const updated = await deleteCompanyContact(companyIntel.id, c.name);
-      setCompanyIntel(prev => ({ ...prev, contact_angles: updated }));
+      const updated = await deleteCompanyContactFromContacts(companyIntel.id, c.name);
+      setCompanyIntel(prev => ({ ...prev, contacts: updated }));
       if (editingContact === c.name) { setEditingContact(null); setEditDraft({}); }
       if (expandedContact === c.name) setExpandedContact(null);
     } catch (e) {
@@ -445,8 +554,8 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
     if (!companyIntel?.id) return;
     setSavingEdit(true);
     try {
-      const updated = await updateCompanyContact(companyIntel.id, editingContact, editDraft);
-      setCompanyIntel(prev => ({ ...prev, contact_angles: updated }));
+      const updated = await updateCompanyContactInContacts(companyIntel.id, editingContact, editDraft);
+      setCompanyIntel(prev => ({ ...prev, contacts: updated }));
       setEditingContact(null);
     } catch (e) {
       alert('Error updating contact: ' + e.message);
@@ -458,8 +567,8 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
   const handleSetPrimary = async (targetContact) => {
     if (!companyIntel?.id) return;
     try {
-      const updatedAngles = await setPrimaryContact(companyIntel.id, targetContact.name);
-      setCompanyIntel(prev => ({ ...prev, contact_angles: updatedAngles }));
+      const updatedContacts = await setPrimaryCompanyContact(companyIntel.id, targetContact.name);
+      setCompanyIntel(prev => ({ ...prev, contacts: updatedContacts }));
     } catch (e) {
       alert('Error updating primary contact: ' + e.message);
       return;
@@ -475,24 +584,67 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
     }
   };
 
+  const handleBuildDossier = async (c) => {
+    if (buildingDossierFor) return;
+    setBuildingDossierFor(c.name);
+    try {
+      let intel = companyIntel;
+      if (!intel?.id) {
+        const company = await findOrCreateCompany(deal.company_name);
+        intel = company;
+        setCompanyIntel(company);
+        intelFetchedRef.current = true;
+      }
+      const updated = await enrichCompanyContact(intel.id, c, deal.company_name);
+      setCompanyIntel(prev => ({ ...prev, contacts: updated }));
+      setExpandedContact(c.name);
+    } catch (e) {
+      alert('Error building dossier: ' + e.message);
+    } finally {
+      setBuildingDossierFor(null);
+    }
+  };
+
   const openCompose = (email, name) => {
     setComposeEmail({ to: email, toName: name });
     setComposeDraft({ subject: '', body: '' });
   };
 
-  // Build merged contact list (deal contact + thesis contacts), same logic as Contacts tab
+  // Build merged contact list: deal contact + the shared companies.contacts roster
+  // (visible everywhere this company appears) + thesis contact_angles (outreach
+  // angle/hook only — layered on top, never overwrites dossier data).
   const mergedContacts = (() => {
     const map = new Map();
     if (deal.contact_name?.trim()) {
       const name = deal.contact_name.trim();
       map.set(name.toLowerCase(), { name, email: deal.contact_email?.trim() || null, title: null, source: 'deal' });
     }
-    (companyIntel?.contact_angles || []).forEach(c => {
+    (companyIntel?.contacts || []).forEach(c => {
       if (!c.name?.trim()) return;
       const name = c.name.trim();
       const key = name.toLowerCase();
       const existing = map.get(key) || {};
       map.set(key, { ...existing, ...c, name, email: c.email || existing.email || null });
+    });
+    (companyIntel?.contact_angles || []).forEach(c => {
+      if (!c.name?.trim()) return;
+      const name = c.name.trim();
+      const key = name.toLowerCase();
+      const existing = map.get(key) || {};
+      // Contribute angle/hook, and title/linkedin/email as a fallback for
+      // contacts that only exist in contact_angles — but never is_primary,
+      // which is a stale thesis-era flag that must never override the
+      // canonical companies.contacts roster (the only thing "Set as primary"
+      // actually writes to).
+      map.set(key, {
+        ...existing,
+        name,
+        angle: c.angle,
+        hook: c.hook,
+        title: existing.title || c.title || null,
+        linkedin: existing.linkedin || c.linkedinUrl || c.linkedin || null,
+        email: existing.email || c.email || null,
+      });
     });
     return Array.from(map.values());
   })();
@@ -648,15 +800,15 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
         setCompanyIntel(company);
         intelFetchedRef.current = true;
       }
-      const updated = await addCompanyContact(intel.id, {
+      const updated = await upsertCompanyContacts(intel.id, [{
         name:    contactDraft.name.trim(),
         title:   contactDraft.title.trim()    || null,
         email:   contactDraft.email.trim()    || null,
         linkedin: contactDraft.linkedin.trim() || null,
         notes:   contactDraft.notes.trim()    || null,
         source:  'manual',
-      });
-      setCompanyIntel(prev => ({ ...prev, contact_angles: updated }));
+      }]);
+      setCompanyIntel(prev => ({ ...prev, contacts: updated }));
       setContactDraft({ name: '', title: '', email: '', linkedin: '', notes: '' });
       setAddingContact(false);
     } catch (e) {
@@ -968,14 +1120,14 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
   return (
     <>
     <div
-      style={{ position: 'fixed', inset: 0, zIndex: 300, display: 'flex', justifyContent: 'flex-end' }}
+      style={{ position: 'fixed', inset: 0, zIndex: 300, display: 'flex', justifyContent: 'center', alignItems: 'center', padding: 24 }}
       onClick={e => e.target === e.currentTarget && onClose()}
     >
       {/* Backdrop */}
-      <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.35)' }} onClick={onClose} />
+      <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.5)' }} onClick={onClose} />
 
-      {/* Panel */}
-      <div style={{ position: 'relative', zIndex: 1, width: 520, maxWidth: '96vw', background: 'var(--bg)', boxShadow: '-8px 0 32px rgba(0,0,0,0.15)', display: 'flex', flexDirection: 'column', height: '100%', overflowY: 'auto' }}>
+      {/* Panel — full overlay, not a side drawer */}
+      <div style={{ position: 'relative', zIndex: 1, width: '100%', maxWidth: 980, height: '92vh', borderRadius: 14, background: 'var(--bg)', boxShadow: '0 16px 60px rgba(0,0,0,0.3)', display: 'flex', flexDirection: 'column', overflowY: 'auto' }}>
 
         {/* Header */}
         <div style={{ padding: '20px 24px 16px', borderBottom: showEditForm ? 'none' : '1px solid var(--border)' }}>
@@ -1029,6 +1181,14 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
                 style={{ fontSize: 11, fontWeight: 700, padding: '3px 0', width: 96, borderRadius: 20, border: '1px solid var(--border)', background: showEditForm ? 'var(--accent)' : 'var(--surface)', color: showEditForm ? '#fff' : 'var(--text-muted)', cursor: 'pointer' }}
               >
                 {showEditForm ? 'Close' : 'Edit Deal'}
+              </button>
+              <button
+                onClick={refreshAll}
+                disabled={refreshing}
+                title="Re-fetch activity, tasks, meetings, files, and company intel for this deal"
+                style={{ fontSize: 11, fontWeight: 700, padding: '3px 0', width: 96, borderRadius: 20, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-muted)', cursor: refreshing ? 'default' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4, opacity: refreshing ? 0.7 : 1 }}
+              >
+                {refreshing ? <span className="spinner" /> : '↻'} {refreshing ? 'Refreshing…' : 'Refresh'}
               </button>
               <div style={{ marginLeft: 'auto', display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-end' }}>
                 <button
@@ -1093,6 +1253,20 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
                   style={{ fontSize: 11, fontWeight: 600, padding: '5px 12px', borderRadius: 20, border: '1px solid #86efac', background: 'transparent', color: '#15803d', cursor: 'pointer' }}
                 >Dismiss</button>
               </div>
+            </div>
+          )}
+
+          {/* ── Activity insight toast (appears after logging an activity, if
+              the AI breakdown found concrete follow-ups) ── */}
+          {activityInsightToast && (
+            <div style={{ background: '#f0fdf4', border: '1px solid #86efac', borderRadius: 10, padding: '12px 16px', marginBottom: 20, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
+              <div style={{ fontSize: 12, color: '#166534' }}>
+                <strong style={{ color: '#15803d' }}>✓ Analyzed that activity</strong> — added {activityInsightToast.count} next step{activityInsightToast.count !== 1 ? 's' : ''} to this deal.
+              </div>
+              <button
+                onClick={() => setActivityInsightToast(null)}
+                style={{ fontSize: 11, fontWeight: 600, padding: '3px 10px', borderRadius: 20, border: '1px solid #86efac', background: 'transparent', color: '#15803d', cursor: 'pointer', flexShrink: 0 }}
+              >Dismiss</button>
             </div>
           )}
 
@@ -1203,6 +1377,7 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
                   { id: 'files',      label: allDealFiles.length > 0 ? `Files (${allDealFiles.length})` : 'Files' },
                   { id: 'research',   label: 'Research' },
                   { id: 'contacts',   label: 'Contacts' },
+                  { id: 'oldgold',    label: ogHistory?.length ? `Old Gold (${ogHistory.reduce((n, p) => n + p.meetings.length, 0)})` : 'Old Gold' },
                 ].map(t => (
                   <button
                     key={t.id}
@@ -2333,9 +2508,15 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
                         {companyIntel.thesis}
                       </div>
 
-                      {/* Entry point */}
-                      {companyIntel.contact_angles?.find(c => c.is_primary) && (() => {
-                        const ec = companyIntel.contact_angles.find(c => c.is_primary);
+                      {/* Entry point — prefer the canonical companies.contacts primary
+                          (what "Set as primary" writes to) over the stale thesis-era
+                          contact_angles.is_primary flag */}
+                      {(() => {
+                        const primaryContact = (companyIntel.contacts || []).find(c => c.is_primary);
+                        const ec = primaryContact
+                          ? { ...primaryContact, hook: (companyIntel.contact_angles || []).find(ca => ca.name?.trim().toLowerCase() === primaryContact.name?.trim().toLowerCase())?.hook }
+                          : companyIntel.contact_angles?.find(c => c.is_primary);
+                        if (!ec) return null;
                         return (
                           <div style={{ padding: '10px 14px', background: '#ede9fe', border: '1px solid #c4b5fd', borderRadius: 8, marginBottom: 10 }}>
                             <div style={{ fontSize: 11, fontWeight: 700, color: '#6d28d9', marginBottom: 4 }}>PRIMARY ENTRY POINT</div>
@@ -2407,26 +2588,11 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
 
               {/* ── Contacts ── */}
               {tab === 'contacts' && (() => {
-                // Merge: primary deal contact + company intel contact_angles
-                const map = new Map();
-                if (deal.contact_name?.trim()) {
-                  const name = deal.contact_name.trim();
-                  map.set(name.toLowerCase(), {
-                    name,
-                    email: deal.contact_email?.trim() || null,
-                    source: 'deal',
-                  });
-                }
-                (companyIntel?.contact_angles || []).forEach(c => {
-                  if (!c.name?.trim()) return;
-                  const name = c.name.trim();
-                  const key = name.toLowerCase();
-                  const existing = map.get(key) || {};
-                  map.set(key, { ...existing, ...c, name, email: c.email || existing.email || null });
-                });
-                const contacts = Array.from(map.values());
+                // mergedContacts is the shared companies.contacts roster (same data
+                // Watch List, Old Gold, and Pipeline all read/write) plus thesis angles.
+                const contacts = mergedContacts;
 
-                const sourceColor = s => s === 'thesis' ? { bg: '#ede9fe', color: '#6d28d9' } : s === 'scan' ? { bg: '#dbeafe', color: '#1d4ed8' } : s === 'manual' ? { bg: '#dcfce7', color: '#15803d' } : { bg: 'var(--surface)', color: 'var(--text-muted)' };
+                const sourceColor = s => s === 'thesis' ? { bg: '#ede9fe', color: '#6d28d9' } : s === 'scan' ? { bg: '#dbeafe', color: '#1d4ed8' } : s === 'manual' ? { bg: '#dcfce7', color: '#15803d' } : s === 'old_gold' ? { bg: '#fef3c7', color: '#92400e' } : { bg: 'var(--surface)', color: 'var(--text-muted)' };
 
                 return (
                   <div>
@@ -2592,12 +2758,18 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
                                         </a>
                                       )}
                                       <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center' }}>
-                                        {!c.is_primary && (
+                                        {!c.is_primary && c.source !== 'deal' && (
                                           <button
                                             onClick={e => { e.stopPropagation(); handleSetPrimary(c); }}
                                             style={{ fontSize: 10, fontWeight: 700, color: '#6d28d9', background: '#ede9fe', border: '1px solid #c4b5fd', borderRadius: 4, padding: '2px 8px', cursor: 'pointer', fontFamily: 'inherit' }}
                                           >★ Set as primary</button>
                                         )}
+                                        <button
+                                          onClick={e => { e.stopPropagation(); handleBuildDossier(c); }}
+                                          disabled={buildingDossierFor === c.name}
+                                          title="Build an AI dossier — stored on the shared company record, visible on Watch List and Old Gold too"
+                                          style={{ fontSize: 10, fontWeight: 700, color: buildingDossierFor === c.name ? 'var(--accent)' : '#fff', background: buildingDossierFor === c.name ? 'var(--surface)' : 'var(--accent)', border: '1px solid var(--accent)', borderRadius: 4, padding: '2px 8px', cursor: buildingDossierFor === c.name ? 'default' : 'pointer', fontFamily: 'inherit' }}
+                                        >{buildingDossierFor === c.name ? 'Building…' : (c.enriched_at ? '🔬 Rebuild Dossier' : '🔬 Build Dossier')}</button>
                                         <button
                                           onClick={e => { e.stopPropagation(); setEditingContact(c.name); setEditDraft({}); }}
                                           style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-faint)', background: 'none', border: '1px solid var(--border)', borderRadius: 4, padding: '2px 8px', cursor: 'pointer', fontFamily: 'inherit' }}
@@ -2633,20 +2805,8 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
                                       </div>
                                     )}
 
-                                    {/* Posts from thesis */}
-                                    {c.posts?.length > 0 && (
-                                      <div>
-                                        <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 6 }}>Recent Posts</div>
-                                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                                          {c.posts.slice(0, 3).map((p, pi) => (
-                                            <div key={pi} style={{ padding: '7px 9px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 6, fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.5 }}>
-                                              {p.platform && <span style={{ fontWeight: 700, color: p.platform === 'linkedin' ? '#1d4ed8' : '#374151', marginRight: 6 }}>{p.platform}</span>}
-                                              {p.headline || p.text || p}
-                                            </div>
-                                          ))}
-                                        </div>
-                                      </div>
-                                    )}
+                                    {/* Dossier — bio, career history, education, posts, articles, interests */}
+                                    <ContactDossier contact={c} />
                                   </>
                                 )}
                               </div>
@@ -2658,6 +2818,75 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
                   </div>
                 );
               })()}
+
+              {/* ── Old Gold History ── */}
+              {tab === 'oldgold' && (
+                <div>
+                  {ogHistoryLoading && (
+                    <div style={{ textAlign: 'center', padding: '32px 0', color: 'var(--text-faint)', fontSize: 13 }}>
+                      <span className="spinner" style={{ marginRight: 8 }} />Loading Old Gold history…
+                    </div>
+                  )}
+                  {!ogHistoryLoading && ogHistory?.length === 0 && (
+                    <p style={{ fontSize: 13, color: 'var(--text-faint)', textAlign: 'center', padding: '24px 0' }}>
+                      No Old Gold conversations found for {deal.company_name}.
+                    </p>
+                  )}
+                  {!ogHistoryLoading && ogHistory?.map(prospect => (
+                    <div key={prospect.id} style={{ marginBottom: 24 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12, paddingBottom: 8, borderBottom: '1px solid var(--border)' }}>
+                        <div style={{ flex: 1 }}>
+                          <span style={{ fontSize: 14, fontWeight: 800, color: 'var(--text)' }}>{prospect.name}</span>
+                          {prospect.company && <span style={{ fontSize: 12, color: 'var(--text-muted)', marginLeft: 8 }}>· {prospect.company}</span>}
+                        </div>
+                        <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 10, background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text-muted)', textTransform: 'capitalize' }}>{(prospect.status || 'warm').replace('_', ' ')}</span>
+                      </div>
+
+                      {prospect.meetings.length === 0 && (
+                        <p style={{ fontSize: 12, color: 'var(--text-faint)', fontStyle: 'italic' }}>No transcripts imported yet.</p>
+                      )}
+
+                      {prospect.meetings.map(m => {
+                        const taskItems  = (m.action_items || []).filter(ai => !ai.type || ai.type === 'task');
+                        const moments    = (m.action_items || []).filter(ai => ai.type === 'moment' && !/^pete/i.test(ai.person || ''));
+                        const OG_ICONS   = { pets: '🐾', family: '👨‍👩‍👧', health: '🏥', hobbies: '🎯', sports: '🏆', milestone: '🎉', professional: '💼', other: '💬' };
+                        return (
+                          <div key={m.id} style={{ marginBottom: 14, padding: '12px 14px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8 }}>
+                            <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 8 }}>
+                              <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>{m.title}</span>
+                              {m.meeting_date && <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>{new Date(m.meeting_date + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>}
+                            </div>
+                            {m.summary && <p style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6, margin: '0 0 10px' }}>{m.summary}</p>}
+                            {taskItems.length > 0 && (
+                              <div style={{ marginBottom: moments.length > 0 ? 8 : 0 }}>
+                                <div style={{ fontSize: 9, fontWeight: 800, color: '#6d28d9', textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 5 }}>Next Steps</div>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                                  {taskItems.map((ai, i) => (
+                                    <div key={i} style={{ fontSize: 11, padding: '4px 10px', borderRadius: 6, background: '#ede9fe', color: '#5b21b6', display: 'flex', gap: 6, alignItems: 'baseline' }}>
+                                      {ai.owner && <strong style={{ color: '#6d28d9', flexShrink: 0 }}>{ai.owner}</strong>}
+                                      <span style={{ flex: 1 }}>{ai.title}</span>
+                                      {ai.due_date && <span style={{ fontSize: 10, opacity: 0.6 }}>{ai.due_date}</span>}
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                            {moments.length > 0 && (
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+                                {moments.map((m2, i) => (
+                                  <span key={i} title={m2.followup_prompt || m2.description || ''} style={{ fontSize: 11, padding: '2px 9px', borderRadius: 20, background: '#fef3c7', color: '#92400e', border: '1px solid #fde68a' }}>
+                                    {OG_ICONS[m2.category] || '💬'} {m2.title}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ))}
+                </div>
+              )}
 
             </>
           )}

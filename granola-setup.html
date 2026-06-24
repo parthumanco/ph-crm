@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Granola Integration Setup — Part Human CRM</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      font-size: 14px;
+      line-height: 1.6;
+      color: #1a1a1a;
+      background: #fff;
+      padding: 48px;
+      max-width: 760px;
+      margin: 0 auto;
+    }
+
+    /* ── Header ── */
+    .header {
+      border-bottom: 3px solid #1a1a1a;
+      padding-bottom: 24px;
+      margin-bottom: 36px;
+    }
+    .header-eyebrow {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+      color: #888;
+      margin-bottom: 8px;
+    }
+    .header h1 {
+      font-size: 28px;
+      font-weight: 800;
+      letter-spacing: -0.03em;
+      line-height: 1.15;
+      color: #1a1a1a;
+    }
+    .header-sub {
+      margin-top: 10px;
+      font-size: 14px;
+      color: #555;
+      max-width: 580px;
+      line-height: 1.5;
+    }
+
+    /* ── Steps ── */
+    .step {
+      display: flex;
+      gap: 20px;
+      margin-bottom: 36px;
+    }
+    .step-num {
+      flex-shrink: 0;
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      background: #1a1a1a;
+      color: #fff;
+      font-size: 14px;
+      font-weight: 800;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-top: 2px;
+    }
+    .step-body { flex: 1; }
+    .step-body h2 {
+      font-size: 16px;
+      font-weight: 800;
+      letter-spacing: -0.01em;
+      color: #1a1a1a;
+      margin-bottom: 10px;
+    }
+    .step-body p {
+      color: #444;
+      margin-bottom: 10px;
+    }
+    .step-body ol, .step-body ul {
+      padding-left: 20px;
+      color: #444;
+    }
+    .step-body li { margin-bottom: 6px; }
+
+    /* ── Callout boxes ── */
+    .callout {
+      border-radius: 8px;
+      padding: 12px 16px;
+      margin-top: 12px;
+      font-size: 13px;
+      line-height: 1.55;
+    }
+    .callout-warn {
+      background: #fffbeb;
+      border: 1px solid #fde68a;
+      color: #92400e;
+    }
+    .callout-tip {
+      background: #f0fdf4;
+      border: 1px solid #bbf7d0;
+      color: #166534;
+    }
+    .callout-note {
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      color: #475569;
+    }
+    .callout strong { font-weight: 700; }
+
+    /* ── Inline code ── */
+    code {
+      font-family: 'SF Mono', 'Fira Code', 'Menlo', monospace;
+      font-size: 12px;
+      background: #f1f5f9;
+      border: 1px solid #e2e8f0;
+      border-radius: 4px;
+      padding: 1px 6px;
+      color: #0f172a;
+    }
+
+    /* ── UI label pills ── */
+    .ui {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 700;
+      background: #1a1a1a;
+      color: #fff;
+      border-radius: 5px;
+      padding: 2px 7px;
+      letter-spacing: .01em;
+    }
+
+    /* ── Matching table ── */
+    .match-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 12px;
+      font-size: 13px;
+    }
+    .match-table th {
+      text-align: left;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      color: #888;
+      padding: 6px 12px;
+      border-bottom: 2px solid #e2e8f0;
+    }
+    .match-table td {
+      padding: 10px 12px;
+      border-bottom: 1px solid #f1f5f9;
+      color: #444;
+      vertical-align: middle;
+    }
+    .match-table tr:last-child td { border-bottom: none; }
+    .badge {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 700;
+      border-radius: 20px;
+      padding: 2px 10px;
+    }
+    .badge-green { background: #dcfce7; color: #166534; }
+    .badge-yellow { background: #fef9c3; color: #854d0e; }
+
+    /* ── Troubleshooting ── */
+    .trouble { margin-bottom: 16px; }
+    .trouble dt {
+      font-weight: 700;
+      color: #1a1a1a;
+      margin-bottom: 3px;
+    }
+    .trouble dd {
+      color: #555;
+      padding-left: 16px;
+      border-left: 2px solid #e2e8f0;
+      margin-left: 0;
+    }
+
+    /* ── Dividers ── */
+    hr {
+      border: none;
+      border-top: 1px solid #e2e8f0;
+      margin: 32px 0;
+    }
+
+    /* ── Footer ── */
+    .footer {
+      margin-top: 48px;
+      padding-top: 16px;
+      border-top: 2px solid #1a1a1a;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 11px;
+      color: #aaa;
+      font-weight: 500;
+      letter-spacing: .03em;
+    }
+
+    /* ── Print ── */
+    @media print {
+      body { padding: 32px; font-size: 13px; }
+      .header h1 { font-size: 22px; }
+      .step { page-break-inside: avoid; }
+      .no-print { display: none; }
+    }
+
+    /* ── Print button (screen only) ── */
+    .print-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 32px;
+      padding: 9px 18px;
+      border-radius: 8px;
+      border: 1px solid #e2e8f0;
+      background: #f8fafc;
+      color: #475569;
+      font-family: inherit;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background .15s;
+    }
+    .print-btn:hover { background: #f1f5f9; }
+    @media print { .print-btn { display: none; } }
+  </style>
+</head>
+<body>
+
+  <button class="print-btn no-print" onclick="window.print()">🖨 Print these instructions</button>
+
+  <!-- Header -->
+  <div class="header">
+    <div class="header-eyebrow">Part Human CRM</div>
+    <h1>Granola Integration<br>Setup Guide</h1>
+    <p class="header-sub">Connect Granola to automatically pull meeting notes into deal records — no copy-pasting, no manual logging.</p>
+  </div>
+
+  <!-- Step 1 -->
+  <div class="step">
+    <div class="step-num">1</div>
+    <div class="step-body">
+      <h2>Check your Granola plan</h2>
+      <p>The Granola API requires a <strong>Business plan</strong> or higher. If you're already on Business or Enterprise, skip to Step 2.</p>
+      <p>To upgrade: open Granola → <span class="ui">Settings</span> → <span class="ui">Billing</span> → upgrade to Business.</p>
+    </div>
+  </div>
+
+  <!-- Step 2 -->
+  <div class="step">
+    <div class="step-num">2</div>
+    <div class="step-body">
+      <h2>Generate your Granola API key</h2>
+      <ol>
+        <li>Open the <strong>Granola app</strong> on your Mac</li>
+        <li>Go to <span class="ui">Settings</span> → <span class="ui">Connectors</span> → <span class="ui">API keys</span></li>
+        <li>Click <span class="ui">Create new key</span></li>
+        <li>Under access scopes, select <strong>Personal notes</strong></li>
+        <li>Click <span class="ui">Generate API Key</span></li>
+        <li>Copy the key — it begins with <code>grn_</code></li>
+      </ol>
+      <div class="callout callout-warn">
+        <strong>Important:</strong> You won't be able to see this key again after closing the dialog. Copy it to a safe place before proceeding.<br><br>
+        <strong>Mike and Pete each need their own key.</strong> Pete's key only sees Pete's Granola notes; Mike's only sees Mike's.
+      </div>
+    </div>
+  </div>
+
+  <!-- Step 3 -->
+  <div class="step">
+    <div class="step-num">3</div>
+    <div class="step-body">
+      <h2>Add the key to the CRM</h2>
+      <ol>
+        <li>Open the <strong>Part Human CRM</strong></li>
+        <li>Go to <span class="ui">Settings</span> (bottom of the left nav)</li>
+        <li>Scroll to the <strong>Granola Integration</strong> section at the bottom</li>
+        <li>Paste your key into the <strong>API Key</strong> field</li>
+        <li>Click <span class="ui">🔌 Test connection</span> — you should see a green confirmation with the number of notes accessible</li>
+        <li>Click <span class="ui">💾 Save key</span></li>
+      </ol>
+      <div class="callout callout-tip">
+        <strong>Confirmation:</strong> After saving, a green dot and message will appear: "API key saved. Open any deal → Meetings tab to sync Granola notes for that company."
+      </div>
+    </div>
+  </div>
+
+  <!-- Step 4 -->
+  <div class="step">
+    <div class="step-num">4</div>
+    <div class="step-body">
+      <h2>Sync meetings on a deal</h2>
+      <ol>
+        <li>Open any <strong>Deal</strong> from the pipeline</li>
+        <li>Click the <span class="ui">Meetings</span> tab</li>
+        <li>Click <span class="ui">↻ Granola</span> in the top right of the Meeting Log</li>
+        <li>The CRM scans your recent Granola notes, matches any involving this company, and imports them automatically</li>
+        <li>A green confirmation shows how many meetings were imported</li>
+      </ol>
+      <div class="callout callout-note">
+        Syncing is always safe to repeat — already-imported notes are tracked and never duplicated. "Already up to date" just means nothing new was found.
+      </div>
+    </div>
+  </div>
+
+  <hr>
+
+  <!-- Matching logic -->
+  <div class="step">
+    <div class="step-num" style="background:#f1f5f9; color:#475569;">?</div>
+    <div class="step-body">
+      <h2>How meetings get matched to deals</h2>
+      <p>The CRM automatically identifies which Granola notes belong to which deal using these signals, in order of confidence:</p>
+      <table class="match-table">
+        <thead>
+          <tr>
+            <th>Signal</th>
+            <th>What it checks</th>
+            <th>Confidence</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>Contact email</strong></td>
+            <td>Attendee email exactly matches the deal's contact email</td>
+            <td><span class="badge badge-green">Definitive</span></td>
+          </tr>
+          <tr>
+            <td><strong>Email domain</strong></td>
+            <td>Attendee email domain matches the company name (e.g. <code>@stoneedge.com</code> → Stone Edge)</td>
+            <td><span class="badge badge-green">Strong</span></td>
+          </tr>
+          <tr>
+            <td><strong>Contact name</strong></td>
+            <td>Attendee name matches the deal's contact name</td>
+            <td><span class="badge badge-yellow">Moderate</span></td>
+          </tr>
+          <tr>
+            <td><strong>Meeting title</strong></td>
+            <td>Meeting title contains the company name</td>
+            <td><span class="badge badge-yellow">Supporting</span></td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="callout callout-tip" style="margin-top: 14px;">
+        <strong>Best practice:</strong> Make sure deals have a <strong>contact email</strong> filled in. Email matching is the most reliable signal and will catch the meeting even if the title doesn't mention the company.
+      </div>
+    </div>
+  </div>
+
+  <hr>
+
+  <!-- Troubleshooting -->
+  <div class="step">
+    <div class="step-num" style="background:#f1f5f9; color:#475569;">!</div>
+    <div class="step-body">
+      <h2>Troubleshooting</h2>
+      <dl>
+        <div class="trouble">
+          <dt>"Invalid Granola API key"</dt>
+          <dd>The key was copied incorrectly or has been revoked. Generate a new one in Granola → Settings → Connectors → API keys.</dd>
+        </div>
+        <div class="trouble">
+          <dt>"No new meetings found" but meetings are expected</dt>
+          <dd>Check that the deal has a <strong>contact email</strong> filled in. If the contact uses a personal email (Gmail, etc.) rather than a company address, also try adding their name to the deal's contact name field.</dd>
+        </div>
+        <div class="trouble">
+          <dt>CORS or network error</dt>
+          <dd>The Granola API may not allow direct browser requests in certain environments. Contact Mike — a one-minute Supabase proxy fix has already been prepared in the code and just needs to be switched on.</dd>
+        </div>
+        <div class="trouble">
+          <dt>↻ Granola button not visible</dt>
+          <dd>The button only appears after an API key has been saved in Settings. Confirm the Granola Integration section shows a green dot.</dd>
+        </div>
+        <div class="trouble">
+          <dt>Meeting imported but no transcript</dt>
+          <dd>Granola only makes notes available via the API once an AI summary has been generated. Give Granola a minute to process after the meeting ends, then sync again.</dd>
+        </div>
+      </dl>
+    </div>
+  </div>
+
+  <hr>
+
+  <!-- Notes -->
+  <div class="callout callout-note" style="font-size: 13px; line-height: 1.65;">
+    <strong>A few things to know:</strong><br>
+    — Granola notes must have a completed AI summary to be available via the API.<br>
+    — The sync scans up to 90 of your most recent notes — no need to sync immediately after every meeting.<br>
+    — Meeting summaries, dates, and transcripts carry over. Action items do not — use the drag-and-drop transcript import on the Meetings tab for that.<br>
+    — To remove the integration, go to Settings → Granola Integration → Remove key.
+  </div>
+
+  <!-- Footer -->
+  <div class="footer">
+    <span>Part Human CRM — Internal Use</span>
+    <span>granola-setup.html</span>
+  </div>
+
+</body>
+</html>

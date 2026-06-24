@@ -1,5 +1,19 @@
 import { supabase } from './supabase';
 
+// Old Gold contacts (source: 'old_gold') always sort to the front of a
+// company's contact list and become the default primary contact (index 0,
+// which is what pipeline_entries.primary_contact_index falls back to) unless
+// a primary has already been explicitly chosen.
+export function sortContactsOldGoldFirst(contacts) {
+  if (!contacts?.length) return contacts;
+  const sorted = [...contacts].sort((a, b) => (a.source === 'old_gold' ? 0 : 1) - (b.source === 'old_gold' ? 0 : 1));
+  if (!sorted.some(c => c.is_primary)) {
+    const idx = sorted.findIndex(c => c.source === 'old_gold');
+    if (idx !== -1) sorted[idx] = { ...sorted[idx], is_primary: true };
+  }
+  return sorted;
+}
+
 // ── Clients ───────────────────────────────────────────────────────────────────
 
 export async function fetchClients() {
@@ -137,50 +151,70 @@ export async function addCompanyResearchItem(companyId, item) {
   return updated;
 }
 
-export async function addCompanyContact(companyId, contact) {
-  const { data: row } = await supabase.from('companies').select('contact_angles').eq('id', companyId).single();
-  const contacts = row?.contact_angles || [];
-  // Skip duplicate names
-  if (contacts.some(c => c.name?.toLowerCase() === contact.name?.toLowerCase())) return contacts;
-  const updated = [...contacts, { id: crypto.randomUUID(), ...contact }];
-  const { error } = await supabase.from('companies').update({ contact_angles: updated }).eq('id', companyId);
-  if (error) throw new Error(error.message);
-  return updated;
-}
-
-export async function deleteCompanyContact(companyId, contactName) {
-  const { data: row } = await supabase.from('companies').select('contact_angles').eq('id', companyId).single();
-  const updated = (row?.contact_angles || []).filter(c => c.name?.trim() !== contactName?.trim());
-  const { error } = await supabase.from('companies').update({ contact_angles: updated }).eq('id', companyId);
-  if (error) throw new Error(error.message);
-  return updated;
-}
-
-export async function updateCompanyContact(companyId, contactName, patch) {
-  const { data: row } = await supabase.from('companies').select('contact_angles').eq('id', companyId).single();
-  const contacts = row?.contact_angles || [];
-  const updated = contacts.map(c => {
-    if (c.name?.trim() !== contactName?.trim()) return c;
-    const merged = { ...c };
-    for (const [k, v] of Object.entries(patch)) {
-      const trimmed = typeof v === 'string' ? v.trim() : v;
-      if (trimmed !== '' && trimmed !== null && trimmed !== undefined) merged[k] = trimmed;
+// Merge contacts into companies.contacts (matched by name), keeping Old Gold
+// contacts first/primary. Used wherever a contact's data needs to be visible
+// across Watch List, Pipeline, and Old Gold simultaneously.
+export async function upsertCompanyContacts(companyId, newContacts = []) {
+  const { data: row } = await supabase.from('companies').select('contacts').eq('id', companyId).single();
+  const existing = row?.contacts || [];
+  const map = new Map(existing.map(c => [c.name?.trim().toLowerCase(), c]));
+  newContacts.forEach(nc => {
+    const key = nc.name?.trim().toLowerCase();
+    if (!key) return;
+    const prev = map.get(key) || {};
+    const merged = { ...prev };
+    // Prefer non-empty new values; never let a blank field clobber existing data.
+    for (const [k, v] of Object.entries(nc)) {
+      if (v === null || v === undefined || v === '') continue;
+      if (Array.isArray(v) && v.length === 0) continue;
+      merged[k] = v;
     }
-    return merged;
+    map.set(key, merged);
   });
-  const { error } = await supabase.from('companies').update({ contact_angles: updated }).eq('id', companyId);
+  const merged = sortContactsOldGoldFirst(Array.from(map.values()));
+  const { error } = await supabase.from('companies').update({ contacts: merged }).eq('id', companyId);
+  if (error) throw new Error(error.message);
+  return merged;
+}
+
+// Build an AI dossier on a contact and merge it into companies.contacts so it's
+// visible everywhere that contact/company appears (Watch List, Old Gold, Pipeline).
+export async function enrichCompanyContact(companyId, contact, companyName) {
+  const { enrichContactDossier } = await import('./anthropic.js');
+  const enrichment = await enrichContactDossier(contact, companyName);
+  if (!enrichment) throw new Error('Enrichment returned no data');
+  const merged = { ...contact, ...Object.fromEntries(Object.entries(enrichment).filter(([, v]) => v !== null && v !== undefined && !(Array.isArray(v) && v.length === 0))), enriched_at: new Date().toISOString() };
+  return upsertCompanyContacts(companyId, [merged]);
+}
+
+// Remove a contact from companies.contacts by name (case-insensitive).
+export async function deleteCompanyContactFromContacts(companyId, contactName) {
+  const { data: row } = await supabase.from('companies').select('contacts').eq('id', companyId).single();
+  const updated = (row?.contacts || []).filter(c => c.name?.trim().toLowerCase() !== contactName?.trim().toLowerCase());
+  const { error } = await supabase.from('companies').update({ contacts: updated }).eq('id', companyId);
   if (error) throw new Error(error.message);
   return updated;
 }
 
-// Set exactly one contact as primary, clearing the flag on all others.
-export async function setPrimaryContact(companyId, primaryName) {
-  const { data: row } = await supabase.from('companies').select('contact_angles').eq('id', companyId).single();
-  const updated = (row?.contact_angles || []).map(c => ({
-    ...c,
-    is_primary: c.name?.trim().toLowerCase() === primaryName?.trim().toLowerCase(),
-  }));
-  const { error } = await supabase.from('companies').update({ contact_angles: updated }).eq('id', companyId);
+// Edit an existing companies.contacts entry in place, matched by its original name.
+export async function updateCompanyContactInContacts(companyId, originalName, patch) {
+  const { data: row } = await supabase.from('companies').select('contacts').eq('id', companyId).single();
+  const existing = row?.contacts || [];
+  const key = originalName?.trim().toLowerCase();
+  const cleanPatch = Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== '' && v !== null && v !== undefined));
+  const updated = existing.map(c => c.name?.trim().toLowerCase() === key ? { ...c, ...cleanPatch } : c);
+  const { error } = await supabase.from('companies').update({ contacts: updated }).eq('id', companyId);
+  if (error) throw new Error(error.message);
+  return updated;
+}
+
+// Mark one companies.contacts entry as primary (by name), clearing the flag on the rest.
+export async function setPrimaryCompanyContact(companyId, contactName) {
+  const { data: row } = await supabase.from('companies').select('contacts').eq('id', companyId).single();
+  const existing = row?.contacts || [];
+  const key = contactName?.trim().toLowerCase();
+  const updated = existing.map(c => ({ ...c, is_primary: c.name?.trim().toLowerCase() === key }));
+  const { error } = await supabase.from('companies').update({ contacts: updated }).eq('id', companyId);
   if (error) throw new Error(error.message);
   return updated;
 }
@@ -391,6 +425,36 @@ export async function upsertClientContacts(clientId, newContacts = []) {
   const { error } = await supabase.from('clients').update({ contacts, updated_at: new Date().toISOString() }).eq('id', clientId);
   if (error) throw new Error(error.message);
   return contacts;
+}
+
+// When a deal is Won and becomes a client, carry over the FULL contact roster
+// from the matching companies row — both companies.contacts (canonical roster,
+// may include dossiers) and companies.contact_angles (thesis-discovered
+// name/title/linkedin/hook) — so research done while prospecting isn't
+// abandoned at the Won transition. Matched by company name (no FK between
+// companies and clients). No-op if no matching companies row exists.
+export async function transferCompanyContactsToClient(clientId, companyName) {
+  if (!companyName?.trim()) return [];
+  const { data: company } = await supabase
+    .from('companies')
+    .select('contacts, contact_angles')
+    .ilike('name', companyName.trim())
+    .limit(1)
+    .maybeSingle();
+  if (!company) return [];
+
+  const fromContacts = company.contacts || [];
+  const fromAngles = (company.contact_angles || [])
+    .filter(c => c.name?.trim())
+    .map(c => ({
+      name: c.name,
+      title: c.title || null,
+      linkedin: c.linkedinUrl || c.linkedin || null,
+      notes: c.hook || null,
+    }));
+  const toMerge = [...fromContacts, ...fromAngles];
+  if (!toMerge.length) return [];
+  return upsertClientContacts(clientId, toMerge);
 }
 
 // Remove a contact from clients.contacts by name (case-insensitive).

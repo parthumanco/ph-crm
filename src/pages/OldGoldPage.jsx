@@ -1,25 +1,31 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { saveProjectMeeting } from '../lib/projects';
+import { findOrCreateCompany, enrichCompanyContact, upsertCompanyContacts } from '../lib/clients';
+import ContactDossier from '../components/ContactDossier';
+import { parseCsvRows } from '../lib/csv';
 
 // ── Tiny AI helper: extract summary + action items + contact info ─────────────
 async function processTranscriptWithAI(transcript) {
   const apiKey = import.meta.env.VITE_ANTHROPIC_API_KEY;
   if (!apiKey) return { summary: '', action_items: [], contact_name: '', company_name: '', contact_email: '' };
 
-  const prompt = `You are analyzing a meeting transcript involving Peter Andrews (a consultant at Part Human, a creative/marketing agency).
+  const today = new Date().toISOString().slice(0, 10);
+  const prompt = `You are analyzing a meeting transcript involving Peter Andrews (a consultant at Part Human, a creative/marketing agency). Today's date is ${today}.
 
 IMPORTANT: Extract information about THIS specific meeting only — the one actively being recorded/transcribed. Do NOT use dates, names, or content from past meetings that are merely referenced or discussed within this transcript.
 
 Your job is to identify the PRIMARY PROSPECT — the external client or potential client that Peter is having a business development conversation with RIGHT NOW in this transcript. This is NOT Peter/Pete himself, and NOT other Part Human team members. If multiple external people are present, pick the one who is the decision-maker or the person this meeting is primarily about.
 
 Extract the following and respond ONLY with valid JSON:
-1. The PRIMARY PROSPECT'S full name (the person Peter is speaking with in THIS meeting — not Pete/Peter, not Part Human staff, not people merely mentioned in passing)
+1. The PRIMARY PROSPECT'S full name
 2. Their company name (the prospect's company, not Part Human)
-3. Their email address IF explicitly mentioned in the transcript (null if not stated)
-4. The date THIS meeting took place (YYYY-MM-DD) — look for timestamps in the transcript header, "today", "this morning", or explicit date references to when this call is happening. If the transcript mentions a past meeting date (e.g. "we spoke in December"), do NOT use that — only use the date of THIS recording. null if not determinable.
-5. A concise 2–3 sentence summary of THIS conversation — what was discussed, the prospect's situation, and the business opportunity
-6. All follow-up action items / next steps from THIS meeting — include who owns each one (use "Pete" for Peter/Part Human items, the prospect's first name for their items) and a suggested due date (YYYY-MM-DD, within 14 days if not specified)
+3. Their email address IF explicitly mentioned (null if not stated)
+4. The date THIS meeting took place (YYYY-MM-DD). null if not determinable.
+5. A concise 2–3 sentence summary of THIS conversation
+6. Action items / next steps — who owns each (use "Pete" for Part Human items, prospect's first name for theirs) and a due date (YYYY-MM-DD, within 14 days if not specified)
+7. Personal rapport moments about the PROSPECT or other guests (NOT Pete/Part Human) — casual human details: pets, family events, health, hobbies, sports teams, moves, milestones, exciting personal news. Short pill label (≤5 words), the person it is about, and a natural follow-up prompt. Only capture things about the other person(s) — do NOT include anything Pete shared about himself.
+8. Other people mentioned by name as attendees or key contacts who are NOT Pete/Part Human and NOT the primary prospect — suggest them as contacts worth adding.
 
 {
   "contact_name": "First Last",
@@ -29,8 +35,16 @@ Extract the following and respond ONLY with valid JSON:
   "summary": "...",
   "action_items": [
     { "title": "...", "owner": "Pete", "due_date": "YYYY-MM-DD" }
+  ],
+  "rapport_moments": [
+    { "title": "Dog got hurt", "category": "pets", "description": "Chandler's dog injured its paw at the dog park last weekend", "person": "Chandler", "followup_prompt": "Ask how the dog is recovering" }
+  ],
+  "suggested_contacts": [
+    { "name": "Full Name", "role": "their title/role if mentioned", "reason": "Why they might be worth adding" }
   ]
 }
+
+Return empty arrays for rapport_moments and suggested_contacts if none found.
 
 TRANSCRIPT:
 ${transcript.slice(0, 8000)}`;
@@ -46,7 +60,7 @@ ${transcript.slice(0, 8000)}`;
       },
       body: JSON.stringify({
         model: 'claude-haiku-4-5-20251001',
-        max_tokens: 1200,
+        max_tokens: 1800,
         messages: [{ role: 'user', content: prompt }],
       }),
     });
@@ -55,7 +69,7 @@ ${transcript.slice(0, 8000)}`;
     const match = text.match(/\{[\s\S]*\}/);
     if (match) return JSON.parse(match[0]);
   } catch {}
-  return { summary: '', action_items: [], contact_name: '', company_name: '', contact_email: '' };
+  return { summary: '', action_items: [], rapport_moments: [], suggested_contacts: [], contact_name: '', company_name: '', contact_email: '' };
 }
 
 // ── Cross-reference contact against CRM data ──────────────────────────────────
@@ -125,6 +139,9 @@ export default function OldGoldPage({ isActive = false, onNavigate }) {
   const [loading,     setLoading]     = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
   const [allCompanies, setAllCompanies] = useState([]); // { name, source:'pipeline'|'intel', deal_id? }
+  const [search, setSearch] = useState('');
+  const [dossierContact, setDossierContact] = useState(null); // matching companies.contacts entry for active prospect
+  const [buildingDossier, setBuildingDossier] = useState(false);
 
   // Forms
   const [addingProspect, setAddingProspect] = useState(false);
@@ -169,6 +186,10 @@ export default function OldGoldPage({ isActive = false, onNavigate }) {
   const [loadingArchived,   setLoadingArchived]   = useState(false);
   const [showArchived,      setShowArchived]      = useState(false);
   const [restoringId,       setRestoringId]       = useState(null);
+
+  // CSV import (e.g. a LinkedIn "My Connections" export)
+  const [importingCsv, setImportingCsv] = useState(false);
+  const csvInputRef = useRef(null);
 
   // Persist active panel state
   useEffect(() => {
@@ -472,30 +493,63 @@ export default function OldGoldPage({ isActive = false, onNavigate }) {
     setActive(p);
     setEditingProspect(false);
     setShowImport(false);
+    setDossierContact(null);
     loadDetail(p);
+    loadDossierContact(p);
+  };
+
+  // Look up the matching entry in companies.contacts (shared with Watch List /
+  // Pipeline) so a dossier built anywhere shows up here too.
+  const loadDossierContact = async (p) => {
+    if (!p.company?.trim()) return;
+    try {
+      const { data: company } = await supabase.from('companies').select('contacts').ilike('name', p.company.trim()).limit(1).maybeSingle();
+      const match = (company?.contacts || []).find(c => c.name?.trim().toLowerCase() === p.name?.trim().toLowerCase());
+      if (match) setDossierContact(match);
+    } catch { /* non-fatal */ }
+  };
+
+  const handleBuildDossier = async () => {
+    if (!active) return;
+    if (!active.company?.trim()) { alert('Add a company for this contact first — the dossier is stored on the shared company record so it shows up everywhere this contact appears.'); return; }
+    setBuildingDossier(true);
+    try {
+      const company = await findOrCreateCompany(active.company.trim());
+      const baseContact = dossierContact || { name: active.name, title: active.title || '', email: active.email || '', linkedin: active.linkedin || '' };
+      const merged = await enrichCompanyContact(company.id, baseContact, company.name);
+      const updated = merged.find(c => c.name?.trim().toLowerCase() === active.name?.trim().toLowerCase());
+      setDossierContact(updated || null);
+    } catch (e) {
+      alert('Error building dossier: ' + e.message);
+    } finally {
+      setBuildingDossier(false);
+    }
   };
 
   // ── Prospect CRUD ─────────────────────────────────────────────────────────
   const handleSaveProspect = async () => {
     if (!prospectDraft.name.trim()) return;
     setSaving(true);
-    if (editingProspect && active) {
-      const { data } = await supabase.from('old_gold_prospects').update({ ...prospectDraft, updated_at: new Date().toISOString() }).eq('id', active.id).select().single();
-      if (data) {
+    try {
+      if (editingProspect && active) {
+        const { data, error } = await supabase.from('old_gold_prospects').update({ ...prospectDraft, updated_at: new Date().toISOString() }).eq('id', active.id).select().single();
+        if (error) throw new Error(error.message);
         setActive(data);
         setProspects(prev => prev.map(p => p.id === data.id ? data : p));
-      }
-      setEditingProspect(false);
-    } else {
-      const { data } = await supabase.from('old_gold_prospects').insert(prospectDraft).select().single();
-      if (data) {
+        setEditingProspect(false);
+      } else {
+        const { data, error } = await supabase.from('old_gold_prospects').insert(prospectDraft).select().single();
+        if (error) throw new Error(error.message);
         setProspects(prev => [data, ...prev]);
         openProspect(data);
+        setAddingProspect(false);
       }
-      setAddingProspect(false);
+      setProspectDraft(BLANK_PROSPECT);
+    } catch (e) {
+      alert('Error saving contact: ' + e.message);
+    } finally {
+      setSaving(false);
     }
-    setSaving(false);
-    setProspectDraft(BLANK_PROSPECT);
   };
 
   // Archives (never permanently deletes) a contact — hides it from the active
@@ -521,17 +575,109 @@ export default function OldGoldPage({ isActive = false, onNavigate }) {
     }
   };
 
+  // ── CSV import (e.g. LinkedIn "My Connections" export) ─────────────────────
+  // Expected columns: First Name, Last Name, Linkedin URL, Email Address, Company, Position, Connected On.
+  // Each row becomes an Old Gold prospect. Each unique Company is also
+  // pushed into the Watch List (companies table), tagged "Old Gold" and with
+  // this person merged into its contacts, so it can be scanned and promoted
+  // into the pipeline from there.
+  const handleImportCsv = useCallback(async (fileList) => {
+    const file = Array.from(fileList || []).find(f => f.name.match(/\.csv$/i));
+    if (!file) { alert('Please choose a CSV file.'); return; }
+    setImportingCsv(true);
+    try {
+      const text = await file.text();
+      const rows = parseCsvRows(text);
+      if (!rows.length) { alert('No rows found in that CSV.'); return; }
+
+      const existingKeys = new Set(
+        prospects.map(p => `${p.name?.trim().toLowerCase()}|${(p.company || '').trim().toLowerCase()}`)
+      );
+      const newProspects = [];
+      const peopleByCompany = new Map(); // company name → [{name,title,email,linkedin}]
+      let parsedCount = 0; // rows that had a usable name, regardless of dedupe outcome
+      let skippedAsDupe = 0;
+
+      for (const row of rows) {
+        const first = row.first_name || '';
+        const last  = row.last_name || '';
+        const name  = `${first} ${last}`.trim();
+        if (!name) continue;
+        parsedCount++;
+        const company  = row.company || '';
+        const title    = row.position || '';
+        const email    = row.email_address || row.email || '';
+        const linkedin = row.linkedin_url || row.linkedin || row.url || '';
+        const key = `${name.toLowerCase()}|${company.toLowerCase()}`;
+        if (existingKeys.has(key)) { skippedAsDupe++; continue; } // already an Old Gold contact — skip
+        existingKeys.add(key);
+
+        const notes = row.connected_on ? `Connected on LinkedIn: ${row.connected_on}` : '';
+        newProspects.push({ name, company: company || null, title: title || null, email: email || null, linkedin: linkedin || null, notes: notes || null, status: 'warm' });
+
+        if (company) {
+          if (!peopleByCompany.has(company)) peopleByCompany.set(company, []);
+          peopleByCompany.get(company).push({ name, title, email, linkedin, source: 'old_gold' });
+        }
+      }
+
+      if (!newProspects.length) {
+        if (parsedCount === 0) {
+          alert(`Found ${rows.length} row${rows.length !== 1 ? 's' : ''} in that CSV, but couldn't read a First Name/Last Name from any of them. Check that the file has those exact column headers.`);
+        } else {
+          alert(`Nothing new to import — all ${skippedAsDupe} contact${skippedAsDupe !== 1 ? 's' : ''} already exist in Old Gold.`);
+        }
+        return;
+      }
+
+      const { data: inserted, error } = await supabase.from('old_gold_prospects').insert(newProspects).select();
+      if (error) throw new Error(error.message);
+      setProspects(prev => [...(inserted || newProspects), ...prev]);
+
+      // Tag each unique company for Watch List and merge this person into its contacts
+      let companiesTagged = 0;
+      for (const [companyName, people] of peopleByCompany) {
+        try {
+          const company = await findOrCreateCompany(companyName);
+          const tags = Array.isArray(company.tags) ? company.tags : [];
+          const newTags = tags.includes('Old Gold') ? tags : [...tags, 'Old Gold'];
+          await supabase.from('companies').update({ tags: newTags }).eq('id', company.id);
+          await upsertCompanyContacts(company.id, people);
+          companiesTagged++;
+        } catch (e) {
+          console.warn('[Old Gold import] Failed to tag company for Watch List:', companyName, e.message);
+        }
+      }
+
+      alert(
+        `Imported ${newProspects.length} new contact${newProspects.length !== 1 ? 's' : ''} into Old Gold` +
+        (companiesTagged ? `, and tagged ${companiesTagged} compan${companiesTagged !== 1 ? 'ies' : 'y'} "Old Gold" in Watch List.` : '.')
+      );
+    } catch (e) {
+      alert('Import failed: ' + e.message);
+    } finally {
+      setImportingCsv(false);
+    }
+  }, [prospects]);
+
   // ── Transcript import + AI ────────────────────────────────────────────────
   const handleImport = async () => {
     if (!importTranscript.trim() || !active) return;
     setImporting(true);
     setImportError('');
     try {
-      const { summary, action_items } = await processTranscriptWithAI(
+      const { summary, action_items, rapport_moments, suggested_contacts } = await processTranscriptWithAI(
         importTranscript,
         active.name,
         active.company,
       );
+
+      // Merge all typed items into a single action_items array for storage
+      const allItems = [
+        ...(action_items || []).map(ai => ({ ...ai, type: 'task' })),
+        ...(rapport_moments || []).map(m => ({ ...m, type: 'moment' })),
+        ...(suggested_contacts || []).map(c => ({ ...c, type: 'contact' })),
+      ];
 
       const { data: mtg, error } = await supabase.from('old_gold_meetings').insert({
         prospect_id:  active.id,
@@ -539,14 +685,15 @@ export default function OldGoldPage({ isActive = false, onNavigate }) {
         meeting_date: importDate,
         transcript:   importTranscript,
         summary,
-        action_items: action_items || [],
+        action_items: allItems,
       }).select().single();
 
       if (error) throw error;
 
-      // Save AI action items as tasks
-      if (action_items?.length) {
-        const taskRows = action_items.map(ai => ({
+      // Save only task-typed items to old_gold_tasks
+      const taskItems = allItems.filter(ai => ai.type === 'task');
+      if (taskItems.length) {
+        const taskRows = taskItems.map(ai => ({
           prospect_id: active.id,
           meeting_id:  mtg.id,
           title:       ai.title,
@@ -646,7 +793,27 @@ export default function OldGoldPage({ isActive = false, onNavigate }) {
             <h2 style={{ fontSize: 22, fontWeight: 800, color: 'var(--text)' }}>Old Gold</h2>
             <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 2 }}>Pete's warm outreach — discovery conversations & next steps</p>
           </div>
-          <div className="page-header-actions">
+          <div className="page-header-actions" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <input
+              type="text"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Search contacts…"
+              style={{ width: 200, fontSize: 13, padding: '6px 10px' }}
+            />
+            <button
+              onClick={() => csvInputRef.current?.click()}
+              disabled={importingCsv}
+              className="btn"
+              title="Import a CSV export of your LinkedIn connections"
+            >{importingCsv ? 'Importing…' : 'Import CSV'}</button>
+            <input
+              ref={csvInputRef}
+              type="file"
+              accept=".csv"
+              style={{ display: 'none' }}
+              onChange={e => { handleImportCsv(e.target.files); e.target.value = ''; }}
+            />
             <button
               onClick={() => { setProspectDraft(BLANK_PROSPECT); setAddingProspect(true); }}
               className="btn btn-primary"
@@ -656,95 +823,176 @@ export default function OldGoldPage({ isActive = false, onNavigate }) {
 
         {addingProspect && <ProspectForm onCancel={() => setAddingProspect(false)} />}
 
-        {/* ── All saved meetings, newest → oldest ── */}
-        {allMeetings.filter(mtg => !quickSaved || mtg.id !== quickSaved.meetingId).map(mtg => {
-          const p = mtg.old_gold_prospects;
-          const sm = p ? statusMeta(p.status) : null;
-          const linkedCo = p?.company ? allCompanies.find(c => c.name.toLowerCase() === p.company.toLowerCase()) : null;
-          const expanded = expandedMtgIds.has(mtg.id);
-          return (
-          <div key={mtg.id} style={{ marginBottom: 8, border: '1px solid var(--accent)', borderRadius: 10, background: 'var(--surface)', overflow: 'hidden' }}>
-            {/* Header — always visible, click to expand */}
-            <div
-              onClick={() => setExpandedMtgIds(prev => { const s = new Set(prev); s.has(mtg.id) ? s.delete(mtg.id) : s.add(mtg.id); return s; })}
-              style={{ display: 'flex', alignItems: 'center', padding: '10px 16px', background: '#fffbeb', borderBottom: expanded ? '1px solid #fde68a' : 'none', cursor: 'pointer', gap: 10, userSelect: 'none' }}
-            >
-              <span style={{ fontSize: 13, fontWeight: 700, color: '#92400e', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {p?.name || 'Unknown'}
-                {p?.company ? ` — ${p.company}` : ''}
-                {mtg.meeting_date ? `, ${new Date(mtg.meeting_date + 'T12:00:00').toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: '2-digit' })}` : ''}
-                {mtg.meeting_time ? `, ${mtg.meeting_time}` : ''}
-              </span>
-              <span style={{ fontSize: 11, color: '#92400e', flexShrink: 0 }}>{expanded ? '▲' : '▼'}</span>
-            </div>
-
-            {/* Action items always visible as pills when collapsed */}
-            {!expanded && mtg.action_items?.length > 0 && (
-              <div style={{ padding: '6px 16px 10px', display: 'flex', flexWrap: 'wrap', gap: 5 }}>
-                {mtg.action_items.map((ai, i) => (
-                  <span key={i} style={{ fontSize: 11, padding: '2px 9px', borderRadius: 20, background: '#ede9fe', color: '#5b21b6' }}>
-                    {ai.owner && <strong style={{ marginRight: 4 }}>{ai.owner}</strong>}{ai.title}
-                    {ai.due_date && <span style={{ marginLeft: 5, opacity: 0.6 }}>{ai.due_date}</span>}
-                  </span>
-                ))}
+        {/* ── All saved meetings, grouped by contact, newest conversation first ── */}
+        {(() => {
+          const visible = allMeetings.filter(mtg => !quickSaved || mtg.id !== quickSaved.meetingId);
+          const groups = new Map();
+          visible.forEach(mtg => {
+            const key = mtg.prospect_id || mtg.id;
+            if (!groups.has(key)) groups.set(key, []);
+            groups.get(key).push(mtg);
+          });
+          return Array.from(groups.values()).map(conversations => {
+            const latest = conversations[0];
+            const p = latest.old_gold_prospects;
+            const sm = p ? statusMeta(p.status) : null;
+            const linkedCo = p?.company ? allCompanies.find(c => c.name.toLowerCase() === p.company.toLowerCase()) : null;
+            const groupKey = p?.id || latest.id;
+            const expanded = expandedMtgIds.has(groupKey);
+            // Combined action items across every conversation with this contact,
+            // deduped by title (most recent conversation's version wins).
+            const combinedTasks = (() => {
+              const seen = new Map();
+              conversations.forEach(mtg => (mtg.action_items || []).forEach(ai => {
+                if (ai.type && ai.type !== 'task') return;
+                const key = ai.title?.trim().toLowerCase();
+                if (key && !seen.has(key)) seen.set(key, ai);
+              }));
+              return Array.from(seen.values());
+            })();
+            const combinedMoments = (() => {
+              const seen = new Map();
+              conversations.forEach(mtg => (mtg.action_items || []).forEach(ai => {
+                if (ai.type !== 'moment') return;
+                if (/^pete/i.test(ai.person || '')) return;
+                const key = ai.title?.trim().toLowerCase();
+                if (key && !seen.has(key)) seen.set(key, ai);
+              }));
+              return Array.from(seen.values());
+            })();
+            return (
+            <div key={groupKey} style={{ marginBottom: 8, border: '1px solid var(--accent)', borderRadius: 10, background: 'var(--surface)', overflow: 'hidden' }}>
+              {/* Header — always visible, click to expand */}
+              <div
+                onClick={() => setExpandedMtgIds(prev => { const s = new Set(prev); s.has(groupKey) ? s.delete(groupKey) : s.add(groupKey); return s; })}
+                style={{ display: 'flex', alignItems: 'center', padding: '10px 16px', background: '#fffbeb', borderBottom: expanded ? '1px solid #fde68a' : 'none', cursor: 'pointer', gap: 10, userSelect: 'none' }}
+              >
+                <span style={{ fontSize: 13, fontWeight: 700, color: '#92400e', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {p?.name || 'Unknown'}
+                  {p?.company ? ` — ${p.company}` : ''}
+                  {latest.meeting_date ? `, ${new Date(latest.meeting_date + 'T12:00:00').toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: '2-digit' })}` : ''}
+                  {latest.meeting_time ? `, ${latest.meeting_time}` : ''}
+                  {conversations.length > 1 && (
+                    <span style={{ fontSize: 11, fontWeight: 600, color: '#b45309', marginLeft: 8 }}>· {conversations.length} conversations</span>
+                  )}
+                </span>
+                <span style={{ fontSize: 11, color: '#92400e', flexShrink: 0 }}>{expanded ? '▲' : '▼'}</span>
               </div>
-            )}
 
-            {expanded && (
-              <div style={{ padding: 16 }}>
-                {/* Inline contact card */}
-                {p && (
-                  <div style={{ marginBottom: 14, padding: '10px 14px', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 10, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--text)' }}>{p.name}</div>
-                      {p.company && (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 2 }}>
-                          <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{p.company}</span>
-                          {linkedCo && (
-                            <button onClick={e => { e.stopPropagation(); onNavigate && onNavigate(linkedCo.source === 'pipeline' ? 'deals' : 'clients', linkedCo.source === 'pipeline' ? linkedCo.id : null); }}
-                              style={{ fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 10, border: `1px solid ${linkedCo.source === 'pipeline' ? '#fbbf24' : '#c4b5fd'}`, background: linkedCo.source === 'pipeline' ? '#fffbeb' : '#f5f3ff', color: linkedCo.source === 'pipeline' ? '#92400e' : '#5b21b6', cursor: 'pointer' }}>
-                              {linkedCo.source === 'pipeline' ? '⚡ Pipeline →' : '🧠 Intel →'}
-                            </button>
-                          )}
-                        </div>
-                      )}
+              {/* Tasks + rapport moments when collapsed */}
+              {!expanded && (combinedTasks.length > 0 || combinedMoments.length > 0) && (
+                <div style={{ padding: '8px 16px 12px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {combinedTasks.length > 0 && (
+                    <div>
+                      <div style={{ fontSize: 9, fontWeight: 800, color: '#6d28d9', textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 5 }}>Next Steps</div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                        {combinedTasks.map((ai, i) => (
+                          <div key={i} style={{ fontSize: 11, padding: '4px 10px', borderRadius: 6, background: '#ede9fe', color: '#5b21b6', display: 'flex', gap: 6, alignItems: 'baseline' }}>
+                            {ai.owner && <strong style={{ color: '#6d28d9', flexShrink: 0 }}>{ai.owner}</strong>}
+                            <span style={{ flex: 1 }}>{ai.title}</span>
+                            {ai.due_date && <span style={{ fontSize: 10, opacity: 0.6, flexShrink: 0 }}>{ai.due_date}</span>}
+                          </div>
+                        ))}
+                      </div>
                     </div>
-                    {sm && <span style={{ fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 20, background: sm.bg, color: sm.color }}>{sm.label}</span>}
-                    <button onClick={e => { e.stopPropagation(); openProspect(p); }}
-                      style={{ fontSize: 11, fontWeight: 700, padding: '3px 12px', borderRadius: 20, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-muted)', cursor: 'pointer', whiteSpace: 'nowrap' }}>See All Conversations</button>
-                  </div>
-                )}
-                {mtg.summary && (
-                  <div style={{ marginBottom: 14 }}>
-                    <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 5 }}>Summary</div>
-                    <div style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.6 }}>{mtg.summary}</div>
-                  </div>
-                )}
-                {mtg.action_items?.length > 0 && (
-                  <div>
-                    <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--accent)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 6 }}>Action Items</div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                      {mtg.action_items.map((ai, i) => (
-                        <div key={i} style={{ fontSize: 12, padding: '5px 9px', borderRadius: 6, background: '#ede9fe', display: 'flex', gap: 8, alignItems: 'baseline' }}>
-                          {ai.owner && <span style={{ fontWeight: 700, color: '#6d28d9', flexShrink: 0 }}>{ai.owner}</span>}
-                          <span style={{ flex: 1 }}>{ai.title}</span>
-                          {ai.due_date && <span style={{ fontSize: 10, color: '#7c3aed', flexShrink: 0 }}>{ai.due_date}</span>}
-                        </div>
+                  )}
+                  {combinedMoments.length > 0 && (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+                      {combinedMoments.map((m2, i) => (
+                        <span key={i} title={m2.followup_prompt || m2.description || ''} style={{ fontSize: 11, padding: '2px 9px', borderRadius: 20, background: '#fef3c7', color: '#92400e', border: '1px solid #fde68a' }}>
+                          {MOMENT_CATEGORY_ICON[m2.category] || '💬'} {m2.title}
+                        </span>
                       ))}
                     </div>
-                  </div>
-                )}
-                <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 12 }}>
-                  <button
-                    onClick={e => { e.stopPropagation(); if (window.confirm('Delete this meeting record?')) { supabase.from('old_gold_tasks').delete().eq('meeting_id', mtg.id).then(() => supabase.from('old_gold_meetings').delete().eq('id', mtg.id)); setAllMeetings(prev => prev.filter(m => m.id !== mtg.id)); }}}
-                    style={{ fontSize: 10, padding: '2px 8px', borderRadius: 20, border: '1px solid #fca5a5', background: 'transparent', color: '#b91c1c', cursor: 'pointer' }}
-                  >Delete transcript</button>
+                  )}
                 </div>
-              </div>
-            )}
-          </div>
-          );
-        })}
+              )}
+
+              {expanded && (
+                <div style={{ padding: 16 }}>
+                  {/* Inline contact card */}
+                  {p && (
+                    <div style={{ marginBottom: 14, padding: '10px 14px', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 10, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--text)' }}>{p.name}</div>
+                        {p.company && (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 2 }}>
+                            <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{p.company}</span>
+                            {linkedCo && (
+                              <button onClick={e => { e.stopPropagation(); onNavigate && onNavigate(linkedCo.source === 'pipeline' ? 'deals' : 'clients', linkedCo.source === 'pipeline' ? linkedCo.id : null); }}
+                                style={{ fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 10, border: `1px solid ${linkedCo.source === 'pipeline' ? '#fbbf24' : '#c4b5fd'}`, background: linkedCo.source === 'pipeline' ? '#fffbeb' : '#f5f3ff', color: linkedCo.source === 'pipeline' ? '#92400e' : '#5b21b6', cursor: 'pointer' }}>
+                                {linkedCo.source === 'pipeline' ? `⚡ ${linkedCo.name} →` : `🧠 ${linkedCo.name} →`}
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                      {sm && <span style={{ fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 20, background: sm.bg, color: sm.color }}>{sm.label}</span>}
+                      <button onClick={e => { e.stopPropagation(); openProspect(p); }}
+                        style={{ fontSize: 11, fontWeight: 700, padding: '3px 12px', borderRadius: 20, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-muted)', cursor: 'pointer', whiteSpace: 'nowrap' }}>See All Conversations</button>
+                    </div>
+                  )}
+
+                  {/* Each conversation, newest first */}
+                  {conversations.map((mtg, ci) => (
+                    <div key={mtg.id} style={{ marginBottom: ci < conversations.length - 1 ? 16 : 0, paddingBottom: ci < conversations.length - 1 ? 16 : 0, borderBottom: ci < conversations.length - 1 ? '1px solid var(--border)' : 'none' }}>
+                      {conversations.length > 1 && (
+                        <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 8 }}>
+                          {mtg.meeting_date ? new Date(mtg.meeting_date + 'T12:00:00').toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : 'Undated conversation'}
+                        </div>
+                      )}
+                      {mtg.summary && (
+                        <div style={{ marginBottom: 14 }}>
+                          <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 5 }}>Summary</div>
+                          <div style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.6 }}>{mtg.summary}</div>
+                        </div>
+                      )}
+                      {(() => {
+                        const mTasks   = (mtg.action_items || []).filter(ai => !ai.type || ai.type === 'task');
+                        const mMoments = (mtg.action_items || []).filter(ai => ai.type === 'moment' && !/^pete/i.test(ai.person || ''));
+                        return (<>
+                          {mTasks.length > 0 && (
+                            <div style={{ marginBottom: mMoments.length > 0 ? 10 : 0 }}>
+                              <div style={{ fontSize: 10, fontWeight: 700, color: '#6d28d9', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 6 }}>Next Steps</div>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                {mTasks.map((ai, i) => (
+                                  <div key={i} style={{ fontSize: 12, padding: '5px 9px', borderRadius: 6, background: '#ede9fe', display: 'flex', gap: 8, alignItems: 'baseline' }}>
+                                    {ai.owner && <span style={{ fontWeight: 700, color: '#6d28d9', flexShrink: 0 }}>{ai.owner}</span>}
+                                    <span style={{ flex: 1 }}>{ai.title}</span>
+                                    {ai.due_date && <span style={{ fontSize: 10, color: '#7c3aed', flexShrink: 0 }}>{ai.due_date}</span>}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          {mMoments.length > 0 && (
+                            <div>
+                              <div style={{ fontSize: 10, fontWeight: 700, color: '#92400e', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 6 }}>Conversation Notes</div>
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+                                {mMoments.map((m2, i) => (
+                                  <span key={i} title={m2.followup_prompt || m2.description || ''} style={{ fontSize: 11, padding: '3px 9px', borderRadius: 20, background: '#fef3c7', color: '#92400e', border: '1px solid #fde68a' }}>
+                                    {MOMENT_CATEGORY_ICON[m2.category] || '💬'} {m2.title}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </>);
+                      })()}
+                      <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 12 }}>
+                        <button
+                          onClick={e => { e.stopPropagation(); if (window.confirm('Delete this meeting record?')) { supabase.from('old_gold_tasks').delete().eq('meeting_id', mtg.id).then(() => supabase.from('old_gold_meetings').delete().eq('id', mtg.id)); setAllMeetings(prev => prev.filter(m => m.id !== mtg.id)); }}}
+                          style={{ fontSize: 10, padding: '2px 8px', borderRadius: 20, border: '1px solid #fca5a5', background: 'transparent', color: '#b91c1c', cursor: 'pointer' }}
+                        >Delete transcript</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            );
+          });
+        })()}
 
         {/* ── Quick transcript drop zone ── */}
         <div style={{ marginBottom: 24 }}>
@@ -858,7 +1106,7 @@ export default function OldGoldPage({ isActive = false, onNavigate }) {
                                 {linkedCo && (
                                   <button onClick={() => { onNavigate && onNavigate(linkedCo.source === 'pipeline' ? 'deals' : 'clients', linkedCo.source === 'pipeline' ? linkedCo.id : null); }}
                                     style={{ fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 10, border: `1px solid ${linkedCo.source === 'pipeline' ? '#fbbf24' : '#c4b5fd'}`, background: linkedCo.source === 'pipeline' ? '#fffbeb' : '#f5f3ff', color: linkedCo.source === 'pipeline' ? '#92400e' : '#5b21b6', cursor: 'pointer' }}>
-                                    {linkedCo.source === 'pipeline' ? '⚡ Pipeline →' : '🧠 Intel →'}
+                                    {linkedCo.source === 'pipeline' ? `⚡ ${linkedCo.name} →` : `🧠 ${linkedCo.name} →`}
                                   </button>
                                 )}
                               </div>
@@ -966,7 +1214,10 @@ export default function OldGoldPage({ isActive = false, onNavigate }) {
                 // Hide contacts already shown in the meeting list or active panel
                 const inMeetingList = allMeetings.some(m => m.prospect_id === p.id);
                 const inActivePanel = quickSaved?.prospect?.id === p.id;
-                return !inMeetingList && !inActivePanel;
+                if (inMeetingList || inActivePanel) return false;
+                if (!search.trim()) return true;
+                const q = search.trim().toLowerCase();
+                return [p.name, p.company, p.title, p.email].some(f => f?.toLowerCase().includes(q));
               }).map(p => {
               const sm = statusMeta(p.status);
               const linkedCo = p.company ? allCompanies.find(c => c.name.toLowerCase() === p.company.toLowerCase()) : null;
@@ -992,7 +1243,7 @@ export default function OldGoldPage({ isActive = false, onNavigate }) {
                           onClick={e => { e.stopPropagation(); onNavigate && onNavigate(linkedCo.source === 'pipeline' ? 'deals' : 'clients', linkedCo.source === 'pipeline' ? linkedCo.id : null); }}
                           style={{ fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 10, border: `1px solid ${linkedCo.source === 'pipeline' ? '#fbbf24' : '#c4b5fd'}`, background: linkedCo.source === 'pipeline' ? '#fffbeb' : '#f5f3ff', color: linkedCo.source === 'pipeline' ? '#92400e' : '#5b21b6', cursor: 'pointer' }}
                           title={`View in ${linkedCo.source === 'pipeline' ? 'Pipeline' : 'Company Intel'}`}
-                        >{linkedCo.source === 'pipeline' ? '⚡ Pipeline' : '🧠 Intel'} →</button>
+                        >{linkedCo.source === 'pipeline' ? `⚡ ${linkedCo.name}` : `🧠 ${linkedCo.name}`} →</button>
                       )}
                     </div>
                   )}
@@ -1052,114 +1303,91 @@ export default function OldGoldPage({ isActive = false, onNavigate }) {
 
   return (
     <div className="page-body">
-      {/* Back + header */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
-        <button onClick={() => { setActive(null); setMeetings([]); setTasks([]); }} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 4, padding: '4px 0' }}>
+      {/* Back breadcrumb */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
+        <button onClick={() => { setActive(null); setMeetings([]); setTasks([]); setDossierContact(null); }} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 4, padding: '4px 0' }}>
           ← Old Gold
         </button>
         <span style={{ color: 'var(--border)' }}>|</span>
         <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>{active.name}</span>
         {active.company && <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>· {active.company}</span>}
-        <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 20, background: sm.bg, color: sm.color }}>{sm.label}</span>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '300px 1fr', gap: 20, alignItems: 'start' }}>
-
-        {/* ── Left: Contact info ── */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-          <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: 16 }}>
-            {editingProspect ? (
-              <ProspectForm onCancel={() => { setEditingProspect(false); setProspectDraft(BLANK_PROSPECT); }} />
-            ) : (
-              <>
-                {(() => {
-                  const linkedCo = active.company ? allCompanies.find(c => c.name.toLowerCase() === active.company.toLowerCase()) : null;
-                  return (
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
-                      <div>
-                        <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--text)' }}>{active.name}</div>
-                        {active.title && <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>{active.title}</div>}
-                        {active.company && (
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 2 }}>
-                            <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{active.company}</span>
-                            {linkedCo && (
-                              <button
-                                onClick={() => onNavigate && onNavigate(linkedCo.source === 'pipeline' ? 'deals' : 'clients', linkedCo.source === 'pipeline' ? linkedCo.id : null)}
-                                style={{ fontSize: 10, fontWeight: 700, padding: '1px 7px', borderRadius: 10, border: `1px solid ${linkedCo.source === 'pipeline' ? '#fbbf24' : '#c4b5fd'}`, background: linkedCo.source === 'pipeline' ? '#fffbeb' : '#f5f3ff', color: linkedCo.source === 'pipeline' ? '#92400e' : '#5b21b6', cursor: 'pointer' }}
-                                title={`View in ${linkedCo.source === 'pipeline' ? 'Pipeline' : 'Company Intel'}`}
-                              >{linkedCo.source === 'pipeline' ? '⚡ Pipeline' : '🧠 Intel'} →</button>
-                            )}
-                          </div>
-                        )}
-                      </div>
+      {/* ── Header card — full width ── */}
+      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: '16px 20px', marginBottom: 14 }}>
+        {editingProspect ? (
+          <ProspectForm onCancel={() => { setEditingProspect(false); setProspectDraft(BLANK_PROSPECT); }} />
+        ) : (
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 20, flexWrap: 'wrap' }}>
+            {/* Name / title / company / links */}
+            <div style={{ flex: 1, minWidth: 200 }}>
+              {(() => {
+                const linkedCo = active.company ? allCompanies.find(c => c.name.toLowerCase() === active.company.toLowerCase()) : null;
+                return (
+                  <>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+                      <span style={{ fontSize: 18, fontWeight: 800, color: 'var(--text)' }}>{active.name}</span>
                       <button onClick={() => { setEditingProspect(true); setProspectDraft({ name: active.name, company: active.company || '', title: active.title || '', email: active.email || '', linkedin: active.linkedin || '', notes: active.notes || '', status: active.status || 'warm' }); }} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: 'var(--text-faint)', padding: '2px 4px' }} title="Edit">✏️</button>
                     </div>
-                  );
-                })()}
-                {active.email && <a href={`mailto:${active.email}`} style={{ fontSize: 12, color: 'var(--accent)', display: 'block', marginBottom: 4 }}>{active.email}</a>}
-                {active.linkedin && <a href={active.linkedin} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: 'var(--accent)', display: 'block', marginBottom: 4 }}>LinkedIn ↗</a>}
-                {active.notes && <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.55, marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--border)' }}>{active.notes}</div>}
-                <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--border)', display: 'flex', gap: 8 }}>
-                  <div style={{ flex: 1, textAlign: 'center' }}>
-                    <div style={{ fontSize: 18, fontWeight: 800, color: 'var(--accent)' }}>{meetings.length}</div>
-                    <div style={{ fontSize: 10, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em' }}>Meetings</div>
-                  </div>
-                  <div style={{ flex: 1, textAlign: 'center' }}>
-                    <div style={{ fontSize: 18, fontWeight: 800, color: openTaskCount > 0 ? '#f59e0b' : 'var(--text-muted)' }}>{openTaskCount}</div>
-                    <div style={{ fontSize: 10, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em' }}>Open Tasks</div>
-                  </div>
-                  <div style={{ flex: 1, textAlign: 'center' }}>
-                    <div style={{ fontSize: 18, fontWeight: 800, color: '#10b981' }}>{doneTaskCount}</div>
-                    <div style={{ fontSize: 10, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em' }}>Done</div>
-                  </div>
-                </div>
-              </>
-            )}
-          </div>
+                    {active.title && <div style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 4 }}>{active.title}</div>}
+                    {active.company && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+                        <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>{active.company}</span>
+                        {linkedCo && (
+                          <button onClick={() => onNavigate && onNavigate(linkedCo.source === 'pipeline' ? 'deals' : 'clients', linkedCo.source === 'pipeline' ? linkedCo.id : null)} style={{ fontSize: 10, fontWeight: 700, padding: '1px 7px', borderRadius: 10, border: `1px solid ${linkedCo.source === 'pipeline' ? '#fbbf24' : '#c4b5fd'}`, background: linkedCo.source === 'pipeline' ? '#fffbeb' : '#f5f3ff', color: linkedCo.source === 'pipeline' ? '#92400e' : '#5b21b6', cursor: 'pointer' }}>
+                            {linkedCo.source === 'pipeline' ? `⚡ ${linkedCo.name}` : `🧠 ${linkedCo.name}`} →
+                          </button>
+                        )}
+                      </div>
+                    )}
+                    <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
+                      {active.email && <a href={`mailto:${active.email}`} style={{ fontSize: 12, color: 'var(--accent)' }}>{active.email}</a>}
+                      {active.linkedin && <a href={active.linkedin} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: 'var(--accent)' }}>LinkedIn ↗</a>}
+                    </div>
+                    {active.notes && <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.5, marginTop: 8 }}>{active.notes}</div>}
+                  </>
+                );
+              })()}
+            </div>
 
-          {/* Status changer */}
-          {!editingProspect && (
-            <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: 14 }}>
-              <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 8 }}>Status</div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {/* Stats */}
+            <div style={{ display: 'flex', gap: 24, alignSelf: 'center' }}>
+              {[
+                { val: meetings.length, label: 'Meetings', color: 'var(--accent)' },
+                { val: openTaskCount, label: 'Open Tasks', color: openTaskCount > 0 ? '#f59e0b' : 'var(--text-muted)' },
+                { val: doneTaskCount, label: 'Done', color: '#10b981' },
+              ].map(({ val, label, color }) => (
+                <div key={label} style={{ textAlign: 'center' }}>
+                  <div style={{ fontSize: 20, fontWeight: 800, color }}>{val}</div>
+                  <div style={{ fontSize: 10, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em' }}>{label}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Status + archive */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'flex-end' }}>
+              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
                 {STATUS_OPTIONS.map(s => (
-                  <button
-                    key={s.id}
-                    onClick={async () => {
-                      await supabase.from('old_gold_prospects').update({ status: s.id }).eq('id', active.id);
-                      const updated = { ...active, status: s.id };
-                      setActive(updated);
-                      setProspects(prev => prev.map(p => p.id === active.id ? updated : p));
-                    }}
-                    style={{ fontSize: 12, fontWeight: active.status === s.id ? 800 : 400, padding: '6px 10px', borderRadius: 6, border: `1.5px solid ${active.status === s.id ? s.color : 'var(--border)'}`, background: active.status === s.id ? s.bg : 'none', color: active.status === s.id ? s.color : 'var(--text-muted)', cursor: 'pointer', textAlign: 'left', transition: 'all .1s' }}
-                  >{s.label}</button>
+                  <button key={s.id} onClick={async () => { await supabase.from('old_gold_prospects').update({ status: s.id }).eq('id', active.id); const updated = { ...active, status: s.id }; setActive(updated); setProspects(prev => prev.map(p => p.id === active.id ? updated : p)); }} style={{ fontSize: 11, fontWeight: active.status === s.id ? 800 : 400, padding: '4px 10px', borderRadius: 20, border: `1.5px solid ${active.status === s.id ? s.color : 'var(--border)'}`, background: active.status === s.id ? s.bg : 'none', color: active.status === s.id ? s.color : 'var(--text-muted)', cursor: 'pointer', transition: 'all .1s', whiteSpace: 'nowrap' }}>{s.label}</button>
                 ))}
               </div>
+              <button onClick={handleArchiveProspect} style={{ fontSize: 10, padding: '2px 8px', borderRadius: 20, border: '1px solid #fca5a5', background: 'transparent', color: '#b91c1c', cursor: 'pointer' }}>Archive contact</button>
             </div>
-          )}
+          </div>
+        )}
+      </div>
 
-          {/* Archive — never a permanent delete; restorable from "Archived contacts" */}
-          {!editingProspect && (
-            <button onClick={handleArchiveProspect} style={{ fontSize: 11, color: '#ef4444', background: 'none', border: '1px solid #fecaca', borderRadius: 6, padding: '5px 10px', cursor: 'pointer', alignSelf: 'flex-start' }}>
-              Archive contact
-            </button>
-          )}
+      {/* ── Next Steps — full width ── */}
+      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: 18, marginBottom: 14 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--text)' }}>
+            Next Steps
+            {openTaskCount > 0 && <span style={{ fontSize: 11, fontWeight: 600, color: '#f59e0b', marginLeft: 8 }}>{openTaskCount} open</span>}
+          </div>
+          <button onClick={() => setAddingTask(v => !v)} style={{ fontSize: 11, fontWeight: 700, padding: '4px 12px', borderRadius: 6, border: addingTask ? '1px solid var(--border)' : '1px solid var(--accent)', background: addingTask ? 'none' : 'var(--accent)', color: addingTask ? 'var(--text-muted)' : '#fff', cursor: 'pointer' }}>
+            {addingTask ? '✕ Cancel' : '+ Add Task'}
+          </button>
         </div>
-
-        {/* ── Right: Meetings + Tasks ── */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-
-          {/* Tasks / Next Steps */}
-          <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: 18 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
-              <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--text)' }}>
-                Next Steps
-                {openTaskCount > 0 && <span style={{ fontSize: 11, fontWeight: 600, color: '#f59e0b', marginLeft: 8 }}>{openTaskCount} open</span>}
-              </div>
-              <button onClick={() => setAddingTask(v => !v)} style={{ fontSize: 11, fontWeight: 700, padding: '4px 12px', borderRadius: 6, border: addingTask ? '1px solid var(--border)' : '1px solid var(--accent)', background: addingTask ? 'none' : 'var(--accent)', color: addingTask ? 'var(--text-muted)' : '#fff', cursor: 'pointer' }}>
-                {addingTask ? '✕ Cancel' : '+ Add Task'}
-              </button>
-            </div>
 
             {addingTask && (
               <div style={{ display: 'flex', gap: 8, marginBottom: 14, alignItems: 'flex-end' }}>
@@ -1211,72 +1439,129 @@ export default function OldGoldPage({ isActive = false, onNavigate }) {
             )}
           </div>
 
-          {/* Meetings */}
-          <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: 18 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
-              <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--text)' }}>
-                Meeting Log
-                {meetings.length > 0 && <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--text-faint)', marginLeft: 8 }}>{meetings.length} meeting{meetings.length !== 1 ? 's' : ''}</span>}
-              </div>
-              <button
-                onClick={() => { setShowImport(v => !v); setImportError(''); }}
-                style={{ fontSize: 11, fontWeight: 700, padding: '4px 12px', borderRadius: 6, border: showImport ? '1px solid var(--border)' : '1px solid var(--accent)', background: showImport ? 'none' : 'var(--accent)', color: showImport ? 'var(--text-muted)' : '#fff', cursor: 'pointer' }}
-              >{showImport ? '✕ Cancel' : '+ Import Transcript'}</button>
-            </div>
+      {/* ── Bottom grid: Dossier (3/4) + Meeting Log (1/4) ── */}
+      <div style={{ display: 'grid', gridTemplateColumns: '3fr 1fr', gap: 14, alignItems: 'start' }}>
 
-            {/* Import form */}
-            {showImport && (
-              <div style={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 8, padding: 14, marginBottom: 16 }}>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 8, marginBottom: 8 }}>
-                  <div>
-                    <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 3 }}>Meeting title</label>
-                    <input type="text" value={importTitle} onChange={e => setImportTitle(e.target.value)} placeholder={`Meeting with ${active.name}…`} style={{ width: '100%', fontSize: 12 }} />
-                  </div>
-                  <div>
-                    <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 3 }}>Date</label>
-                    <input type="date" value={importDate} onChange={e => setImportDate(e.target.value)} style={{ fontSize: 12, padding: '5px 8px', width: 'auto' }} />
-                  </div>
-                </div>
-                <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 3 }}>Granola transcript</label>
-                <textarea
-                  rows={8}
-                  value={importTranscript}
-                  onChange={e => setImportTranscript(e.target.value)}
-                  placeholder="Paste your Granola transcript here… AI will extract a summary and create follow-up tasks automatically."
-                  style={{ width: '100%', fontSize: 12, lineHeight: 1.6, fontFamily: 'monospace', marginBottom: 10 }}
-                />
-                {importError && <div style={{ fontSize: 12, color: '#ef4444', marginBottom: 8 }}>{importError}</div>}
-                <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-                  <button onClick={() => { setShowImport(false); setImportTranscript(''); setImportError(''); }} style={{ fontSize: 12, padding: '5px 14px', borderRadius: 6, border: '1px solid var(--border)', background: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}>Cancel</button>
-                  <button onClick={handleImport} disabled={importing || !importTranscript.trim()} style={{ fontSize: 12, fontWeight: 700, padding: '5px 16px', borderRadius: 6, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer' }}>
-                    {importing ? '⏳ Processing…' : '✨ Import & Extract Tasks'}
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* Meeting list */}
-            {!detailLoading && meetings.length === 0 && !showImport && (
-              <div style={{ fontSize: 12, color: 'var(--text-faint)', fontStyle: 'italic' }}>No meetings yet. Import a Granola transcript to get started.</div>
-            )}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-              {meetings.map(m => (
-                <MeetingCard key={m.id} meeting={m} tasks={tasks} />
-              ))}
+        {/* Dossier */}
+        <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: 18 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+            <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--text)' }}>Dossier</div>
+            <button
+              onClick={handleBuildDossier}
+              disabled={buildingDossier}
+              style={{ fontSize: 11, fontWeight: 700, padding: '4px 12px', borderRadius: 6, border: '1px solid var(--accent)', background: buildingDossier ? 'none' : 'var(--accent)', color: buildingDossier ? 'var(--text-muted)' : '#fff', cursor: 'pointer' }}
+            >{buildingDossier ? '⏳ Building…' : '✨ Build Dossier'}</button>
+          </div>
+          {dossierContact ? (
+            <ContactDossier contact={dossierContact} />
+          ) : (
+            <div style={{ fontSize: 12, color: 'var(--text-faint)', fontStyle: 'italic' }}>
+              No dossier yet.{active.company ? ' Click Build Dossier to run a deep search on this person.' : ' Add a company for this contact first.'}
             </div>
+          )}
+        </div>
+
+        {/* Meeting Log */}
+        <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: 18 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+            <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--text)' }}>
+              Meeting Log
+              {meetings.length > 0 && <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--text-faint)', marginLeft: 8 }}>{meetings.length} meeting{meetings.length !== 1 ? 's' : ''}</span>}
+            </div>
+            <button
+              onClick={() => { setShowImport(v => !v); setImportError(''); }}
+              style={{ fontSize: 11, fontWeight: 700, padding: '4px 12px', borderRadius: 6, border: showImport ? '1px solid var(--border)' : '1px solid var(--accent)', background: showImport ? 'none' : 'var(--accent)', color: showImport ? 'var(--text-muted)' : '#fff', cursor: 'pointer' }}
+            >{showImport ? '✕ Cancel' : '+ Import Transcript'}</button>
           </div>
 
+          {/* Import form */}
+          {showImport && (
+            <div style={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 8, padding: 14, marginBottom: 16 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 8, marginBottom: 8 }}>
+                <div>
+                  <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 3 }}>Meeting title</label>
+                  <input type="text" value={importTitle} onChange={e => setImportTitle(e.target.value)} placeholder={`Meeting with ${active.name}…`} style={{ width: '100%', fontSize: 12 }} />
+                </div>
+                <div>
+                  <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 3 }}>Date</label>
+                  <input type="date" value={importDate} onChange={e => setImportDate(e.target.value)} style={{ fontSize: 12, padding: '5px 8px', width: 'auto' }} />
+                </div>
+              </div>
+              <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 3 }}>Granola transcript</label>
+              <textarea
+                rows={6}
+                value={importTranscript}
+                onChange={e => setImportTranscript(e.target.value)}
+                placeholder="Paste your Granola transcript here…"
+                style={{ width: '100%', fontSize: 12, lineHeight: 1.6, fontFamily: 'monospace', marginBottom: 10 }}
+              />
+              {importError && <div style={{ fontSize: 12, color: '#ef4444', marginBottom: 8 }}>{importError}</div>}
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                <button onClick={() => { setShowImport(false); setImportTranscript(''); setImportError(''); }} style={{ fontSize: 12, padding: '5px 14px', borderRadius: 6, border: '1px solid var(--border)', background: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}>Cancel</button>
+                <button onClick={handleImport} disabled={importing || !importTranscript.trim()} style={{ fontSize: 12, fontWeight: 700, padding: '5px 16px', borderRadius: 6, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer' }}>
+                  {importing ? '⏳ Processing…' : '✨ Import & Extract Tasks'}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Meeting list */}
+          {!detailLoading && meetings.length === 0 && !showImport && (
+            <div style={{ fontSize: 12, color: 'var(--text-faint)', fontStyle: 'italic' }}>No meetings yet. Import a Granola transcript to get started.</div>
+          )}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            {meetings.map(m => (
+              <MeetingCard key={m.id} meeting={m} tasks={tasks} />
+            ))}
+          </div>
+        </div>
+
+      </div>
+    </div>
+  );
+}
+
+// ── Transcript modal ──────────────────────────────────────────────────────────
+function TranscriptModal({ title, date, transcript, onClose }) {
+  return (
+    <div
+      onClick={onClose}
+      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}
+    >
+      <div
+        onClick={e => e.stopPropagation()}
+        style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, width: '100%', maxWidth: 780, maxHeight: '85vh', display: 'flex', flexDirection: 'column', boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 20px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
+          <div>
+            <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--text)' }}>{title}</div>
+            {date && <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 2 }}>{date}</div>}
+          </div>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, color: 'var(--text-faint)', padding: '2px 6px', lineHeight: 1 }}>✕</button>
+        </div>
+        <div style={{ overflowY: 'auto', padding: '16px 20px', flex: 1 }}>
+          <pre style={{ fontSize: 12, fontFamily: 'monospace', color: 'var(--text-muted)', lineHeight: 1.75, whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0 }}>{transcript}</pre>
         </div>
       </div>
     </div>
   );
 }
 
+const MOMENT_CATEGORY_ICON = {
+  pets: '🐾', family: '👨‍👩‍👧', health: '🏥', hobbies: '🎯',
+  sports: '🏆', milestone: '🎉', professional: '💼', other: '💬',
+};
+
 // ── Meeting card (collapsible) ────────────────────────────────────────────────
 function MeetingCard({ meeting: m, tasks }) {
   const [open, setOpen] = useState(false);
   const [showTranscript, setShowTranscript] = useState(false);
   const linkedTasks = tasks.filter(t => t.meeting_id === m.id);
+
+  const allItems = m.action_items || [];
+  const taskItems    = allItems.filter(ai => !ai.type || ai.type === 'task');
+  const moments      = allItems.filter(ai => ai.type === 'moment' && !/^pete/i.test(ai.person || ''));
+  const newContacts  = allItems.filter(ai => ai.type === 'contact');
 
   return (
     <div style={{ border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
@@ -1289,6 +1574,9 @@ function MeetingCard({ meeting: m, tasks }) {
           <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>{m.title}</div>
           {m.meeting_date && <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 1 }}>{new Date(m.meeting_date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}</div>}
         </div>
+        {moments.length > 0 && (
+          <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 20, background: '#fef3c7', color: '#92400e' }}>✨ {moments.length} rapport</span>
+        )}
         {linkedTasks.length > 0 && (
           <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 20, background: '#fef08a', color: '#713f12' }}>{linkedTasks.length} task{linkedTasks.length !== 1 ? 's' : ''}</span>
         )}
@@ -1297,21 +1585,23 @@ function MeetingCard({ meeting: m, tasks }) {
 
       {open && (
         <div style={{ padding: '12px 14px', borderTop: '1px solid var(--border)' }}>
+          {/* Summary */}
           {m.summary && (
-            <div style={{ marginBottom: 12 }}>
+            <div style={{ marginBottom: 14 }}>
               <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 5 }}>Summary</div>
               <div style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.6 }}>{m.summary}</div>
             </div>
           )}
 
-          {(m.action_items?.length > 0) && (
-            <div style={{ marginBottom: 12 }}>
-              <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--accent)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 5 }}>Action Items from this meeting</div>
+          {/* ── Next steps / action items — always first ── */}
+          {taskItems.length > 0 && (
+            <div style={{ marginBottom: 14 }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: '#6d28d9', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 5 }}>Next Steps</div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                {m.action_items.map((ai, i) => (
-                  <div key={i} style={{ fontSize: 12, color: 'var(--text)', padding: '4px 8px', borderRadius: 5, background: '#ede9fe', display: 'flex', gap: 6 }}>
+                {taskItems.map((ai, i) => (
+                  <div key={i} style={{ fontSize: 12, padding: '5px 10px', borderRadius: 6, background: '#ede9fe', display: 'flex', gap: 6, alignItems: 'baseline' }}>
                     {ai.owner && <span style={{ fontWeight: 700, color: '#6d28d9', flexShrink: 0 }}>{ai.owner}</span>}
-                    <span style={{ flex: 1 }}>{ai.title}</span>
+                    <span style={{ flex: 1, color: 'var(--text)' }}>{ai.title}</span>
                     {ai.due_date && <span style={{ fontSize: 10, color: '#7c3aed', flexShrink: 0 }}>{ai.due_date}</span>}
                   </div>
                 ))}
@@ -1319,16 +1609,57 @@ function MeetingCard({ meeting: m, tasks }) {
             </div>
           )}
 
+          {/* ── Conversation notes (rapport moments, non-Pete) ── */}
+          {moments.length > 0 && (
+            <div style={{ marginBottom: 14 }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: '#92400e', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 7 }}>Conversation Notes</div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                {moments.map((m2, i) => (
+                  <span
+                    key={i}
+                    title={`${m2.description || ''}${m2.followup_prompt ? `\n💬 ${m2.followup_prompt}` : ''}`}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 600, padding: '4px 10px', borderRadius: 20, background: '#fef3c7', border: '1px solid #fde68a', color: '#92400e', cursor: 'default' }}
+                  >
+                    {MOMENT_CATEGORY_ICON[m2.category] || '💬'} {m2.title}
+                  </span>
+                ))}
+              </div>
+              <div style={{ fontSize: 10, color: 'var(--text-faint)', marginTop: 5 }}>Hover for context & follow-up prompt</div>
+            </div>
+          )}
+
+          {/* ── Suggested new contacts ── */}
+          {newContacts.length > 0 && (
+            <div style={{ marginBottom: 14 }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: '#065f46', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 7 }}>Suggested New Contacts</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {newContacts.map((c, i) => (
+                  <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', borderRadius: 7, background: '#f0fdf4', border: '1px solid #bbf7d0' }}>
+                    <div style={{ flex: 1 }}>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: '#065f46' }}>{c.name}</span>
+                      {c.role && <span style={{ fontSize: 11, color: '#047857', marginLeft: 6 }}>{c.role}</span>}
+                      {c.reason && <div style={{ fontSize: 11, color: '#6b7280', marginTop: 2 }}>{c.reason}</div>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Transcript link */}
           {m.transcript && (
             <div>
               <button
-                onClick={() => setShowTranscript(v => !v)}
-                style={{ fontSize: 11, fontWeight: 700, color: 'var(--accent)', background: 'none', border: 'none', cursor: 'pointer', padding: 0, marginBottom: showTranscript ? 8 : 0 }}
-              >{showTranscript ? '↑ Hide transcript' : '↓ View full transcript'}</button>
+                onClick={() => setShowTranscript(true)}
+                style={{ fontSize: 11, fontWeight: 700, color: 'var(--accent)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+              >↓ View full transcript</button>
               {showTranscript && (
-                <div style={{ fontSize: 11, fontFamily: 'monospace', color: 'var(--text-muted)', lineHeight: 1.7, background: 'var(--bg)', padding: '10px 12px', borderRadius: 6, whiteSpace: 'pre-wrap', maxHeight: 360, overflowY: 'auto' }}>
-                  {m.transcript}
-                </div>
+                <TranscriptModal
+                  title={m.title}
+                  date={m.meeting_date ? new Date(m.meeting_date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }) : null}
+                  transcript={m.transcript}
+                  onClose={() => setShowTranscript(false)}
+                />
               )}
             </div>
           )}
