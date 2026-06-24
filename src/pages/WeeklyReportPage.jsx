@@ -386,7 +386,7 @@ export default function WeeklyReportPage({ icp = DEFAULT_ICP, refreshKey = 0 }) 
     const text = d.type === 'linkedin'
       ? `CONNECTION NOTE:\n${d.connection_note}\n\n---\nPOST-ACCEPTANCE DM:\n${d.acceptance_dm}`
       : `Subject: ${d.subject}\n\n${d.body}`;
-    await navigator.clipboard.writeText(text);
+    try { await navigator.clipboard.writeText(text); } catch { /* permission denied or tab not focused */ }
   };
 
   const totalActions = newOutreach.length + followupsDue.length;

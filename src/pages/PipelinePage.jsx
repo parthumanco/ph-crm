@@ -101,7 +101,7 @@ export default function PipelinePage({ icp = {}, refreshKey = 0, onNavigate }) {
   const updateStatus = useCallback(async (entryId, status) => {
     await supabase.from('pipeline_entries').update({ status, updated_at: new Date().toISOString() }).eq('id', entryId);
     setEntries(es => es.map(e => e.id === entryId ? { ...e, status } : e));
-    if (status !== 'active') {
+    if (status === 'responded' || status === 'won') {
       const entry   = entriesRef.current.find(e => e.id === entryId);
       const company = entry ? companiesRef.current[entry.company_id] : null;
       if (entry && company) handleCreateDeal(entry, company);
@@ -133,7 +133,7 @@ export default function PipelinePage({ icp = {}, refreshKey = 0, onNavigate }) {
       console.error('markTouchSent error:', e);
       alert('Error marking touch as sent: ' + e.message);
     }
-  }, []);
+  }, [load]);
 
   const handleTouchRightClick = useCallback((e, touch) => {
     if (!touch?.id) return;
@@ -224,7 +224,6 @@ export default function PipelinePage({ icp = {}, refreshKey = 0, onNavigate }) {
         ? generateQuickNextStep(resolvedCompany.name, noteText, deal.notes)
             .then(async nextStep => {
               if (!nextStep) return;
-              console.log('[nextStep] generated:', nextStep);
               // Save to company record so AI RECOMMENDED box shows it
               await supabase.from('companies')
                 .update({ thesis_next_step: nextStep, updated_at: new Date().toISOString() })

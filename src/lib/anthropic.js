@@ -1031,7 +1031,8 @@ export async function generateEmailDraft(touchNumber, company, contact, angle, i
   const s = cleaned.indexOf('{');
   const e = cleaned.lastIndexOf('}');
   if (s === -1 || e === -1) throw new Error('No JSON found in draft response');
-  const result = JSON.parse(cleaned.slice(s, e + 1));
+  let result;
+  try { result = JSON.parse(cleaned.slice(s, e + 1)); } catch { throw new Error('Malformed JSON in draft response'); }
   // Strip any em/en dashes that slipped through
   if (result.body) result.body = result.body.replace(/[—–]/g, ',');
   if (result.subject) result.subject = result.subject.replace(/[—–]/g, ',');
@@ -1062,7 +1063,8 @@ export async function generateLinkedInDrafts(company, contact, t1Subject = null,
   const s = cleaned.indexOf('{');
   const e = cleaned.lastIndexOf('}');
   if (s === -1 || e === -1) throw new Error('No JSON found in LinkedIn draft response');
-  const result = JSON.parse(cleaned.slice(s, e + 1));
+  let result;
+  try { result = JSON.parse(cleaned.slice(s, e + 1)); } catch { throw new Error('Malformed JSON in LinkedIn draft response'); }
   if (result.connection_note) result.connection_note = result.connection_note.replace(/[—–]/g, ',');
   if (result.acceptance_dm) result.acceptance_dm = result.acceptance_dm.replace(/[—–]/g, ',');
   return result;
@@ -1316,7 +1318,8 @@ Return JSON only:
   const s = cleaned.indexOf('{');
   const e = cleaned.lastIndexOf('}');
   if (s === -1 || e === -1) throw new Error('No JSON found in contextual outreach response');
-  const result = JSON.parse(cleaned.slice(s, e + 1));
+  let result;
+  try { result = JSON.parse(cleaned.slice(s, e + 1)); } catch { throw new Error('Malformed JSON in contextual outreach response'); }
 
   // Strip em-dash (U+2014) and en-dash (U+2013) — Claude sometimes outputs either
   const stripDashes = str => str.replace(/[—–]/g, ',');

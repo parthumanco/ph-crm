@@ -719,5 +719,7 @@ QUESTION: ${question}`;
 
   if (!res.ok) throw new Error(`API error ${res.status}`);
   const json = await res.json();
-  return json.content[0].text.trim();
+  const textBlock = json.content?.find(b => b.type === 'text');
+  if (!textBlock?.text) throw new Error('No text in API response');
+  return textBlock.text.trim();
 }

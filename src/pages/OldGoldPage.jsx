@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { saveProjectMeeting } from '../lib/projects';
-import { findOrCreateCompany, enrichCompanyContact, upsertCompanyContacts, runBuildThesis } from '../lib/clients';
+import { findOrCreateCompany, enrichCompanyContact, upsertCompanyContacts, runBuildThesis, findOrCreateClient, upsertClientContacts } from '../lib/clients';
 import { STAGES, upsertDeal } from '../lib/deals';
 import ContactDossier from '../components/ContactDossier';
+import ContactsPanel from '../components/ContactsPanel';
 import { parseCsvRows } from '../lib/csv';
 
 // ── Tiny AI helper: extract summary + action items + contact info ─────────────
@@ -202,6 +203,7 @@ export default function OldGoldPage({ isActive = false, onNavigate, icp = {} }) 
   const [search, setSearch] = useState('');
   const [dossierContact, setDossierContact] = useState(null); // matching companies.contacts entry for active prospect
   const [buildingDossier, setBuildingDossier] = useState(false);
+  const [clientRecord, setClientRecord]     = useState(null); // clients row — shared contact list with project cards
 
   // Forms
   const [addingProspect, setAddingProspect] = useState(false);
@@ -608,9 +610,13 @@ export default function OldGoldPage({ isActive = false, onNavigate, icp = {} }) 
     setShowImport(false);
     setDossierContact(null);
     setCompanyPanel(null);
+    setClientRecord(null);
     loadDetail(p);
     loadDossierContact(p);
     loadCompanyPanel(p.company);
+    if (p.company?.trim()) {
+      findOrCreateClient(p.company.trim()).then(setClientRecord).catch(() => {});
+    }
   };
 
   const loadCompanyPanel = async (companyName) => {
@@ -631,14 +637,23 @@ export default function OldGoldPage({ isActive = false, onNavigate, icp = {} }) 
     }
   };
 
-  // Look up the matching entry in companies.contacts (shared with Watch List /
-  // Pipeline) so a dossier built anywhere shows up here too.
+  // Load dossier for the primary prospect. Checks clients.contacts first (most
+  // enriched — shared with project cards), then falls back to companies.contacts
+  // (shared with Watch List / Pipeline).
   const loadDossierContact = async (p) => {
     if (!p.company?.trim()) return;
+    const nameLower = p.name?.trim().toLowerCase();
+    if (!nameLower) return;
     try {
+      // Primary source: clients.contacts (set when clientRecord loads, but may not be ready yet)
+      const { data: clientRow } = await supabase
+        .from('clients').select('contacts').ilike('name', p.company.trim()).limit(1).maybeSingle();
+      const fromClient = (clientRow?.contacts || []).find(c => c.name?.trim().toLowerCase() === nameLower);
+      if (fromClient) { setDossierContact(fromClient); return; }
+      // Fallback: companies.contacts
       const { data: company } = await supabase.from('companies').select('contacts').ilike('name', p.company.trim()).limit(1).maybeSingle();
-      const match = (company?.contacts || []).find(c => c.name?.trim().toLowerCase() === p.name?.trim().toLowerCase());
-      if (match) setDossierContact(match);
+      const fromCompany = (company?.contacts || []).find(c => c.name?.trim().toLowerCase() === nameLower);
+      if (fromCompany) setDossierContact(fromCompany);
     } catch { /* non-fatal */ }
   };
 
@@ -652,12 +667,30 @@ export default function OldGoldPage({ isActive = false, onNavigate, icp = {} }) 
       const merged = await enrichCompanyContact(company.id, baseContact, company.name);
       const updated = merged.find(c => c.name?.trim().toLowerCase() === active.name?.trim().toLowerCase());
       setDossierContact(updated || null);
+      // Also save to clients.contacts so it's visible in project cards and ClientsPage
+      if (updated && clientRecord?.id) {
+        const newContacts = await upsertClientContacts(clientRecord.id, [updated]);
+        setClientRecord(cr => cr ? { ...cr, contacts: newContacts } : cr);
+      }
     } catch (e) {
       alert('Error building dossier: ' + e.message);
     } finally {
       setBuildingDossier(false);
     }
   };
+
+  const closeOverlay = useCallback(async () => {
+    clearTimeout(autoSaveTimer.current);
+    if (editingProspect && hasEdited.current && prospectDraft.name?.trim() && active) {
+      await supabase.from('old_gold_prospects').update({ ...prospectDraft, updated_at: new Date().toISOString() }).eq('id', active.id);
+    }
+    setActive(null); setMeetings([]); setTasks([]); setDossierContact(null); setCompanyPanel(null); setClientRecord(null);
+    setEditingProspect(false); setAutoSaveStatus('idle'); setProspectDraft(BLANK_PROSPECT);
+    hasEdited.current = false;
+    setThesisBuilding(false); setThesisError(''); setThesisModal(null);
+    setPipelineConfirm(null); setMovingToPipeline(false); setPipelineError('');
+    setDeleteConfirmId(null);
+  }, [editingProspect, active, prospectDraft]);
 
   const handleBuildThesis = async () => {
     if (!active?.company?.trim()) { alert('Add a company for this contact first.'); return; }
@@ -753,19 +786,6 @@ export default function OldGoldPage({ isActive = false, onNavigate, icp = {} }) 
     setProspectDraft(BLANK_PROSPECT);
     hasEdited.current = false;
   };
-
-  const closeOverlay = useCallback(async () => {
-    clearTimeout(autoSaveTimer.current);
-    if (editingProspect && hasEdited.current && prospectDraft.name?.trim() && active) {
-      await supabase.from('old_gold_prospects').update({ ...prospectDraft, updated_at: new Date().toISOString() }).eq('id', active.id);
-    }
-    setActive(null); setMeetings([]); setTasks([]); setDossierContact(null); setCompanyPanel(null);
-    setEditingProspect(false); setAutoSaveStatus('idle'); setProspectDraft(BLANK_PROSPECT);
-    hasEdited.current = false;
-    setThesisBuilding(false); setThesisError(''); setThesisModal(null);
-    setPipelineConfirm(null); setMovingToPipeline(false); setPipelineError('');
-    setDeleteConfirmId(null);
-  }, [editingProspect, active, prospectDraft]);
 
   // Archives (never permanently deletes) a contact — hides it from the active
   // list and meeting feed, but it stays fully intact and restorable from the
@@ -1622,7 +1642,7 @@ export default function OldGoldPage({ isActive = false, onNavigate, icp = {} }) 
                 <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 20, background: sourceBg, color: sourceColor }}>{sourceLabel}</span>
               </div>
               <button
-                onClick={() => { const companyName = watchlist?.name || deal?.company_name || client?.name || active.company; closeOverlay(); if (client) onNavigate && onNavigate('clients'); else if (deal) onNavigate && onNavigate('deals', deal.id); else onNavigate && onNavigate('signals', companyName); }}
+                onClick={() => { const companyName = watchlist?.name || deal?.company_name || client?.name || active.company; closeOverlay(); if (client) onNavigate && onNavigate('clients', client.name); else if (deal) onNavigate && onNavigate('deals', deal.id); else onNavigate && onNavigate('signals', companyName); }}
                 style={{ fontSize: 11, padding: '3px 10px', borderRadius: 20, border: '1px solid var(--border)', background: 'none', color: 'var(--text-muted)', cursor: 'pointer', whiteSpace: 'nowrap' }}
               >Open full card →</button>
             </div>
@@ -1680,7 +1700,7 @@ export default function OldGoldPage({ isActive = false, onNavigate, icp = {} }) 
                 <>
                   <button
                     onClick={handleBuildThesis}
-                    style={{ fontSize: 11, fontWeight: 700, padding: '4px 12px', borderRadius: 6, border: '1px solid var(--accent)', background: 'none', color: 'var(--accent)', cursor: 'pointer' }}
+                    style={{ fontSize: 11, fontWeight: 700, padding: '5px 14px', borderRadius: 20, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer' }}
                   >{watchlist?.thesis ? 'Refresh Thesis' : 'Build Thesis'}</button>
                   {watchlist?.thesis && (
                     <button
@@ -1721,8 +1741,8 @@ export default function OldGoldPage({ isActive = false, onNavigate, icp = {} }) 
               ) : (
                 <button
                   onClick={() => setPipelineConfirm({ stage: 'discovery_call' })}
-                  style={{ fontSize: 11, fontWeight: 700, padding: '4px 12px', borderRadius: 6, border: '1px solid #10b981', background: 'none', color: '#10b981', cursor: 'pointer' }}
-                >→ Move to Pipeline</button>
+                  style={{ fontSize: 11, fontWeight: 700, padding: '5px 14px', borderRadius: 20, border: 'none', background: '#10b981', color: '#fff', cursor: 'pointer' }}
+                >Move to Pipeline</button>
               )}
             </div>
           </div>
@@ -1783,6 +1803,24 @@ export default function OldGoldPage({ isActive = false, onNavigate, icp = {} }) 
           ))}
         </div>
       </div>
+
+      {/* ── Contacts — shared with project cards & ClientsPage ── */}
+      {clientRecord && (
+        <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: 18 }}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--text)', marginBottom: 12 }}>Contacts</div>
+          <ContactsPanel
+            clientId={clientRecord.id}
+            companyName={active.company || ''}
+            contacts={clientRecord.contacts || []}
+            discovered={(() => {
+              const added = new Set((clientRecord.contacts || []).map(c => c.name?.trim().toLowerCase()));
+              const sources = dossierContact ? [dossierContact] : [];
+              return sources.filter(c => c?.name && !added.has(c.name.trim().toLowerCase()));
+            })()}
+            onContactsChange={updated => setClientRecord(cr => cr ? { ...cr, contacts: updated } : cr)}
+          />
+        </div>
+      )}
 
       {/* ── Dossier — full width ── */}
       <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: 18 }}>

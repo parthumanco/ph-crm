@@ -1130,13 +1130,14 @@ export default function SignalWatchPage({ onNavigate, icp, refreshKey = 0, isAct
     const company = companiesRef.current.find(c => c.name.toLowerCase() === name.toLowerCase());
     if (!company) return;
     const id = company.id || company._tempId;
-    setExpandedCards(prev => ({ ...prev, [id]: true }));
-    // Clear filters so the card is visible
+    // Clear filters first so the card is included in the rendered list
     setFilters({ series: 'all', employees: 'all', distance: 'all', icp: 'all', sig: 'all', industry: 'all', engagement: 'all', deepScan: 'all', scanDate: 'all', oldGold: 'all' });
     setSearch('');
+    setExpandedCards(prev => ({ ...prev, [id]: true }));
+    // Wait for React to re-render the card in its expanded state before scrolling
     setTimeout(() => {
       cardRefs.current[id]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    }, 100);
+    }, 350);
   };
 
   const [pendingJumpName, setPendingJumpName] = useState(null);
@@ -1149,11 +1150,14 @@ export default function SignalWatchPage({ onNavigate, icp, refreshKey = 0, isAct
 
   // Fire the jump once companies are loaded and there's a pending target
   useEffect(() => {
-    if (!pendingJumpName || companies.length === 0) return;
-    setTimeout(() => {
+    if (!pendingJumpName) return;
+    if (companies.length === 0) return; // wait for load
+    // Small delay lets React finish rendering the full list before jumping
+    const t = setTimeout(() => {
       jumpToCompany(pendingJumpName);
       setPendingJumpName(null);
-    }, 150);
+    }, 50);
+    return () => clearTimeout(t);
   }, [pendingJumpName, companies.length]);
 
   const toolbarLabel = txt => (

@@ -6,7 +6,7 @@ import {
   fetchMilestones, fetchArchivedMilestones, upsertMilestone, archiveMilestone, restoreMilestone, deleteMilestone,
   fetchProjectTasks, upsertProjectTask, toggleTask, deleteProjectTask, rejectTask, approveTask, saveRejectionResponse, addToReviewChain, clearRejectionFields,
   fetchProjectFiles, fetchArchivedProjectFiles, uploadProjectFile, deleteProjectFile, archiveProjectFile, restoreProjectFile, addExternalLink,
-  restoreProjectTask, fetchAllTasksByOwner,
+  restoreProjectTask, fetchAllTasksByOwner, saveTaskPortalContact,
   bulkInsertMilestones, bulkInsertTasks, parseProposalWithAI,
   fetchProjectMeetings, deleteProjectMeeting,
   PROJECT_STATUSES, MILESTONE_STATUSES, OWNERS,
@@ -14,7 +14,7 @@ import {
   daysBetween, addDays, projectProgress, fmtDate,
 } from '../lib/projects';
 import { fetchDeals, fetchActivities, addActivity, fetchTasks, ACTIVITY_TYPES } from '../lib/deals';
-import { fetchCompanyIntel, silentRefreshThesis, fetchClients, findOrCreateClient } from '../lib/clients';
+import { fetchCompanyIntel, silentRefreshThesis, fetchClients, findOrCreateClient, upsertClientContacts } from '../lib/clients';
 import ProposalImporter from '../components/ProposalImporter';
 import TranscriptImporter from '../components/TranscriptImporter';
 import CompanyIntelPanel from '../components/CompanyIntelPanel';
@@ -483,8 +483,6 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
   const [clientRecord, setClientRecord]           = useState(null); // clients row — canonical contacts list, shared with ClientsPage
   const [addingContact, setAddingContact]         = useState(false);
   const [newContactDraft, setNewContactDraft]     = useState({ name: '', title: '', email: '' });
-  const [editingContactIdx, setEditingContactIdx] = useState(null);
-  const [editContactDraft, setEditContactDraft]   = useState({ name: '', title: '', email: '' });
   const [summaryGenerating, setSummaryGenerating] = useState(false);
   const [expandedRejections, setExpandedRejections] = useState(new Set());
   const [expandedCoC, setExpandedCoC]               = useState(new Set()); // manual expand after approval
@@ -882,76 +880,30 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
   };
 
   // ── Project contacts ──────────────────────────────────────────────────────
-  const saveProjectContacts = async (updated) => {
-    const proj = { ...activeProject, contacts: updated };
-    setActiveProject(proj);
-    setProjects(prev => prev.map(p => p.id === proj.id ? proj : p));
-    await upsertProject(proj);
-  };
-
   const handleSelectContact = async (e) => {
     const val = e.target.value;
     if (!val) return;
     e.target.value = '';
     let picked;
     try { picked = JSON.parse(val); } catch { return; }
-    if (!picked?.name) return;
-    const already = (activeProject.contacts || []).some(c => c.name?.toLowerCase() === picked.name.toLowerCase());
+    if (!picked?.name || !clientRecord?.id) return;
+    const already = (clientRecord.contacts || []).some(c => c.name?.toLowerCase() === picked.name.toLowerCase());
     if (already) return;
-    await saveProjectContacts([...(activeProject.contacts || []), { name: picked.name, title: picked.title || '', email: picked.email || '' }]);
-  };
-
-  const handleRemoveProjectContact = async (idx) => {
-    await saveProjectContacts((activeProject.contacts || []).filter((_, i) => i !== idx));
+    const updated = await upsertClientContacts(clientRecord.id, [{ name: picked.name, title: picked.title || '', email: picked.email || '', source: 'manual' }]);
+    setClientRecord(cr => cr ? { ...cr, contacts: updated } : cr);
   };
 
   const handleAddNewContact = async () => {
-    if (!newContactDraft.name.trim() || !projectCompany) return;
-    const updatedCompanyContacts = [...(projectCompany.contacts || []), { ...newContactDraft }];
-    await supabase.from('companies').update({ contacts: updatedCompanyContacts }).eq('id', projectCompany.id);
-    setProjectCompany(prev => ({ ...prev, contacts: updatedCompanyContacts }));
-    // Also add to project contacts
-    await saveProjectContacts([...(activeProject.contacts || []), { ...newContactDraft }]);
-    setNewContactDraft({ name: '', title: '', email: '' });
-    setAddingContact(false);
-  };
-
-  const handleSaveEditContact = async () => {
-    if (editingContactIdx === null || !editContactDraft.name.trim()) return;
-    // Merge draft into existing contact — preserve fields not in the draft (is_primary, linkedin, etc.)
-    const updated = (activeProject.contacts || []).map((c, i) =>
-      i === editingContactIdx ? { ...c, ...editContactDraft } : c
-    );
-    await saveProjectContacts(updated);
-    // Also update in company record if we have one
-    if (projectCompany) {
-      const companyContacts = (projectCompany.contacts || []).map(c =>
-        c.name === (activeProject.contacts || [])[editingContactIdx]?.name ? { ...editContactDraft } : c
-      );
-      await supabase.from('companies').update({ contacts: companyContacts }).eq('id', projectCompany.id);
-      setProjectCompany(prev => ({ ...prev, contacts: companyContacts }));
-    }
-    setEditingContactIdx(null);
-    setEditContactDraft({ name: '', title: '', email: '', linkedin: '' });
-  };
-
-  const handleSetPrimary = async (idx) => {
-    const updated = (activeProject.contacts || []).map((c, i) => ({ ...c, is_primary: i === idx }));
-    await saveProjectContacts(updated);
-  };
-
-  const handleAddProjectContact = async () => {
-    if (!newContactDraft.name.trim()) return;
-    const isFirst = (activeProject.contacts || []).length === 0;
-    const contact = { ...newContactDraft, is_primary: isFirst };
-    await saveProjectContacts([...(activeProject.contacts || []), contact]);
+    if (!newContactDraft.name.trim() || !clientRecord?.id) return;
+    const updated = await upsertClientContacts(clientRecord.id, [{ ...newContactDraft, source: 'manual' }]);
+    setClientRecord(cr => cr ? { ...cr, contacts: updated } : cr);
     // Also persist to company card if one is linked
     if (projectCompany) {
-      const updatedCompanyContacts = [...(projectCompany.contacts || []), contact];
+      const updatedCompanyContacts = [...(projectCompany.contacts || []), { ...newContactDraft }];
       await supabase.from('companies').update({ contacts: updatedCompanyContacts }).eq('id', projectCompany.id);
       setProjectCompany(prev => ({ ...prev, contacts: updatedCompanyContacts }));
     }
-    setNewContactDraft({ name: '', title: '', email: '', linkedin: '' });
+    setNewContactDraft({ name: '', title: '', email: '' });
     setAddingContact(false);
   };
 
@@ -1251,9 +1203,9 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
 
   // Opens Send Revision modal and always regenerates AI response from the
   // latest rejection notes so stale responses from prior cycles are never reused.
-  const openResendModal = async (task, project) => {
+  const openResendModal = async (task, project, milestone = null) => {
     setExtraRecipients([]);
-    setResendEmail({ task, project });
+    setResendEmail({ task, project, ms: milestone });
     // Get the latest rejection notes — prefer the flat field, fall back to
     // the most recent 'rejected' event in the chain (in case flat field was cleared).
     const latestNotes = task.rejection_notes
@@ -1274,7 +1226,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
       });
       setAssignedTasks(prev => prev.map(patch));
       // Update the modal's task reference so the email body reflects the fresh response
-      setResendEmail({ task: { ...task, rejection_response: response, rejection_notes: latestNotes }, project });
+      setResendEmail({ task: { ...task, rejection_response: response, rejection_notes: latestNotes }, project, ms: milestone });
     } catch (e) {
       console.error('Auto-generate response failed:', e.message);
     } finally {
@@ -1609,7 +1561,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
         // Refresh card tasks
         const ts = await fetchProjectTasks(projectId);
         setAllTasks(prev => ({ ...prev, [projectId]: ts }));
-        setShowImporterForProject(null);
+        setShowImporter(false);
         // Also update the card's project data so proposal fields are available
         setProjects(prev => prev.map(p => p.id === savedProj.id ? savedProj : p));
       } else {
@@ -1623,7 +1575,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
       }
     } catch (e) {
       console.error('Import failed:', e);
-      if (fromCard) setShowImporterForProject(null);
+      if (fromCard) setShowImporter(false);
       else setShowImporter(false);
     }
   };
@@ -2422,7 +2374,8 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                 const lastSentEvent = [...chain].reverse().find(e => e.type === 'sent' || e.type === 'revised_sent');
                 const isAwaiting = !task.approved_at && !task.rejected_at && !!lastSentEvent;
                 const isUnsent   = !task.approved_at && !task.rejected_at && !lastSentEvent;
-                const portalEmail = (activeProject.contacts || []).find(c => c.is_primary) || (activeProject.contacts || [])[0]?.email || activeProject.client_email || '';
+                const _contacts = clientRecord?.contacts || [];
+                const portalEmail = _contacts.find(c => c.is_primary)?.email || _contacts[0]?.email || activeProject.client_email || '';
                 const hasPortalEmail = !!(activeProject.share_token && portalEmail);
                 return (
                   <div style={{ fontSize: 10, marginTop: 2, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
@@ -2433,7 +2386,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                         <span style={{ color: 'var(--text-faint)' }}>✓ Completed {fmtDate(task.completed_at)}</span>
                         {isUnsent && hasPortalEmail && (
                           <button
-                            onClick={() => { setExtraRecipients([]); setShowContactDropdown(false); setTaskCompleteEmail({ task, project: activeProject }); }}
+                            onClick={() => { setExtraRecipients([]); setShowContactDropdown(false); setTaskCompleteEmail({ task, project: activeProject, ms: task._milestone || null }); }}
                             style={{ fontSize: 10, fontWeight: 800, padding: '2px 10px', borderRadius: 20, border: 'none', background: '#ef4444', color: '#fff', cursor: 'pointer', whiteSpace: 'nowrap', letterSpacing: '.02em' }}
                           >Notify client</button>
                         )}
@@ -2606,7 +2559,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
               <div style={{ display: 'flex', gap: 8, marginTop: 6, flexWrap: 'wrap', alignItems: 'center' }}>
                 {isAwaiting && (
                   <button
-                    onClick={() => { setExtraRecipients([]); setShowContactDropdown(false); setTaskCompleteEmail({ task, project: activeProject }); }}
+                    onClick={() => { setExtraRecipients([]); setShowContactDropdown(false); setTaskCompleteEmail({ task, project: activeProject, ms: task._milestone || null }); }}
                     style={{ fontSize: 11, fontWeight: 700, padding: '4px 12px', borderRadius: 6, border: '1px solid #f59e0b', background: 'transparent', color: '#f59e0b', cursor: 'pointer', whiteSpace: 'nowrap' }}
                   >Resend to client</button>
                 )}
@@ -2750,43 +2703,27 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
               )}
             </div>
 
-            {/* Selected contacts */}
+            {/* Selected contacts — reads from clientRecord.contacts, same source as Contacts tab */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 8, maxHeight: 220, overflowY: 'auto', paddingRight: 2 }}>
-              {(activeProject.contacts || []).length === 0 && !addingContact && (
-                <div style={{ fontSize: 12, color: 'var(--text-faint)', fontStyle: 'italic' }}>No contacts added</div>
+              {(clientRecord?.contacts || []).length === 0 && !addingContact && (
+                <div style={{ fontSize: 12, color: 'var(--text-faint)', fontStyle: 'italic' }}>{clientRecord ? 'No contacts yet' : 'Loading…'}</div>
               )}
-              {(activeProject.contacts || []).map((c, i) => (
-                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 8px', background: 'var(--bg)', border: `1px solid ${editingContactIdx === i ? 'var(--accent)' : 'var(--border)'}`, borderRadius: 6 }}>
-                  {editingContactIdx === i ? (
-                    /* ── inline edit mode ── */
-                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 4 }}>
-                      <input autoFocus placeholder="Name *" value={editContactDraft.name} onChange={e => setEditContactDraft(p => ({ ...p, name: e.target.value }))} style={{ fontSize: 12, padding: '3px 6px', borderRadius: 5, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)' }} />
-                      <input placeholder="Title / Role" value={editContactDraft.title} onChange={e => setEditContactDraft(p => ({ ...p, title: e.target.value }))} style={{ fontSize: 12, padding: '3px 6px', borderRadius: 5, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)' }} />
-                      <input placeholder="Email" value={editContactDraft.email} onChange={e => setEditContactDraft(p => ({ ...p, email: e.target.value }))} onKeyDown={e => { if (e.key === 'Enter') handleSaveEditContact(); if (e.key === 'Escape') { setEditingContactIdx(null); setEditContactDraft({ name: '', title: '', email: '' }); } }} style={{ fontSize: 12, padding: '3px 6px', borderRadius: 5, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)' }} />
-                      <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end', marginTop: 2 }}>
-                        <button onClick={() => { setEditingContactIdx(null); setEditContactDraft({ name: '', title: '', email: '' }); }} style={{ fontSize: 11, padding: '2px 8px', borderRadius: 5, border: '1px solid var(--border)', background: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}>Cancel</button>
-                        <button onClick={handleSaveEditContact} disabled={!editContactDraft.name.trim()} style={{ fontSize: 11, padding: '2px 8px', borderRadius: 5, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer', fontWeight: 700 }}>Save</button>
-                      </div>
+              {(clientRecord?.contacts || []).map((c, i) => (
+                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 8px', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 6 }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)', display: 'flex', alignItems: 'center', gap: 5 }}>
+                      {c.name}
+                      {c.is_primary && <span style={{ fontSize: 9, fontWeight: 700, background: 'var(--accent)', color: '#fff', borderRadius: 10, padding: '1px 6px', letterSpacing: '.04em' }}>PRIMARY</span>}
+                      {c.title ? <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}> · {c.title}</span> : ''}
                     </div>
-                  ) : (
-                    /* ── display mode ── */
-                    <>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)' }}>
-                          {c.name}{c.title ? <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}> · {c.title}</span> : ''}
-                        </div>
-                        {c.email && (
-                          <a
-                            href="#"
-                            onClick={e => { e.preventDefault(); window.open(`https://mail.google.com/mail/?view=cm&to=${encodeURIComponent(c.email)}&su=${encodeURIComponent('Project Update')}`, '_blank'); }}
-                            style={{ fontSize: 11, color: 'var(--accent)', textDecoration: 'none' }}
-                          >{c.email}</a>
-                        )}
-                      </div>
-                      <button onClick={() => { setEditingContactIdx(i); setEditContactDraft({ name: c.name || '', title: c.title || '', email: c.email || '' }); }} style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 12, padding: '0 2px', flexShrink: 0 }} title="Edit contact">✏️</button>
-                      <button onClick={() => handleRemoveProjectContact(i)} style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 13, padding: '0 2px', flexShrink: 0 }}>✕</button>
-                    </>
-                  )}
+                    {c.email && (
+                      <a
+                        href="#"
+                        onClick={e => { e.preventDefault(); window.open(`https://mail.google.com/mail/?view=cm&to=${encodeURIComponent(c.email)}&su=${encodeURIComponent('Project Update')}`, '_blank'); }}
+                        style={{ fontSize: 11, color: 'var(--accent)', textDecoration: 'none' }}
+                      >{c.email}</a>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
@@ -2805,7 +2742,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                 pool.set(key, { name: c.name.trim(), title: c.title || existing.title || '', email: c.email || existing.email || '' });
               });
               // Remove already-added contacts
-              const added = new Set((activeProject.contacts || []).map(c => c.name?.trim().toLowerCase()));
+              const added = new Set((clientRecord?.contacts || []).map(c => c.name?.trim().toLowerCase()));
               const available = Array.from(pool.values()).filter(c => !added.has(c.name.toLowerCase()));
               const sourceName = projectCompany?.name || activeProject.client_name;
               if (!sourceName && available.length === 0) {
@@ -3093,7 +3030,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                         </div>
                       )}
 
-                      {/* Row 2 – Start · Due */}
+                      {/* Row 2 – Start · Due · Client contact */}
                       <div style={{ display: 'flex', gap: 16, padding: '10px 16px 10px 48px', borderBottom: '1px solid var(--border-light)', background: 'var(--bg)', alignItems: 'flex-end', flexWrap: 'wrap' }}>
                         <div>
                           <Lbl>Start</Lbl>
@@ -3103,6 +3040,30 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                           <Lbl>Due</Lbl>
                           <input type="date" value={ms.due_date || ''} onChange={e => { const u = { ...ms, due_date: e.target.value }; setMilestones(p => p.map(m => m.id === ms.id ? u : m)); upsertMilestone(u); }} style={{ fontSize: 12, padding: '3px 8px', width: 'auto' }} />
                         </div>
+                        {(clientRecord?.contacts || []).length > 0 && (
+                          <div>
+                            <Lbl>Client contact</Lbl>
+                            <select
+                              value={ms.portal_contact ? JSON.stringify({ name: ms.portal_contact.name, email: ms.portal_contact.email }) : ''}
+                              onChange={async e => {
+                                const val = e.target.value;
+                                const contact = val ? JSON.parse(val) : null;
+                                const u = { ...ms, portal_contact: contact };
+                                setMilestones(p => p.map(m => m.id === ms.id ? u : m));
+                                try { await upsertMilestone(u); } catch { /* run migration if column missing */ }
+                              }}
+                              style={{ fontSize: 12, padding: '3px 8px', width: 'auto', minWidth: 160 }}
+                              title="All task notifications for this milestone go to this contact by default"
+                            >
+                              <option value="">
+                                {(() => { const p = (clientRecord?.contacts || []).find(c => c.is_primary) || (clientRecord?.contacts || [])[0]; return p ? `${p.name} (primary)` : '— Primary contact —'; })()}
+                              </option>
+                              {(clientRecord?.contacts || []).map(c => (
+                                <option key={c.name} value={JSON.stringify({ name: c.name, email: c.email || null })}>{c.name}{!c.email ? ' (no email)' : ''}</option>
+                              ))}
+                            </select>
+                          </div>
+                        )}
                       </div>
 
                       {/* Row 3 – Status buttons */}
@@ -3142,6 +3103,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                           <div style={{ width: 110, fontSize: 9, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.06em', flexShrink: 0 }}>Assigned To</div>
                           <div style={{ width: 52, fontSize: 9, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.06em', flexShrink: 0 }}>Hrs</div>
                           <div style={{ width: 86, fontSize: 9, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.06em', flexShrink: 0 }}>Due Date</div>
+                          <div style={{ width: 120, fontSize: 9, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.06em', flexShrink: 0 }}>Recipient</div>
                           <div style={{ width: 70, fontSize: 9, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.06em', flexShrink: 0 }}>Mentions</div>
                           <div style={{ width: 130, fontSize: 9, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.06em', flexShrink: 0 }}>Milestone</div>
                           <div style={{ width: 96, fontSize: 9, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.06em', flexShrink: 0 }}>Actions</div>
@@ -3295,7 +3257,8 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                                     const lastEvent = [...chain].reverse().find(e => e.type === 'sent' || e.type === 'revised_sent');
                                     const isAwaiting = !task.approved_at && !task.rejected_at && !!lastEvent;
                                     const isUnsent   = !task.approved_at && !task.rejected_at && !lastEvent;
-                                    const portalEmail = (activeProject.contacts || []).find(c => c.is_primary) || (activeProject.contacts || [])[0]?.email || activeProject.client_email || '';
+                                    const _contacts2 = clientRecord?.contacts || [];
+                                    const portalEmail = _contacts2.find(c => c.is_primary)?.email || _contacts2[0]?.email || activeProject.client_email || '';
                                     const hasPortalEmail = !!(activeProject.share_token && portalEmail);
                                     return (
                                       <div style={{ fontSize: 10, marginTop: 2, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
@@ -3310,7 +3273,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                                             <span style={{ color: 'var(--text-faint)' }}>&#x2713; Completed {fmtDate(task.completed_at)}</span>
                                             {isUnsent && hasPortalEmail && (
                                               <button
-                                                onClick={() => { setExtraRecipients([]); setShowContactDropdown(false); setTaskCompleteEmail({ task, project: activeProject }); }}
+                                                onClick={() => { setExtraRecipients([]); setShowContactDropdown(false); setTaskCompleteEmail({ task, project: activeProject, ms }); }}
                                                 style={{ fontSize: 10, fontWeight: 800, padding: '2px 10px', borderRadius: 20, border: 'none', background: '#ef4444', color: '#fff', cursor: 'pointer', whiteSpace: 'nowrap', letterSpacing: '.02em' }}
                                               >Notify client</button>
                                             )}
@@ -3355,7 +3318,45 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                                   }}
                                   style={{ fontSize: 11, padding: '2px 5px', border: '1px solid var(--border)', borderRadius: 4, background: 'var(--surface)', width: 52, flexShrink: 0, color: 'var(--text)' }}
                                 />
-                                <span style={{ fontSize: 11, color: task.due_date ? 'var(--text-muted)' : 'var(--text-faint)', whiteSpace: 'nowrap', flexShrink: 0, width: 86 }}>{task.due_date ? fmtDate(task.due_date) : '—'}</span>
+                                <input
+                                  type="date"
+                                  value={task.due_date || ''}
+                                  onChange={async e => {
+                                    const due_date = e.target.value || null;
+                                    const updated = { ...task, due_date };
+                                    const patch = t => t.id === task.id ? updated : t;
+                                    setTasks(prev => prev.map(patch));
+                                    setAllTasks(prev => ({ ...prev, [activeProject.id]: (prev[activeProject.id] || []).map(patch) }));
+                                    await upsertProjectTask(updated);
+                                    await syncMilestoneDates(updated);
+                                  }}
+                                  style={{ fontSize: 11, padding: '2px 4px', border: '1px solid var(--border)', borderRadius: 4, background: 'var(--surface)', color: task.due_date ? 'var(--text-muted)' : 'var(--text-faint)', flexShrink: 0, width: 86 }}
+                                />
+                                {/* Portal recipient — task contact > milestone contact > primary contact */}
+                                {(() => {
+                                  const primaryC = (clientRecord?.contacts || []).find(c => c.is_primary) || (clientRecord?.contacts || [])[0];
+                                  const defaultC = ms.portal_contact?.name ? ms.portal_contact : primaryC;
+                                  return (
+                                    <select
+                                      value={task.portal_contact ? JSON.stringify({ name: task.portal_contact.name, email: task.portal_contact.email }) : ''}
+                                      onChange={async e => {
+                                        const val = e.target.value;
+                                        const contact = val ? JSON.parse(val) : null;
+                                        const patch = t => t.id === task.id ? { ...t, portal_contact: contact } : t;
+                                        setTasks(prev => prev.map(patch));
+                                        setAllTasks(prev => ({ ...prev, [activeProject.id]: (prev[activeProject.id] || []).map(patch) }));
+                                        await saveTaskPortalContact(task.id, contact);
+                                      }}
+                                      style={{ fontSize: 11, padding: '2px 4px', border: '1px solid var(--border)', borderRadius: 4, background: 'var(--surface)', color: 'var(--text)', flexShrink: 0, width: 120 }}
+                                      title="Assign to client portal recipient"
+                                    >
+                                      <option value="">{defaultC ? defaultC.name : '— No recipient —'}</option>
+                                      {(clientRecord?.contacts || []).map(c => (
+                                        <option key={c.name} value={JSON.stringify({ name: c.name, email: c.email || null })}>{c.name}{!c.email ? ' (no email)' : ''}</option>
+                                      ))}
+                                    </select>
+                                  );
+                                })()}
                                 {/* Mentions pill — colored when task appears in meeting notes */}
                                 <button
                                   onClick={() => setMentionsPanel(task)}
@@ -3503,13 +3504,13 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                                   <div style={{ display: 'flex', gap: 8, marginTop: 6, flexWrap: 'wrap', alignItems: 'center' }}>
                                     {isAwaiting && (
                                       <button
-                                        onClick={() => { setExtraRecipients([]); setShowContactDropdown(false); setTaskCompleteEmail({ task, project: activeProject }); }}
+                                        onClick={() => { setExtraRecipients([]); setShowContactDropdown(false); setTaskCompleteEmail({ task, project: activeProject, ms }); }}
                                         style={{ fontSize: 11, fontWeight: 700, padding: '4px 12px', borderRadius: 6, border: '1px solid #f59e0b', background: 'transparent', color: '#f59e0b', cursor: 'pointer', whiteSpace: 'nowrap' }}
                                       >Resend to client</button>
                                     )}
                                     {hasRejection && (
                                       <button
-                                        onClick={() => openResendModal(task, activeProject)}
+                                        onClick={() => openResendModal(task, activeProject, ms)}
                                         style={{ fontSize: 11, fontWeight: 700, padding: '4px 12px', borderRadius: 6, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer', whiteSpace: 'nowrap' }}
                                       >Send Revision {nextRevNum} →</button>
                                     )}
@@ -4561,8 +4562,15 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
 
       {/* Task complete — notify client email draft */}
       {taskCompleteEmail && (() => {
-        const { task, project } = taskCompleteEmail;
-        const primaryContact = (project.contacts || []).find(c => c.is_primary) || (project.contacts || [])[0];
+        const { task, project, ms: emailMs } = taskCompleteEmail;
+        // Priority: task's explicit portal_contact > milestone's portal_contact > project primary contact
+        const clientContacts = clientRecord?.contacts || project.contacts || [];
+        const defaultContact = clientContacts.find(c => c.is_primary) || clientContacts[0];
+        const primaryContact = task.portal_contact?.name
+          ? { name: task.portal_contact.name, email: task.portal_contact.email || '' }
+          : emailMs?.portal_contact?.name
+            ? { name: emailMs.portal_contact.name, email: emailMs.portal_contact.email || '' }
+            : defaultContact;
         const clientName   = (primaryContact?.name || project.client_name || project.contact_name || '').split(' ')[0] || 'there';
         const toEmail      = primaryContact?.email || project.client_email || '';
         const portalUrl    = project.share_token ? `${window.location.origin}/portal/${project.share_token}?task=${task.id}` : null;
@@ -4586,7 +4594,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
         ].join('');
         const ccEmails        = extraRecipients.map(c => c.email).filter(Boolean);
         const gmailUrl        = toEmail ? `https://mail.google.com/mail/?view=cm&to=${encodeURIComponent(toEmail)}&su=${encodeURIComponent(subject)}${ccEmails.length ? `&cc=${encodeURIComponent(ccEmails.join(','))}` : ''}` : null;
-        const allContacts = (project.contacts || []).filter(c => c.email && c.email !== toEmail && !extraRecipients.find(r => r.email === c.email));
+        const allContacts = (clientRecord?.contacts || project.contacts || []).filter(c => c.email && c.email !== toEmail && !extraRecipients.find(r => r.email === c.email));
 
         return (
           <div style={{ position: 'fixed', inset: 0, zIndex: 900, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -4709,7 +4717,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
       {/* ── Meeting summary email modal ── */}
       {meetingSummaryEmail && (() => {
         const { meeting, savedTasks, project, importNote } = meetingSummaryEmail;
-        const primaryContact = (project.contacts || []).find(c => c.is_primary) || (project.contacts || [])[0];
+        const primaryContact = (clientRecord?.contacts || project.contacts || []).find(c => c.is_primary) || (clientRecord?.contacts || project.contacts || [])[0];
         const clientName     = (primaryContact?.name || project.client_name || project.contact_name || '').split(' ')[0] || 'there';
         const toEmail        = primaryContact?.email || project.client_email || '';
         const companyLabel   = project.client_name || project.name || '';
@@ -4812,8 +4820,14 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
 
       {/* Resend revised update modal */}
       {resendEmail && (() => {
-        const { task, project } = resendEmail;
-        const primaryContact    = (project?.contacts || []).find(c => c.is_primary) || (project?.contacts || [])[0];
+        const { task, project, ms: resendMs } = resendEmail;
+        const _resendContacts   = clientRecord?.contacts || project?.contacts || [];
+        const _resendDefault    = _resendContacts.find(c => c.is_primary) || _resendContacts[0];
+        const primaryContact    = task.portal_contact?.name
+          ? { name: task.portal_contact.name, email: task.portal_contact.email || '' }
+          : resendMs?.portal_contact?.name
+            ? { name: resendMs.portal_contact.name, email: resendMs.portal_contact.email || '' }
+            : _resendDefault;
         const clientName        = (primaryContact?.name || project?.client_name || '').split(' ')[0] || 'there';
         const toEmail           = primaryContact?.email || project?.client_email || '';
         const companyLabel      = project?.client_name || project?.name || '';

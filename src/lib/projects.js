@@ -182,6 +182,16 @@ export async function upsertProjectTask(t) {
   return data;
 }
 
+// Saves portal_contact ({name, email}) for a task. Requires the column:
+//   ALTER TABLE project_tasks ADD COLUMN IF NOT EXISTS portal_contact jsonb;
+export async function saveTaskPortalContact(taskId, portalContact) {
+  const { error } = await supabase
+    .from('project_tasks')
+    .update({ portal_contact: portalContact })
+    .eq('id', taskId);
+  if (error) console.warn('[portal_contact] save failed — run migration if column is missing:', error.message);
+}
+
 export async function toggleTask(id, completed) {
   const update = {
     completed,

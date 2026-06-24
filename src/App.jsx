@@ -73,6 +73,7 @@ export default function App() {
   const [targetDealId, setTargetDealId] = useState(null);
   const [targetProjectId, setTargetProjectId] = useState(null);
   const [targetSignalCompany, setTargetSignalCompany] = useState(null);
+  const [targetClientName, setTargetClientName] = useState(null);
   const projectsGoHome                = useRef(null); // ProjectsPage registers its goHome fn here
 
   useEffect(() => {
@@ -108,6 +109,8 @@ export default function App() {
     setPage(newPage);
     if (newPage === 'signals') {
       if (secondArg) setTargetSignalCompany(secondArg);
+    } else if (newPage === 'clients') {
+      if (secondArg) setTargetClientName(secondArg);
     } else {
       if (secondArg) setTargetDealId(secondArg);
     }
@@ -157,7 +160,7 @@ export default function App() {
           </button>
         </div>
         <PageSlot active={page === 'clients'}>
-          <ClientsPage onNavigate={handleSetPage} refreshKey={pageKeys.clients || 0} icp={icp} />
+          <ClientsPage onNavigate={handleSetPage} refreshKey={pageKeys.clients || 0} icp={icp} targetClientName={targetClientName} onTargetClientConsumed={() => setTargetClientName(null)} />
         </PageSlot>
         <PageSlot active={page === 'signals'}>
           <SignalWatchPage onNavigate={handleSetPage} icp={icp} refreshKey={pageKeys.signals || 0} isActive={page === 'signals'} targetCompany={targetSignalCompany} onTargetCompanyConsumed={() => setTargetSignalCompany(null)} />

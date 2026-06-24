@@ -141,7 +141,9 @@ export default function DealsPage({ refreshKey = 0, targetDealId = null, onTarge
   const [proposalDraftPayload, setProposalDraftPayload] = useState(null); // { parsed, startDate, deal }
   const [showProspectImporter, setShowProspectImporter] = useState(false);
   const [prospectToast, setProspectToast] = useState(null); // { company, isNew }
-  const dragDealId = useRef(null);
+  const dragDealId  = useRef(null);
+  const mountedRef  = useRef(true);
+  useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; }; }, []);
 
   const load = useCallback(async () => {
     try {
@@ -280,8 +282,9 @@ export default function DealsPage({ refreshKey = 0, targetDealId = null, onTarge
       setIsDragging(false);
       setWonAnim({ dealId, phase: 'plant' });
       playWinSound();
-      setTimeout(() => setWonAnim({ dealId, phase: 'celebrate' }), 750);
+      setTimeout(() => { if (mountedRef.current) setWonAnim({ dealId, phase: 'celebrate' }); }, 750);
       setTimeout(async () => {
+        if (!mountedRef.current) return;
         setWonAnim(null);
         setDeals(prev => prev.map(d => d.id === dealId
           ? { ...d, stage: 'won', stage_entered_at: new Date().toISOString(), won_date: new Date().toISOString().slice(0, 10) }
@@ -340,11 +343,13 @@ export default function DealsPage({ refreshKey = 0, targetDealId = null, onTarge
     setLostAnim({ dealId, phase: 'fly' });
     // Phase 2: impact effects + sound (680ms–2150ms)
     setTimeout(() => {
+      if (!mountedRef.current) return;
       setLostAnim({ dealId, phase: 'impact' });
       playLoseSound();
     }, 680);
     // Done: update deal, clear animation
     setTimeout(async () => {
+      if (!mountedRef.current) return;
       setLostAnim(null);
       setDeals(prev => prev.map(d => d.id === dealId ? { ...d, stage: 'lost', stage_entered_at: new Date().toISOString() } : d));
       try { await moveStage(dealId, 'lost'); } catch { load(); }

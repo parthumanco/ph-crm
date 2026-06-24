@@ -41,7 +41,7 @@ function ddmyy(d) {
   return `${String(dt.getMonth() + 1).padStart(2, '0')}/${String(dt.getDate()).padStart(2, '0')}/${String(dt.getFullYear()).slice(-2)}`;
 }
 
-export default function ClientsPage({ onNavigate, refreshKey, icp }) {
+export default function ClientsPage({ onNavigate, refreshKey, icp, targetClientName = null, onTargetClientConsumed }) {
   const [clients, setClients]             = useState([]);
   const [search, setSearch]               = useState('');
   const [selected, setSelected]           = useState(null);
@@ -161,6 +161,14 @@ export default function ClientsPage({ onNavigate, refreshKey, icp }) {
       .catch(console.error)
       .finally(() => setLoadingList(false));
   }, [refreshKey]);
+
+  // ── Deep-link to a specific client by name ────────────────────────────────
+  useEffect(() => {
+    if (!targetClientName || clients.length === 0) return;
+    const match = clients.find(c => c.name?.toLowerCase() === targetClientName.toLowerCase());
+    if (match) setSelected(match.id);
+    onTargetClientConsumed?.();
+  }, [targetClientName, clients]);
 
   // ── Load detail + intel ───────────────────────────────────────────────────
   useEffect(() => {
