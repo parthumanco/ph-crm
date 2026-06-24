@@ -565,9 +565,22 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
   };
 
   const handleSetPrimary = async (targetContact) => {
-    if (!companyIntel?.id) return;
     try {
-      const updatedContacts = await setPrimaryCompanyContact(companyIntel.id, targetContact.name);
+      // Ensure company record exists
+      let intel = companyIntel;
+      if (!intel?.id) {
+        intel = await findOrCreateCompany(deal.company_name);
+        setCompanyIntel(intel);
+      }
+      // Ensure the contact exists in companies.contacts before setting primary
+      const existsInIntel = (intel.contacts || []).some(c => c.name?.trim().toLowerCase() === targetContact.name?.trim().toLowerCase());
+      if (!existsInIntel) {
+        const { name, email, title, linkedin, notes } = targetContact;
+        const upserted = await upsertCompanyContacts(intel.id, [{ name, email, title, linkedin, notes }]);
+        intel = { ...intel, contacts: upserted };
+        setCompanyIntel(intel);
+      }
+      const updatedContacts = await setPrimaryCompanyContact(intel.id, targetContact.name);
       setCompanyIntel(prev => ({ ...prev, contacts: updatedContacts }));
     } catch (e) {
       alert('Error updating primary contact: ' + e.message);
@@ -2758,7 +2771,7 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
                                         </a>
                                       )}
                                       <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center' }}>
-                                        {!c.is_primary && c.source !== 'deal' && (
+                                        {!c.is_primary && (
                                           <button
                                             onClick={e => { e.stopPropagation(); handleSetPrimary(c); }}
                                             style={{ fontSize: 10, fontWeight: 700, color: '#6d28d9', background: '#ede9fe', border: '1px solid #c4b5fd', borderRadius: 4, padding: '2px 8px', cursor: 'pointer', fontFamily: 'inherit' }}
