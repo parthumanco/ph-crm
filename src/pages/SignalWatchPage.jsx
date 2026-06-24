@@ -164,6 +164,7 @@ export default function SignalWatchPage({ onNavigate, icp, refreshKey = 0, isAct
   const [weeklyScanProgress, setWeeklyScanProgress] = useState({ done: 0, total: 0 });
   const [weeklyScanChanges, setWeeklyScanChanges]   = useState([]);
   const [weeklyScanError, setWeeklyScanError]       = useState(null);
+  const [siloAlerts, setSiloAlerts]                 = useState([]);
   const [lastWeeklyScan, setLastWeeklyScan]         = useState(null);
   const [serverScanNotification, setServerScanNotification] = useState(null);
   const [hqFillRunning, setHqFillRunning]   = useState(false);
@@ -259,6 +260,28 @@ export default function SignalWatchPage({ onNavigate, icp, refreshKey = 0, isAct
       }
     }
     load();
+
+    // Cross-silo reconciliation: Old Gold prospects whose company is already in Pipeline or Clients
+    async function checkCrossSilo() {
+      const [{ data: prospects }, { data: deals }, { data: clients }] = await Promise.all([
+        supabase.from('old_gold_prospects').select('id, name, company, status').not('company', 'is', null),
+        supabase.from('deals').select('id, company_name, stage').not('stage', 'eq', 'lost').not('stage', 'eq', 'won'),
+        supabase.from('clients').select('id, name'),
+      ]);
+      const dealMap   = new Map((deals   || []).map(d => [d.company_name?.toLowerCase().trim(), d]));
+      const clientMap = new Map((clients || []).map(c => [c.name?.toLowerCase().trim(), c]));
+      const alerts = [];
+      (prospects || []).forEach(p => {
+        const co = p.company?.toLowerCase().trim();
+        if (!co) return;
+        const deal   = dealMap.get(co);
+        const client = clientMap.get(co);
+        if (deal)   alerts.push({ prospect: p, type: 'pipeline', deal });
+        if (client) alerts.push({ prospect: p, type: 'client',   client });
+      });
+      setSiloAlerts(alerts);
+    }
+    checkCrossSilo();
   }, [refreshKey]);
 
   // ── CSV import ──────────────────────────────────────────────────────────────
@@ -1494,6 +1517,31 @@ export default function SignalWatchPage({ onNavigate, icp, refreshKey = 0, isAct
             </div>
             <div className="progress-bar-wrap">
               <div className="progress-bar" style={{ width: `${weeklyScanProgress.total ? Math.round((weeklyScanProgress.done / weeklyScanProgress.total) * 100) : 0}%`, background: '#ea580c' }} />
+            </div>
+          </div>
+        )}
+
+        {siloAlerts.length > 0 && (
+          <div style={{ marginBottom: 16, padding: '12px 16px', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 6 }}>
+            <div style={{ fontWeight: 700, fontSize: 13, color: '#92400e', marginBottom: 8 }}>
+              ⚡ Cross-silo alerts — {siloAlerts.length} Old Gold contact{siloAlerts.length !== 1 ? 's' : ''} with a company that's already elsewhere in the CRM
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {siloAlerts.map((a, i) => (
+                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: 12, color: '#78350f' }}>
+                    <strong>{a.prospect.name}</strong> <span style={{ fontWeight: 400 }}>({a.prospect.company})</span>
+                    {a.type === 'pipeline'
+                      ? <> — company is in Pipeline <span style={{ fontWeight: 600 }}>({a.deal.stage?.replace(/_/g, ' ')})</span></>
+                      : <> — company is a <span style={{ fontWeight: 600 }}>Client</span></>
+                    }
+                  </span>
+                  <button
+                    onClick={() => onNavigate && onNavigate(a.type === 'pipeline' ? 'deals' : 'clients', a.type === 'pipeline' ? a.deal.id : null)}
+                    style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 10, border: '1px solid #fbbf24', background: 'none', color: '#92400e', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                  >Open {a.type === 'pipeline' ? 'Deal' : 'Client'} →</button>
+                </div>
+              ))}
             </div>
           </div>
         )}

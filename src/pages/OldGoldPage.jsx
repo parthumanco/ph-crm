@@ -584,20 +584,27 @@ export default function OldGoldPage({ isActive = false, onNavigate, icp = {} }) 
   }, []);
   useEffect(() => { loadAllMeetings(); }, [loadAllMeetings]);
 
-  // Load all known companies (Pipeline deals + Company Intel) for the link dropdown
+  // Load all known companies (Pipeline deals + Company Intel + Clients) for link dropdown + list badges
   useEffect(() => {
     async function loadAllCompanies() {
-      const [{ data: companies }, { data: deals }] = await Promise.all([
+      const [{ data: companies }, { data: deals }, { data: clients }] = await Promise.all([
         supabase.from('companies').select('id, name').order('name'),
-        supabase.from('deals').select('id, company_name').not('company_name', 'is', null),
+        supabase.from('deals').select('id, company_name, stage').not('company_name', 'is', null).not('stage', 'eq', 'lost'),
+        supabase.from('clients').select('id, name'),
       ]);
       const map = new Map();
       (companies || []).forEach(c => {
         if (c.name) map.set(c.name.toLowerCase(), { name: c.name, source: 'intel', id: c.id });
       });
       (deals || []).forEach(d => {
-        if (d.company_name && !map.has(d.company_name.toLowerCase()))
-          map.set(d.company_name.toLowerCase(), { name: d.company_name, source: 'pipeline', id: d.id });
+        if (d.company_name)
+          map.set(d.company_name.toLowerCase(), { name: d.company_name, source: 'pipeline', id: d.id, stage: d.stage });
+      });
+      (clients || []).forEach(c => {
+        if (c.name && !map.has(c.name.toLowerCase()))
+          map.set(c.name.toLowerCase(), { name: c.name, source: 'client', id: c.id });
+        else if (c.name && map.get(c.name.toLowerCase())?.source !== 'pipeline')
+          map.set(c.name.toLowerCase(), { ...map.get(c.name.toLowerCase()), source: 'client', clientId: c.id });
       });
       setAllCompanies(Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name)));
     }
@@ -1383,6 +1390,13 @@ export default function OldGoldPage({ isActive = false, onNavigate, icp = {} }) 
                       <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', minWidth: 160 }}>{p.name}</div>
                       {p.company && <div style={{ fontSize: 12, color: 'var(--text-muted)', flex: 1 }}>{p.company}</div>}
                       {p.title && <div style={{ fontSize: 11, color: 'var(--text-faint)', flexShrink: 0 }}>{p.title}</div>}
+                      {(() => {
+                        const co = p.company ? allCompanies.find(c => c.name.toLowerCase() === p.company.toLowerCase()) : null;
+                        if (!co) return null;
+                        if (co.source === 'pipeline') return <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 10, background: '#fffbeb', color: '#92400e', border: '1px solid #fbbf24', flexShrink: 0 }}>⚡ Pipeline</span>;
+                        if (co.source === 'client') return <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 10, background: '#f0fdf4', color: '#065f46', border: '1px solid #bbf7d0', flexShrink: 0 }}>✓ Client</span>;
+                        return null;
+                      })()}
                       <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 20, background: sm.bg, color: sm.color, flexShrink: 0 }}>{sm.label}</span>
                       <span style={{ fontSize: 11, color: 'var(--text-faint)', flexShrink: 0, minWidth: 10 }}>{isConvArchived ? (isExpanded ? '▲' : '▼') : '→'}</span>
                     </div>
@@ -1715,7 +1729,17 @@ export default function OldGoldPage({ isActive = false, onNavigate, icp = {} }) 
 
             {/* Move to Pipeline row */}
             <div style={{ padding: '10px 18px', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-              {pipelineConfirm ? (
+              {companyPanel?.deal ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 20, background: '#fffbeb', color: '#92400e', border: '1px solid #fbbf24' }}>
+                    ⚡ Already in Pipeline{companyPanel.deal.stage ? ` · ${STAGES.find(s => s.id === companyPanel.deal.stage)?.label || companyPanel.deal.stage}` : ''}
+                  </span>
+                  <button
+                    onClick={() => { closeOverlay(); onNavigate && onNavigate('deals', companyPanel.deal.id); }}
+                    style={{ fontSize: 11, fontWeight: 600, padding: '4px 10px', borderRadius: 20, border: '1px solid var(--border)', background: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}
+                  >Open deal →</button>
+                </div>
+              ) : pipelineConfirm ? (
                 <>
                   <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600 }}>Stage:</span>
                   <select

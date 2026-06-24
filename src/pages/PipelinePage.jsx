@@ -60,6 +60,7 @@ export default function PipelinePage({ icp = {}, refreshKey = 0, onNavigate }) {
   const [contextMenu, setContextMenu] = useState(null);
   const [creatingDeal, setCreatingDeal] = useState({});
   const [rainAnim, setRainAnim]         = useState(null); // null | { company, phase:'grip'|'rain' }
+  const [existingDeals, setExistingDeals] = useState({}); // company_id → deal_id
 
   const entriesRef = useRef(entries);
   const companiesRef = useRef(companies);
@@ -70,9 +71,10 @@ export default function PipelinePage({ icp = {}, refreshKey = 0, onNavigate }) {
     setLoading(true);
     try {
       // Load entries and touches first
-      const [{ data: ents, error: e1 }, { data: tchs, error: e2 }] = await Promise.all([
+      const [{ data: ents, error: e1 }, { data: tchs, error: e2 }, { data: dealRows }] = await Promise.all([
         supabase.from('pipeline_entries').select('*').neq('status', 'won').neq('status', 'watch_list').order('created_at', { ascending: false }),
         supabase.from('touches').select('*'),
+        supabase.from('deals').select('id, company_id').not('stage', 'eq', 'lost'),
       ]);
       if (e1 || e2) console.error('Pipeline load error:', e1 || e2);
       // Fetch only the specific companies referenced by pipeline entries
@@ -89,6 +91,9 @@ export default function PipelinePage({ icp = {}, refreshKey = 0, onNavigate }) {
       const primMap = {};
       (ents || []).forEach(e => { primMap[e.id] = e.primary_contact_index || 0; });
       setPrimaryContacts(primMap);
+      const dealMap = {};
+      (dealRows || []).forEach(d => { if (d.company_id) dealMap[d.company_id] = d.id; });
+      setExistingDeals(dealMap);
     } catch (e) {
       console.error('Pipeline load error:', e);
     } finally {
@@ -459,14 +464,22 @@ export default function PipelinePage({ icp = {}, refreshKey = 0, onNavigate }) {
                           <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'nowrap' }}>
                             <button className="btn btn-secondary btn-xs" style={{ borderRadius: 20, whiteSpace: 'nowrap', padding: '4px 12px' }} onClick={() => setResponseModal({ entry, company })}>+ Reply</button>
                             <button className="btn btn-secondary btn-xs" style={{ borderRadius: 20, whiteSpace: 'nowrap', padding: '4px 12px' }} onClick={() => setNotesEntry(entry)}>+ Note</button>
-                            <button
-                              className="btn btn-primary btn-xs"
-                              style={{ borderRadius: 20, whiteSpace: 'nowrap', padding: '4px 12px' }}
-                              onClick={() => handleCreateDeal(entry, company)}
-                              disabled={!!creatingDeal[entry.id]}
-                            >
-                              {creatingDeal[entry.id] ? '…' : 'Move to Pipeline'}
-                            </button>
+                            {existingDeals[entry.company_id] ? (
+                              <button
+                                className="btn btn-secondary btn-xs"
+                                style={{ borderRadius: 20, whiteSpace: 'nowrap', padding: '4px 12px', background: '#fffbeb', color: '#92400e', border: '1px solid #fbbf24' }}
+                                onClick={() => onNavigate?.('deals', existingDeals[entry.company_id])}
+                              >⚡ View Deal →</button>
+                            ) : (
+                              <button
+                                className="btn btn-primary btn-xs"
+                                style={{ borderRadius: 20, whiteSpace: 'nowrap', padding: '4px 12px' }}
+                                onClick={() => handleCreateDeal(entry, company)}
+                                disabled={!!creatingDeal[entry.id]}
+                              >
+                                {creatingDeal[entry.id] ? '…' : 'Move to Pipeline'}
+                              </button>
+                            )}
                           </div>
                         </td>
                       </tr>

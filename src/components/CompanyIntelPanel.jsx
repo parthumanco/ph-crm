@@ -1,3 +1,4 @@
+import { useState } from 'react';
 // Shared "company intelligence" rendering — ICP/score cards, summary, recommended
 // angle, signal triggers, contact angles, and the full thesis (with entry contact,
 // risks, next step, source materials). Used by ClientsPage's Overview tab and
@@ -35,6 +36,7 @@ export function ddmyy(d) {
  * @param {string} emptyMessage - shown when `intel` is null/undefined
  */
 export default function CompanyIntelPanel({ intel, extraSources = [], emptyMessage }) {
+  const [triggersExpanded, setTriggersExpanded] = useState(false);
   if (!intel) {
     return (
       <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--text-faint)' }}>
@@ -76,6 +78,14 @@ export default function CompanyIntelPanel({ intel, extraSources = [], emptyMessa
         </div>
       )}
 
+      {/* Recommended Next Step — lifted above angle/triggers so it's immediately visible */}
+      {intel.thesis_next_step && (
+        <div style={{ padding: '10px 14px', background: '#f0fdf4', borderRadius: 9, border: '1px solid #bbf7d0' }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: '#059669', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 4 }}>Recommended Next Step</div>
+          <div style={{ fontSize: 13, color: '#065f46', lineHeight: 1.5 }}>{intel.thesis_next_step}</div>
+        </div>
+      )}
+
       {/* Recommended angle */}
       {intel.recommended_angle && (
         <div style={{ padding: '14px 16px', background: '#fefce8', borderRadius: 10, border: '1px solid #fef08a' }}>
@@ -88,11 +98,19 @@ export default function CompanyIntelPanel({ intel, extraSources = [], emptyMessa
       {(intel.triggers || []).length > 0 && (
         <div>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8, marginBottom: 10 }}>
-            <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em' }}>Signal Triggers ({intel.triggers.length})</div>
+            <button
+              onClick={() => setTriggersExpanded(x => !x)}
+              style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}
+            >
+              <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em' }}>
+                Signal Triggers ({intel.triggers.length})
+              </span>
+              <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>{triggersExpanded ? '▲' : '▼'}</span>
+            </button>
             {intel.scan_date && <span style={{ fontSize: 10, color: 'var(--text-faint)', whiteSpace: 'nowrap' }}>Last scanned: {ddmyy(intel.scan_date)}</span>}
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {intel.triggers.map((tr, i) => {
+            {intel.triggers.slice(0, triggersExpanded ? undefined : 2).map((tr, i) => {
               let t = tr;
               if (typeof tr === 'string') {
                 try { t = JSON.parse(tr); } catch { t = { detail: tr }; }
@@ -117,8 +135,35 @@ export default function CompanyIntelPanel({ intel, extraSources = [], emptyMessa
               );
             })}
           </div>
+          {intel.triggers.length > 2 && (
+            <button
+              onClick={() => setTriggersExpanded(x => !x)}
+              style={{ marginTop: 8, fontSize: 12, fontWeight: 600, color: 'var(--accent)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 0' }}
+            >
+              {triggersExpanded ? '▲ Show less' : `▼ Show ${intel.triggers.length - 2} more`}
+            </button>
+          )}
         </div>
       )}
+
+      {/* Primary Entry Point — shown when thesis exists, above the contacts list */}
+      {intel.thesis_built && (() => {
+        const primaryContact = (intel.contacts || []).find(c => c.is_primary);
+        const matchingAngle = primaryContact && (intel.contact_angles || []).find(ca => ca.name?.trim().toLowerCase() === primaryContact.name?.trim().toLowerCase());
+        const entry = primaryContact
+          ? { name: primaryContact.name, title: primaryContact.title, linkedin: primaryContact.linkedin, angle: matchingAngle?.angle, hook: matchingAngle?.hook }
+          : (intel.contact_angles || []).find(ca => ca.is_primary);
+        if (!entry) return null;
+        return (
+          <div style={{ padding: '14px 16px', background: '#f0fdf4', borderRadius: 10, border: '1px solid #bbf7d0' }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: '#059669', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 8 }}>Primary Entry Point</div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>{entry.name} {entry.title && <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>· {entry.title}</span>}</div>
+            {entry.linkedin && <a href={entry.linkedin} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: '#0077b5', textDecoration: 'none', display: 'block', marginTop: 2 }}>↗ LinkedIn</a>}
+            {entry.angle && <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 6, lineHeight: 1.5, fontStyle: 'italic' }}>"{entry.angle}"</div>}
+            {entry.hook && <div style={{ fontSize: 12, color: '#059669', marginTop: 6, lineHeight: 1.5 }}>Hook: {entry.hook}</div>}
+          </div>
+        );
+      })()}
 
       {/* Contacts — companies.contacts (the shared roster also shown on Watch
           List/Old Gold/Pipeline) merged with contact_angles for angle/hook text */}
@@ -161,26 +206,6 @@ export default function CompanyIntelPanel({ intel, extraSources = [], emptyMessa
           <div style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.8, whiteSpace: 'pre-wrap', padding: '14px 16px', background: 'var(--surface)', borderRadius: 10, border: '1px solid var(--border)' }}>
             {intel.thesis}
           </div>
-          {/* Entry contact — prefer the shared contacts roster's primary (kept
-              up to date by Watch List/Old Gold/Pipeline), fall back to the
-              thesis-derived contact_angles primary if no contacts exist yet */}
-          {(() => {
-            const primaryContact = (intel.contacts || []).find(c => c.is_primary);
-            const matchingAngle = primaryContact && (intel.contact_angles || []).find(ca => ca.name?.trim().toLowerCase() === primaryContact.name?.trim().toLowerCase());
-            const entry = primaryContact
-              ? { name: primaryContact.name, title: primaryContact.title, linkedin: primaryContact.linkedin, angle: matchingAngle?.angle, hook: matchingAngle?.hook }
-              : (intel.contact_angles || []).find(ca => ca.is_primary);
-            if (!entry) return null;
-            return (
-              <div style={{ padding: '14px 16px', background: '#f0fdf4', borderRadius: 10, border: '1px solid #bbf7d0' }}>
-                <div style={{ fontSize: 10, fontWeight: 700, color: '#059669', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 8 }}>Primary Entry Point</div>
-                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>{entry.name} {entry.title && <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>· {entry.title}</span>}</div>
-                {entry.linkedin && <a href={entry.linkedin} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: '#0077b5', textDecoration: 'none', display: 'block', marginTop: 2 }}>↗ LinkedIn</a>}
-                {entry.angle && <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 6, lineHeight: 1.5, fontStyle: 'italic' }}>"{entry.angle}"</div>}
-                {entry.hook && <div style={{ fontSize: 12, color: '#059669', marginTop: 6, lineHeight: 1.5 }}>Hook: {entry.hook}</div>}
-              </div>
-            );
-          })()}
           {/* Risks */}
           {(intel.thesis_risks || []).length > 0 && (
             <div style={{ padding: '12px 16px', background: '#fff7ed', borderRadius: 9, border: '1px solid #fed7aa' }}>
@@ -188,13 +213,6 @@ export default function CompanyIntelPanel({ intel, extraSources = [], emptyMessa
               <ul style={{ margin: 0, paddingLeft: 16, display: 'flex', flexDirection: 'column', gap: 4 }}>
                 {intel.thesis_risks.map((r, i) => <li key={i} style={{ fontSize: 12, color: '#78350f', lineHeight: 1.5 }}>{typeof r === 'string' ? r : r.risk || r.label || JSON.stringify(r)}</li>)}
               </ul>
-            </div>
-          )}
-          {/* Next step */}
-          {intel.thesis_next_step && (
-            <div style={{ padding: '10px 14px', background: 'var(--surface)', borderRadius: 9, border: '1px solid var(--border)' }}>
-              <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 4 }}>Recommended Next Step</div>
-              <div style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.5 }}>{intel.thesis_next_step}</div>
             </div>
           )}
           {/* Source materials — the human-attached links/notes the AI was actually given to write this thesis from */}
