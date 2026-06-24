@@ -6,6 +6,7 @@ import {
 } from '../lib/clients';
 import { fetchDocuments, fetchCompanyFiles, docType, deleteCompanyFile } from '../lib/documents';
 import { deleteProject, restoreProject, upsertProject } from '../lib/projects';
+import { fetchOldGoldForCompany, OG_STATUS } from '../lib/oldGold';
 import DocumentEditor from '../components/DocumentEditor';
 import CompanyIntelPanel from '../components/CompanyIntelPanel';
 import ContactsPanel from '../components/ContactsPanel';
@@ -100,6 +101,10 @@ export default function ClientsPage({ onNavigate, refreshKey, icp }) {
   const [aiLoading, setAiLoading]   = useState(false);
   const aiEndRef                    = useRef(null);
 
+  // Old Gold history tab
+  const [ogHistory,        setOgHistory]        = useState(null); // null=not loaded
+  const [ogHistoryLoading, setOgHistoryLoading] = useState(false);
+
   // Documents + files tab
   const [clientDocs,    setClientDocs]    = useState([]);
   const [clientFiles,   setClientFiles]   = useState([]);
@@ -117,6 +122,19 @@ export default function ClientsPage({ onNavigate, refreshKey, icp }) {
       .catch(e => console.warn('[ClientsPage] thesis auto-refresh failed:', e.message))
       .finally(() => { autoRefreshingRef.current = false; });
   };
+
+  // ── Load Old Gold history when that tab is first opened ───────────────────
+  useEffect(() => {
+    if (tab !== 'oldgold' || ogHistory !== null || ogHistoryLoading || !detail?.client?.name) return;
+    setOgHistoryLoading(true);
+    fetchOldGoldForCompany(detail.client.name)
+      .then(data => { setOgHistory(data); })
+      .catch(() => { setOgHistory([]); })
+      .finally(() => setOgHistoryLoading(false));
+  }, [tab, detail, ogHistory, ogHistoryLoading]);
+
+  // Reset OG history when client changes
+  useEffect(() => { setOgHistory(null); }, [selected]);
 
   // ── Load documents + files for current client ─────────────────────────────
   useEffect(() => {
@@ -147,6 +165,7 @@ export default function ClientsPage({ onNavigate, refreshKey, icp }) {
   // ── Load detail + intel ───────────────────────────────────────────────────
   useEffect(() => {
     if (!selected) return;
+    let cancelled = false;
     setLoadingDetail(true);
     setDetail(null);
     setIntel(null);
@@ -154,13 +173,19 @@ export default function ClientsPage({ onNavigate, refreshKey, icp }) {
     setTab('overview');
 
     fetchClientDetail(selected).then(d => {
+      if (cancelled) return;
       setDetail(d);
       setEditDraft({ name: d.client.name, website: d.client.website || '', linkedin_url: d.client.linkedin_url || '', notes: d.client.notes || '' });
       // Also fetch matching companies row for intelligence data
-      fetchCompanyIntel(d.client.name).then(setIntel).catch(() => setIntel(null));
+      fetchCompanyIntel(d.client.name).then(data => {
+        if (cancelled) return;
+        setIntel(data);
+      }).catch(() => { if (!cancelled) setIntel(null); });
     })
-    .catch(console.error)
-    .finally(() => setLoadingDetail(false));
+    .catch(e => { if (!cancelled) console.error(e); })
+    .finally(() => { if (!cancelled) setLoadingDetail(false); });
+
+    return () => { cancelled = true; };
   }, [selected]);
 
   const filtered = clients.filter(c => c.name.toLowerCase().includes(search.toLowerCase()));
@@ -254,7 +279,9 @@ export default function ClientsPage({ onNavigate, refreshKey, icp }) {
 
   const handleDeleteItem = async (id) => {
     await deleteClientItem(id);
-    setDetail(d => ({ ...d, items: d.items.filter(i => i.id !== id) }));
+    const remaining = (detail?.items || []).filter(i => i.id !== id);
+    setDetail(d => ({ ...d, items: remaining }));
+    triggerThesisRefresh({ items: remaining });
   };
 
   const handleDeepScan = async () => {
@@ -493,6 +520,7 @@ ${allContacts.map(c => `<div class="contact-row"><div><strong>${esc(c.name)}</st
       await deleteCompanyFile(file.id, file.storage_path);
       setClientFiles(prev => prev.filter(f => f.id !== file.id));
       setConfirmDeleteClientFile(null);
+      triggerThesisRefresh();
     } catch (e) {
       alert('Error deleting file: ' + e.message);
     } finally {
@@ -604,7 +632,7 @@ ${allContacts.map(c => `<div class="contact-row"><div><strong>${esc(c.name)}</st
                       >
                         {buildingThesis
                           ? <><span style={{ display: 'inline-block', width: 10, height: 10, border: '2px solid var(--accent)', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} /> Building…</>
-                          : intel?.thesis_built ? 'Expand Research' : 'Build Thesis'}
+                          : intel?.thesis_built ? 'Refresh Thesis' : 'Build Thesis'}
                       </button>
                     </>
                   )}
@@ -620,6 +648,7 @@ ${allContacts.map(c => `<div class="contact-row"><div><strong>${esc(c.name)}</st
                   { id: 'projects',  label: `Projects${detail.projects.length > 0 ? ` (${detail.projects.length})` : ''}` },
                   { id: 'contacts',  label: 'Contacts' },
                   { id: 'history',   label: `History${historyItems.length > 0 ? ` (${historyItems.length})` : ''}` },
+                  { id: 'oldgold',   label: `🪙 Old Gold${ogHistory?.length ? ` (${ogHistory.length})` : ''}` },
                   { id: 'research',  label: `Research${detail.items.length > 0 ? ` (${detail.items.length})` : ''}` },
                   { id: 'documents', label: `📄 Documents${clientDocs.length + clientFiles.length > 0 ? ` (${clientDocs.length + clientFiles.length})` : ''}` },
                   { id: 'ai',        label: '✦ Ask AI' },
@@ -841,6 +870,64 @@ ${allContacts.map(c => `<div class="contact-row"><div><strong>${esc(c.name)}</st
                       ))}
                     </div>
                   )}
+                </div>
+              )}
+
+              {/* ── Old Gold History ── */}
+              {tab === 'oldgold' && (
+                <div>
+                  {ogHistoryLoading && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '20px 0', color: 'var(--text-faint)', fontSize: 13 }}>
+                      <span className="spinner" /> Loading Old Gold history…
+                    </div>
+                  )}
+                  {!ogHistoryLoading && ogHistory?.length === 0 && (
+                    <div style={{ fontSize: 13, color: 'var(--text-faint)', fontStyle: 'italic', padding: '20px 0' }}>
+                      No Old Gold conversations found for {detail.client.name}.
+                    </div>
+                  )}
+                  {!ogHistoryLoading && ogHistory?.map(p => {
+                    const sm = OG_STATUS[p.status];
+                    const lastMtg = p.meetings[0];
+                    return (
+                      <div key={p.id} style={{ background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 8, padding: '12px 16px', marginBottom: 10 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                          <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>{p.name}</span>
+                          {sm && <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 9, background: sm.bg, color: sm.color, border: `1px solid ${sm.color}40` }}>{sm.label}</span>}
+                          <span style={{ fontSize: 11, color: 'var(--text-faint)', marginLeft: 'auto' }}>{p.meetings.length} meeting{p.meetings.length !== 1 ? 's' : ''}</span>
+                        </div>
+                        {lastMtg && (
+                          <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: p.openTasks.length > 0 ? 6 : 0 }}>
+                            <span style={{ fontWeight: 600 }}>Last meeting:</span> {new Date(lastMtg.meeting_date + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                            {lastMtg.summary ? ` — ${lastMtg.summary}` : ''}
+                          </div>
+                        )}
+                        {p.meetings.length > 1 && (
+                          <div style={{ fontSize: 11, color: 'var(--text-faint)', marginBottom: p.openTasks.length > 0 ? 6 : 0 }}>
+                            {p.meetings.slice(1).map(m => (
+                              <div key={m.id} style={{ paddingLeft: 8, borderLeft: '2px solid #fde68a', marginBottom: 2 }}>
+                                {new Date(m.meeting_date + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                                {m.summary ? ` — ${m.summary.slice(0, 120)}${m.summary.length > 120 ? '…' : ''}` : ''}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {p.openTasks.length > 0 && (
+                          <div>
+                            <div style={{ fontSize: 10, fontWeight: 700, color: '#92400e', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 4 }}>Open Next Steps</div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                              {p.openTasks.map(t => (
+                                <div key={t.id} style={{ fontSize: 12, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                                  <span style={{ color: '#f59e0b' }}>→</span> {t.title}
+                                  {t.due_date && <span style={{ fontSize: 10, color: 'var(--text-faint)', marginLeft: 'auto' }}>Due {new Date(t.due_date + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               )}
 

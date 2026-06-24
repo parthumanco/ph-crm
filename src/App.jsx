@@ -70,8 +70,9 @@ export default function App() {
   const [pageKeys, setPageKeys]       = useState({});
   const [icp, setIcp]                 = useState(DEFAULT_ICP);
   const [teamMembers, setTeamMembers] = useState(DEFAULT_TEAM_MEMBERS);
-  const [targetDealId, setTargetDealId] = useState(null); // deep-link into a specific deal card
-  const [targetProjectId, setTargetProjectId] = useState(null); // deep-link into a specific project card
+  const [targetDealId, setTargetDealId] = useState(null);
+  const [targetProjectId, setTargetProjectId] = useState(null);
+  const [targetSignalCompany, setTargetSignalCompany] = useState(null);
   const projectsGoHome                = useRef(null); // ProjectsPage registers its goHome fn here
 
   useEffect(() => {
@@ -102,10 +103,14 @@ export default function App() {
   // Increment the refresh key for a page every time the user navigates to it,
   // so each page's load useEffect re-runs on every tab switch.
   // Optional second arg: dealId to deep-link into a specific deal card on DealsPage.
-  function handleSetPage(newPage, dealId = null, projectId = null) {
+  function handleSetPage(newPage, secondArg = null, projectId = null) {
     setPageKeys(prev => ({ ...prev, [newPage]: (prev[newPage] || 0) + 1 }));
     setPage(newPage);
-    if (dealId) setTargetDealId(dealId);
+    if (newPage === 'signals') {
+      if (secondArg) setTargetSignalCompany(secondArg);
+    } else {
+      if (secondArg) setTargetDealId(secondArg);
+    }
     if (projectId) setTargetProjectId(projectId);
     localStorage.setItem('ph_current_page', newPage);
     window.history.pushState({ page: newPage }, '', '#' + newPage);
@@ -155,7 +160,7 @@ export default function App() {
           <ClientsPage onNavigate={handleSetPage} refreshKey={pageKeys.clients || 0} icp={icp} />
         </PageSlot>
         <PageSlot active={page === 'signals'}>
-          <SignalWatchPage onNavigate={handleSetPage} icp={icp} refreshKey={pageKeys.signals || 0} isActive={page === 'signals'} />
+          <SignalWatchPage onNavigate={handleSetPage} icp={icp} refreshKey={pageKeys.signals || 0} isActive={page === 'signals'} targetCompany={targetSignalCompany} onTargetCompanyConsumed={() => setTargetSignalCompany(null)} />
         </PageSlot>
         <PageSlot active={page === 'pipeline'}>
           <PipelinePage icp={icp} refreshKey={pageKeys.pipeline || 0} onNavigate={handleSetPage} />
@@ -173,7 +178,7 @@ export default function App() {
           <DiscoverPage icp={icp} refreshKey={pageKeys.discover || 0} />
         </PageSlot>
         <PageSlot active={page === 'oldgold'}>
-          <OldGoldPage isActive={page === 'oldgold'} onNavigate={handleSetPage} />
+          <OldGoldPage isActive={page === 'oldgold'} onNavigate={handleSetPage} icp={icp} />
         </PageSlot>
         <PageSlot active={page === 'report'}>
           <WeeklyReportPage icp={icp} refreshKey={pageKeys.report || 0} />

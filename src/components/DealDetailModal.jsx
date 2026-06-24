@@ -61,6 +61,8 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
   const [granolaResult, setGranolaResult]   = useState(null); // { count, error } | null
   const [granolaKeyAvailable, setGranolaKeyAvailable] = useState(false);
 
+  const [thesisModalOpen, setThesisModalOpen] = useState(false);
+
   // Research tab state
   const [companyIntel, setCompanyIntel]   = useState(null);
   const [intelLoading, setIntelLoading]   = useState(false);
@@ -71,10 +73,13 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
   const [thesisMigrationError, setThesisMigrationError] = useState(null);
   const [autoRefreshing, setAutoRefreshing] = useState(false); // silent background thesis refresh
   const autoRefreshingRef = useRef(false); // sync ref so rapid callers see the in-flight flag immediately
+  const mountedRef                         = useRef(true);  // guards async setState after unmount
   const thesisLogEndRef                   = useRef(null);
   const intelFetchedRef                   = useRef(false); // prevents double-fetch on tab switch
   const dealRef                            = useRef(deal);  // always-current deal for async callbacks
   useEffect(() => { dealRef.current = deal; }, [deal]);
+  useEffect(() => { setThesisModalOpen(false); intelFetchedRef.current = false; }, [deal?.id]);
+  useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; }; }, []);
 
   // Notes state (for quick save from Meetings tab)
   const [savingNotes, setSavingNotes]     = useState(false);
@@ -245,11 +250,13 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
           // If no next step yet, the background AI job from Active Outreach may still
           // be in flight — poll once after 4s to pick it up
           if (!intel?.thesis_next_step) {
-            setTimeout(() => {
+            const t = setTimeout(() => {
+              if (!mountedRef.current) return;
               fetchCompanyIntel(deal.company_name)
-                .then(refreshed => { if (refreshed?.thesis_next_step) setCompanyIntel(refreshed); })
+                .then(refreshed => { if (mountedRef.current && refreshed?.thesis_next_step) setCompanyIntel(refreshed); })
                 .catch(() => {});
             }, 4000);
+            return () => clearTimeout(t);
           }
         })
         .catch(() => {});
@@ -430,7 +437,9 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
 
   const removeActivity = async (id) => {
     await deleteActivity(id);
-    setActivities(as => as.filter(a => a.id !== id));
+    const updated = activities.filter(a => a.id !== id);
+    setActivities(updated);
+    silentRefreshThesis(undefined, updated);
   };
 
   const removeTask = async (id) => {
@@ -514,7 +523,8 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
     setSavingNotes(true);
     try {
       const saved = await upsertDeal(deal);
-      onSaved(saved); // update parent state without closing modal
+      onSaved(saved);
+      silentRefreshThesis();
     } catch (e) {
       alert('Error saving notes: ' + e.message);
     } finally {
@@ -700,12 +710,14 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
 
   const sendEmail = async () => {
     if (!composeEmail) return;
-    // Open native mail client with pre-filled fields
-    const params = new URLSearchParams();
-    if (composeDraft.subject) params.set('subject', composeDraft.subject);
-    if (composeDraft.body)    params.set('body',    composeDraft.body);
-    const qs = params.toString();
-    window.open(`mailto:${composeEmail.to}${qs ? '?' + qs : ''}`, '_blank');
+    // Open Gmail compose with pre-filled fields
+    const gmailParams = new URLSearchParams();
+    gmailParams.set('view', 'cm');
+    gmailParams.set('fs', '1');
+    if (composeEmail.to)       gmailParams.set('to',   composeEmail.to);
+    if (composeDraft.subject)  gmailParams.set('su',   composeDraft.subject);
+    if (composeDraft.body)     gmailParams.set('body', composeDraft.body);
+    window.open(`https://mail.google.com/mail/?${gmailParams.toString()}`, '_blank');
 
     // Log as email activity
     if (deal.id && composeDraft.subject) {
@@ -974,14 +986,14 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
         null,
       );
       const { _thesisSaveError, ...cleanResult } = result;
-      if (!_thesisSaveError) {
+      if (!_thesisSaveError && mountedRef.current) {
         setCompanyIntel(prev => ({ ...prev, ...cleanResult }));
       }
     } catch (e) {
       console.warn('[Auto-refresh] Thesis refresh failed:', e.message);
     } finally {
       autoRefreshingRef.current = false;
-      setAutoRefreshing(false);
+      if (mountedRef.current) setAutoRefreshing(false);
     }
   };
 
@@ -1208,13 +1220,6 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
                   onClick={exportToPdf}
                   style={{ fontSize: 11, fontWeight: 700, padding: '3px 0', width: 96, borderRadius: 20, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-muted)', cursor: 'pointer' }}
                 >Export PDF</button>
-                <button
-                  onClick={moveToWatchList}
-                  disabled={movingBack}
-                  style={{ fontSize: 11, fontWeight: 700, padding: '3px 0', width: 96, borderRadius: 20, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-muted)', cursor: 'pointer' }}
-                >
-                  {movingBack ? 'Moving…' : 'Watch List'}
-                </button>
               </div>
             </div>
           )}
@@ -1791,6 +1796,14 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
                           <p style={{ fontSize: 12, color: '#7c2d12', lineHeight: 1.6, margin: 0 }}>{companyIntel.recommended_angle}</p>
                         </div>
                       )}
+
+                      {/* See full thesis pill */}
+                      {companyIntel.thesis && (
+                        <button
+                          onClick={() => setThesisModalOpen(true)}
+                          style={{ fontSize: 11, fontWeight: 700, padding: '5px 14px', borderRadius: 20, border: '1px solid #5b21b6', background: '#f5f3ff', color: '#5b21b6', cursor: 'pointer', marginTop: 4 }}
+                        >See Full Thesis →</button>
+                      )}
                     </div>
                   )}
 
@@ -2356,7 +2369,7 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
                       {buildingThesis
                         ? <><span style={{ display: 'inline-block', width: 10, height: 10, border: '2px solid var(--text-muted)', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} /> Running…</>
                         : companyIntel?.thesis_built
-                          ? 'Update Research'
+                          ? 'Refresh Thesis'
                           : 'Build Thesis'
                       }
                       </button>
@@ -2592,7 +2605,7 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
                         onClick={handleBuildThesis}
                         style={{ background: 'linear-gradient(135deg, #7c3aed, #4f46e5)', color: '#fff', border: 'none', borderRadius: 8, padding: '9px 20px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
                       >
-                        {companyIntel?.thesis_built ? 'Update Research' : 'Build Thesis'}
+                        {companyIntel?.thesis_built ? 'Refresh Thesis' : 'Build Thesis'}
                       </button>
                     </div>
                   )}
@@ -2904,9 +2917,16 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
             </>
           )}
 
-          {/* ── Delete Deal footer ── */}
+          {/* ── Footer: Watch List + Delete ── */}
           {deal.id && (
-            <div style={{ marginTop: 32, paddingTop: 16, borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'flex-end' }}>
+            <div style={{ marginTop: 32, paddingTop: 16, borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              {tab === 'nextsteps' && (
+                <button
+                  onClick={moveToWatchList}
+                  disabled={movingBack}
+                  style={{ fontSize: 11, fontWeight: 600, padding: '4px 14px', borderRadius: 20, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-muted)', cursor: 'pointer' }}
+                >{movingBack ? 'Moving…' : '← Move Back to Watch List'}</button>
+              )}
               {confirmDeleteDeal ? (
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                   <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Permanently delete this deal?</span>
@@ -3026,38 +3046,84 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
       />
     )}
 
+    {/* ── Full Thesis modal ── */}
+    {thesisModalOpen && companyIntel && (
+      <div
+        onClick={() => setThesisModalOpen(false)}
+        style={{ position: 'fixed', inset: 0, zIndex: 700, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}
+      >
+        <div
+          onClick={e => e.stopPropagation()}
+          style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, width: '50vw', minWidth: 520, maxWidth: 780, maxHeight: '85vh', display: 'flex', flexDirection: 'column', boxShadow: '0 24px 80px rgba(0,0,0,0.35)' }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 22px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
+            <div>
+              <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--text)' }}>{deal.company_name} — Investment Thesis</div>
+              <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 2 }}>Shared across Watch List, Pipeline & Old Gold</div>
+            </div>
+            <button onClick={() => setThesisModalOpen(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 20, color: 'var(--text-faint)', padding: '2px 6px', lineHeight: 1 }}>✕</button>
+          </div>
+          <div style={{ overflowY: 'auto', padding: '20px 22px', flex: 1, display: 'flex', flexDirection: 'column', gap: 20 }}>
+            {companyIntel.thesis && (
+              <div>
+                <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 8 }}>Thesis</div>
+                <div style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.7 }}>{companyIntel.thesis}</div>
+              </div>
+            )}
+            {companyIntel.thesis_risks?.length > 0 && (
+              <div>
+                <div style={{ fontSize: 10, fontWeight: 700, color: '#ef4444', textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 8 }}>Risks</div>
+                <ul style={{ margin: 0, paddingLeft: 16, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {companyIntel.thesis_risks.map((r, i) => (
+                    <li key={i} style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.6 }}>{typeof r === 'string' ? r : r.risk || r.label || JSON.stringify(r)}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {companyIntel.thesis_next_step && (
+              <div>
+                <div style={{ fontSize: 10, fontWeight: 700, color: '#10b981', textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 8 }}>Recommended Next Step</div>
+                <div style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.7 }}>{companyIntel.thesis_next_step}</div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    )}
+
     {/* ── Compose Email overlay ── */}
     {composeEmail && (
       <div
-        style={{ position: 'fixed', inset: 0, zIndex: 500, display: 'flex', alignItems: 'flex-end', justifyContent: 'flex-end', pointerEvents: 'none' }}
+        onClick={e => { if (e.target === e.currentTarget) { setComposeEmail(null); setComposeTaskId(null); setNotifyCompleteAfterSend(false); } }}
+        style={{ position: 'fixed', inset: 0, zIndex: 600, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
       >
         <div style={{
-          pointerEvents: 'all',
-          width: 460, maxWidth: '96vw',
+          width: '50vw', minWidth: 520, maxWidth: 780,
+          height: '70vh', minHeight: 480,
           background: 'var(--bg)',
           border: '1px solid var(--border)',
-          borderRadius: '12px 12px 0 0',
-          boxShadow: '0 -8px 40px rgba(0,0,0,0.18)',
-          marginRight: 24,
+          borderRadius: 14,
+          boxShadow: '0 24px 80px rgba(0,0,0,0.35)',
           display: 'flex', flexDirection: 'column',
+          overflow: 'hidden',
         }}>
           {/* Compose header */}
-          <div style={{ padding: '12px 16px', background: '#1e293b', borderRadius: '12px 12px 0 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <span style={{ fontSize: 13, fontWeight: 700, color: '#f1f5f9' }}>✉️ New Email</span>
-            <button onClick={() => { setComposeEmail(null); setComposeTaskId(null); setNotifyCompleteAfterSend(false); }} style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: 18, cursor: 'pointer', lineHeight: 1 }}>×</button>
+          <div style={{ padding: '14px 20px', background: '#1e293b', borderRadius: '14px 14px 0 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
+            <span style={{ fontSize: 14, fontWeight: 700, color: '#f1f5f9' }}>✉️ New Email</span>
+            <button onClick={() => { setComposeEmail(null); setComposeTaskId(null); setNotifyCompleteAfterSend(false); }} style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: 20, cursor: 'pointer', lineHeight: 1 }}>×</button>
           </div>
 
-          <div style={{ padding: '0 0 4px', borderBottom: '1px solid var(--border)' }}>
+          <div style={{ borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
             {/* To */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px', borderBottom: '1px solid var(--border)' }}>
-              <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', width: 44, flexShrink: 0 }}>To</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 20px', borderBottom: '1px solid var(--border)' }}>
+              <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', width: 52, flexShrink: 0 }}>To</span>
               <span style={{ fontSize: 13, color: 'var(--text)', fontWeight: 500 }}>
                 {composeEmail.toName ? `${composeEmail.toName} <${composeEmail.to}>` : composeEmail.to}
               </span>
             </div>
             {/* Subject */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px' }}>
-              <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', width: 44, flexShrink: 0 }}>Subject</label>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 20px' }}>
+              <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', width: 52, flexShrink: 0 }}>Subject</label>
               <input
                 autoFocus
                 type="text"
@@ -3076,13 +3142,13 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
             placeholder={`Hi ${composeEmail.toName?.split(' ')[0] || 'there'},\n\n`}
             style={{
               flex: 1, border: 'none', outline: 'none', resize: 'none',
-              padding: '12px 14px', fontSize: 13, lineHeight: 1.6,
-              background: 'transparent', color: 'var(--text)', minHeight: 180, fontFamily: 'inherit',
+              padding: '16px 20px', fontSize: 13, lineHeight: 1.7,
+              background: 'transparent', color: 'var(--text)', fontFamily: 'inherit',
             }}
           />
 
           {/* Footer */}
-          <div style={{ padding: '10px 14px', borderTop: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ padding: '12px 20px', borderTop: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
             <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>
               {deal.id && composeDraft.subject ? '✓ Will log as email activity' : 'Add a subject to log as activity'}
             </span>
@@ -3090,22 +3156,19 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
               <button
                 onClick={() => {
                   setComposeEmail(null);
-                  // Always clear task association — otherwise the next unrelated send
-                  // would call markDealTaskSent on the wrong task
                   setComposeTaskId(null);
                   if (notifyCompleteAfterSend) {
                     setNotifyCompleteAfterSend(false);
-                    // keep notifyPromptTaskId so user can re-trigger
                   }
                 }}
-                style={{ fontSize: 12, fontWeight: 600, padding: '6px 14px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-muted)', cursor: 'pointer' }}
+                style={{ fontSize: 12, fontWeight: 600, padding: '7px 16px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-muted)', cursor: 'pointer' }}
               >
                 Discard
               </button>
               <button
                 onClick={sendEmail}
                 disabled={loggingEmail}
-                style={{ fontSize: 12, fontWeight: 700, padding: '6px 16px', borderRadius: 7, border: 'none', background: 'var(--accent)', color: '#fff', cursor: loggingEmail ? 'not-allowed' : 'pointer', opacity: loggingEmail ? 0.7 : 1 }}
+                style={{ fontSize: 12, fontWeight: 700, padding: '7px 18px', borderRadius: 7, border: 'none', background: 'var(--accent)', color: '#fff', cursor: loggingEmail ? 'not-allowed' : 'pointer', opacity: loggingEmail ? 0.7 : 1 }}
               >
                 {loggingEmail ? 'Sending…' : 'Send ↗'}
               </button>

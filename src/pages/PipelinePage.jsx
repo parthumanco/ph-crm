@@ -1,8 +1,8 @@
-import { useState, useEffect, useCallback, Fragment } from 'react';
+import { useState, useEffect, useCallback, useRef, Fragment } from 'react';
 import { supabase } from '../lib/supabase';
 import EmailDraftModal from '../components/EmailDraftModal';
 import { ENGAGEMENT_META, ENGAGEMENT_OPTIONS, generateQuickNextStep } from '../lib/anthropic';
-import { upsertDeal, addActivity, addTask } from '../lib/deals';
+import { upsertDeal, addActivity, addTask, daysSince } from '../lib/deals';
 
 const STATUS_LABELS = {
   active:     { label: 'Active',     cls: 'badge-blue'  },
@@ -20,10 +20,6 @@ const TOUCH_LABELS = {
   5: { label: 'T5 · Close',     type: 'email'    },
 };
 
-function daysSince(dateStr) {
-  if (!dateStr) return null;
-  return Math.floor((Date.now() - new Date(dateStr).getTime()) / 86400000);
-}
 
 function nextTouchDue(entryTouches) {
   const sent = entryTouches.filter(t => t.status === 'sent');
@@ -65,6 +61,11 @@ export default function PipelinePage({ icp = {}, refreshKey = 0, onNavigate }) {
   const [creatingDeal, setCreatingDeal] = useState({});
   const [rainAnim, setRainAnim]         = useState(null); // null | { company, phase:'grip'|'rain' }
 
+  const entriesRef = useRef(entries);
+  const companiesRef = useRef(companies);
+  useEffect(() => { entriesRef.current = entries; }, [entries]);
+  useEffect(() => { companiesRef.current = companies; }, [companies]);
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -101,11 +102,11 @@ export default function PipelinePage({ icp = {}, refreshKey = 0, onNavigate }) {
     await supabase.from('pipeline_entries').update({ status, updated_at: new Date().toISOString() }).eq('id', entryId);
     setEntries(es => es.map(e => e.id === entryId ? { ...e, status } : e));
     if (status !== 'active') {
-      const entry   = entries.find(e => e.id === entryId);
-      const company = entry ? companies[entry.company_id] : null;
+      const entry   = entriesRef.current.find(e => e.id === entryId);
+      const company = entry ? companiesRef.current[entry.company_id] : null;
       if (entry && company) handleCreateDeal(entry, company);
     }
-  }, [entries, companies]);
+  }, []);
 
   const updateEngagement = useCallback(async (companyId, engType) => {
     setCompanies(prev => ({ ...prev, [companyId]: { ...prev[companyId], engagement_type: engType } }));
@@ -132,7 +133,7 @@ export default function PipelinePage({ icp = {}, refreshKey = 0, onNavigate }) {
       console.error('markTouchSent error:', e);
       alert('Error marking touch as sent: ' + e.message);
     }
-  }, [load]);
+  }, []);
 
   const handleTouchRightClick = useCallback((e, touch) => {
     if (!touch?.id) return;

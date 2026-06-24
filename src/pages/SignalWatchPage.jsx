@@ -1,8 +1,9 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
 import { scanBatch, scanDeepDive, weeklyRescanBatch, geocodeHqBatch, enrichContactsWithSearch, scanLinkedInPosts, ENGAGEMENT_META, ENGAGEMENT_OPTIONS } from '../lib/anthropic';
 import { loadLastWeeklyScan, saveLastWeeklyScan, isWeeklyScanDue, markWeeklyScanViewed } from '../lib/settings';
 import { mergeContactAngles, mergeTriggers, sortContactsOldGoldFirst } from '../lib/clients';
+import { fetchOldGoldForCompany, OG_STATUS } from '../lib/oldGold';
 import { parseCsvLine } from '../lib/csv';
 import { upsertDeal, moveStage } from '../lib/deals';
 
@@ -126,7 +127,7 @@ function parseCSV(text) {
   }).filter(Boolean);
 }
 
-export default function SignalWatchPage({ onNavigate, icp, refreshKey = 0, isActive = false }) {
+export default function SignalWatchPage({ onNavigate, icp, refreshKey = 0, isActive = false, targetCompany = null, onTargetCompanyConsumed }) {
   // companies: array of {id (db uuid), _tempId, name, website, hq, contacts, ...scan fields}
   const [companies, setCompanies]     = useState([]);
   const [scanning, setScanning]       = useState({});
@@ -1089,23 +1090,24 @@ export default function SignalWatchPage({ onNavigate, icp, refreshKey = 0, isAct
     });
   };
 
-  const sorted = [...companies].sort((a, b) => {
-    // Pin the actively deep-scanning company to the top always
-    const aKey = a.id || a._tempId;
-    const bKey = b.id || b._tempId;
-    if (aKey === activeScanId) return -1;
-    if (bKey === activeScanId) return 1;
-    if (sortBy === 'score') return (b.overall_score || 0) - (a.overall_score || 0);
-    if (sortBy === 'icp')   return (b.icp_score || 0)    - (a.icp_score || 0);
-    if (sortBy === 'name')  return a.name.localeCompare(b.name);
-    if (sortBy === 'distance' && a.lat && b.lat) {
-      return haversineDistance(ANDOVER_LAT, ANDOVER_LNG, a.lat, a.lng) -
-             haversineDistance(ANDOVER_LAT, ANDOVER_LNG, b.lat, b.lng);
-    }
-    return 0;
-  });
-
-  const filtered = applyFilters(sorted, activeScanId);
+  const filtered = useMemo(() => {
+    const sorted = [...companies].sort((a, b) => {
+      // Pin the actively deep-scanning company to the top always
+      const aKey = a.id || a._tempId;
+      const bKey = b.id || b._tempId;
+      if (aKey === activeScanId) return -1;
+      if (bKey === activeScanId) return 1;
+      if (sortBy === 'score') return (b.overall_score || 0) - (a.overall_score || 0);
+      if (sortBy === 'icp')   return (b.icp_score || 0)    - (a.icp_score || 0);
+      if (sortBy === 'name')  return a.name.localeCompare(b.name);
+      if (sortBy === 'distance' && a.lat && b.lat) {
+        return haversineDistance(ANDOVER_LAT, ANDOVER_LNG, a.lat, a.lng) -
+               haversineDistance(ANDOVER_LAT, ANDOVER_LNG, b.lat, b.lng);
+      }
+      return 0;
+    });
+    return applyFilters(sorted, activeScanId);
+  }, [companies, filters, sortBy, search, activeScanId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Companies in the current filtered view that are eligible for deep scan
   const filteredDeepScanQueue = filtered.filter(c => {
@@ -1136,6 +1138,23 @@ export default function SignalWatchPage({ onNavigate, icp, refreshKey = 0, isAct
       cardRefs.current[id]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }, 100);
   };
+
+  const [pendingJumpName, setPendingJumpName] = useState(null);
+
+  useEffect(() => {
+    if (!targetCompany) return;
+    setPendingJumpName(targetCompany);
+    onTargetCompanyConsumed?.();
+  }, [targetCompany]);
+
+  // Fire the jump once companies are loaded and there's a pending target
+  useEffect(() => {
+    if (!pendingJumpName || companies.length === 0) return;
+    setTimeout(() => {
+      jumpToCompany(pendingJumpName);
+      setPendingJumpName(null);
+    }, 150);
+  }, [pendingJumpName, companies.length]);
 
   const toolbarLabel = txt => (
     <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.07em', textTransform: 'uppercase', color: 'var(--text-muted)', minWidth: 48, flexShrink: 0 }}>{txt}</span>
@@ -1718,12 +1737,25 @@ function CompanyCard({ company, distMiles, status, isScanning, scanningAll, week
   const isDone    = status === 'Done';
   const isQueued  = anyBatchRunning && status === 'Queued' && !isScanning && !isDone && !company._error;
 
+  const [ogData, setOgData] = useState(null); // null=not loaded yet
+  const [ogLoading, setOgLoading] = useState(false);
+  const [thesisOpen, setThesisOpen] = useState(false);
+
   useEffect(() => {
     if (forceExpanded) setExpanded(true);
   }, [forceExpanded]);
 
+  useEffect(() => {
+    if (!expanded || ogData !== null || ogLoading || !company.name) return;
+    setOgLoading(true);
+    fetchOldGoldForCompany(company.name)
+      .then(data => { setOgData(data); setOgLoading(false); })
+      .catch(() => { setOgData([]); setOgLoading(false); });
+  }, [expanded]);
+
   const handleSetExpanded = (val) => {
     setExpanded(val);
+    if (!val) setThesisOpen(false);
     onExpandedChange?.(val);
   };
 
@@ -2026,6 +2058,16 @@ function CompanyCard({ company, distMiles, status, isScanning, scanningAll, week
             </div>
           )}
 
+          {/* Thesis pill */}
+          {company.thesis && (
+            <div style={{ marginBottom: 12 }}>
+              <button
+                onClick={() => setThesisOpen(true)}
+                style={{ fontSize: 11, fontWeight: 700, padding: '5px 14px', borderRadius: 20, border: '1px solid #5b21b6', background: '#f5f3ff', color: '#5b21b6', cursor: 'pointer' }}
+              >See Full Thesis →</button>
+            </div>
+          )}
+
           {/* Contacts (merged with angles) */}
           <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
             <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--text-muted)', letterSpacing: '.06em', textTransform: 'uppercase', marginBottom: 8 }}>Contacts</div>
@@ -2107,6 +2149,44 @@ function CompanyCard({ company, distMiles, status, isScanning, scanningAll, week
             <AddContactForm companyId={company.id} existingContacts={company.contacts || []} onSaved={onUpdateContacts} />
           </div>
 
+          {/* ── Old Gold Activity ── */}
+          {(ogLoading || (ogData && ogData.length > 0)) && (
+            <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12, marginTop: 4 }}>
+              <div style={{ fontSize: 11, fontWeight: 800, color: '#92400e', letterSpacing: '.06em', textTransform: 'uppercase', marginBottom: 8 }}>🪙 Old Gold Activity</div>
+              {ogLoading ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--text-faint)' }}>
+                  <span className="spinner" style={{ width: 12, height: 12 }} /> Loading conversations…
+                </div>
+              ) : ogData.map(p => {
+                const sm = OG_STATUS[p.status];
+                const lastMtg = p.meetings[0];
+                return (
+                  <div key={p.id} style={{ padding: '8px 10px', background: '#fffbeb', borderRadius: 6, border: '1px solid #fde68a', marginBottom: 6 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: (lastMtg || p.openTasks.length > 0) ? 4 : 0 }}>
+                      <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>{p.name}</span>
+                      {sm && <span style={{ fontSize: 10, fontWeight: 700, padding: '1px 7px', borderRadius: 9, background: sm.bg, color: sm.color, border: `1px solid ${sm.color}40` }}>{sm.label}</span>}
+                      <span style={{ fontSize: 11, color: 'var(--text-faint)', marginLeft: 'auto' }}>{p.meetings.length} meeting{p.meetings.length !== 1 ? 's' : ''}</span>
+                    </div>
+                    {lastMtg && (
+                      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: p.openTasks.length > 0 ? 4 : 0 }}>
+                        Last: {new Date(lastMtg.meeting_date + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                        {lastMtg.summary ? ` — ${lastMtg.summary.slice(0, 100)}${lastMtg.summary.length > 100 ? '…' : ''}` : ''}
+                      </div>
+                    )}
+                    {p.openTasks.length > 0 && (
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                        {p.openTasks.slice(0, 3).map(t => (
+                          <span key={t.id} style={{ fontSize: 10, padding: '2px 8px', borderRadius: 9, background: '#fef3c7', color: '#92400e', border: '1px solid #fde68a' }}>↳ {t.title}</span>
+                        ))}
+                        {p.openTasks.length > 3 && <span style={{ fontSize: 10, color: 'var(--text-faint)', alignSelf: 'center' }}>+{p.openTasks.length - 3} more</span>}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
           {/* Export footer */}
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16, paddingTop: 12, borderTop: '1px solid var(--border-light)' }}>
             <button
@@ -2128,6 +2208,51 @@ function CompanyCard({ company, distMiles, status, isScanning, scanningAll, week
       {hasResult && !expanded && (
         <div style={{ padding: '6px 18px', fontSize: 11, color: 'var(--text-faint)', cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSetExpanded(true)}>
           {(company.triggers || []).length} trigger{(company.triggers || []).length !== 1 ? 's' : ''} · Click to expand
+        </div>
+      )}
+
+      {/* Thesis modal */}
+      {thesisOpen && (
+        <div
+          onClick={() => setThesisOpen(false)}
+          style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, width: '100%', maxWidth: 700, maxHeight: '85vh', display: 'flex', flexDirection: 'column', boxShadow: '0 24px 80px rgba(0,0,0,0.35)' }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 22px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--text)' }}>{company.name} — Investment Thesis</div>
+                <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 2 }}>Shared across Watch List, Pipeline & Old Gold</div>
+              </div>
+              <button onClick={() => setThesisOpen(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 20, color: 'var(--text-faint)', padding: '2px 6px', lineHeight: 1 }}>✕</button>
+            </div>
+            <div style={{ overflowY: 'auto', padding: '20px 22px', flex: 1, display: 'flex', flexDirection: 'column', gap: 20 }}>
+              {company.thesis && (
+                <div>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 8 }}>Thesis</div>
+                  <div style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.7 }}>{company.thesis}</div>
+                </div>
+              )}
+              {company.thesis_risks?.length > 0 && (
+                <div>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: '#ef4444', textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 8 }}>Risks</div>
+                  <ul style={{ margin: 0, paddingLeft: 16, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    {company.thesis_risks.map((r, i) => (
+                      <li key={i} style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.7 }}>{typeof r === 'string' ? r : r.risk || r.label || r.title || JSON.stringify(r)}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {company.thesis_next_step && (
+                <div>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: '#10b981', textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 8 }}>Recommended Next Step</div>
+                  <div style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.7 }}>{company.thesis_next_step}</div>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       )}
     </div>

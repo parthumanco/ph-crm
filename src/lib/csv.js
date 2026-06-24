@@ -4,7 +4,7 @@
 export function parseCsvLine(line) {
   const vals = [];
   let i = 0;
-  while (i <= line.length) {
+  while (i < line.length) {
     if (line[i] === '"') {
       let val = ''; i++;
       while (i < line.length) {

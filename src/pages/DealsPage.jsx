@@ -273,7 +273,7 @@ export default function DealsPage({ refreshKey = 0, targetDealId = null, onTarge
     const dealId = e.dataTransfer.getData('dealId');
     if (!dealId) return;
     const deal = deals.find(d => d.id === dealId);
-    if (!deal || deal.stage === stageId) return;
+    if (!deal || deal.stage === stageId) return; // also guards against re-Won drag creating duplicate project
 
     // 🏆 Won — trigger arcade celebration
     if (stageId === 'won') {

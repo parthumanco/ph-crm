@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { saveProjectMeeting } from '../lib/projects';
-import { findOrCreateCompany, enrichCompanyContact, upsertCompanyContacts } from '../lib/clients';
+import { findOrCreateCompany, enrichCompanyContact, upsertCompanyContacts, runBuildThesis } from '../lib/clients';
+import { STAGES, upsertDeal } from '../lib/deals';
 import ContactDossier from '../components/ContactDossier';
 import { parseCsvRows } from '../lib/csv';
 
@@ -105,6 +106,11 @@ const fmtDate = d => {
 
 const BLANK_PROSPECT = { name: '', company: '', title: '', email: '', linkedin: '', notes: '', status: 'warm' };
 
+const MOMENT_CATEGORY_ICON = {
+  pets: '🐾', family: '👨‍👩‍👧', health: '🏥', hobbies: '🎯',
+  sports: '🏆', milestone: '🎉', professional: '💼', other: '💬',
+};
+
 // ── File helpers (outside component — no state deps) ──────────────────────────
 function stripRtf(rtf) {
   let s = rtf;
@@ -130,7 +136,61 @@ function readFileText(file) {
   });
 }
 
-export default function OldGoldPage({ isActive = false, onNavigate }) {
+function ProspectForm({ draft, setDraft, allCompanies, onSave, saving, onCancel, onDone, autoSaveStatus }) {
+  const isEditMode = !!onDone;
+  return (
+    <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: 20, marginBottom: 20 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
+        {[['name','Name *','text'],['title','Title','text'],['email','Email','email'],['linkedin','LinkedIn URL','url']].map(([field, label, type]) => (
+          <div key={field} style={field === 'name' ? { gridColumn: '1/-1' } : {}}>
+            <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 3 }}>{label}</label>
+            <input type={type} value={draft[field] || ''} onChange={e => setDraft(d => ({ ...d, [field]: e.target.value }))} style={{ width: '100%', fontSize: 13 }} />
+          </div>
+        ))}
+        <div style={{ gridColumn: '1/-1' }}>
+          <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 3 }}>Company</label>
+          <input
+            list="og-company-datalist"
+            value={draft.company || ''}
+            onChange={e => setDraft(d => ({ ...d, company: e.target.value }))}
+            placeholder="Type to search existing companies…"
+            style={{ width: '100%', fontSize: 13 }}
+          />
+          <datalist id="og-company-datalist">
+            {(allCompanies || []).map(c => <option key={c.name} value={c.name} label={c.source === 'pipeline' ? '⚡ Pipeline' : '🧠 Company Intel'} />)}
+          </datalist>
+        </div>
+        <div>
+          <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 3 }}>Status</label>
+          <select value={draft.status || 'warm'} onChange={e => setDraft(d => ({ ...d, status: e.target.value }))} style={{ width: '100%', fontSize: 13 }}>
+            {STATUS_OPTIONS.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
+          </select>
+        </div>
+        <div style={{ gridColumn: '1/-1' }}>
+          <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 3 }}>Notes</label>
+          <textarea rows={2} value={draft.notes || ''} onChange={e => setDraft(d => ({ ...d, notes: e.target.value }))} style={{ width: '100%', fontSize: 12, lineHeight: 1.5 }} />
+        </div>
+      </div>
+      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', alignItems: 'center' }}>
+        {isEditMode ? (
+          <>
+            <span style={{ fontSize: 11, color: autoSaveStatus === 'saved' ? '#10b981' : autoSaveStatus === 'saving' ? 'var(--text-faint)' : autoSaveStatus === 'error' ? '#ef4444' : 'transparent', transition: 'color .2s' }}>
+              {autoSaveStatus === 'saving' ? 'Saving…' : autoSaveStatus === 'saved' ? 'Saved ✓' : autoSaveStatus === 'error' ? 'Save failed' : '·'}
+            </span>
+            <button onClick={onDone} style={{ fontSize: 12, fontWeight: 700, padding: '5px 16px', borderRadius: 6, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer' }}>Done</button>
+          </>
+        ) : (
+          <>
+            <button onClick={onCancel} style={{ fontSize: 12, padding: '5px 14px', borderRadius: 6, border: '1px solid var(--border)', background: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}>Cancel</button>
+            <button onClick={onSave} disabled={saving || !draft.name?.trim()} style={{ fontSize: 12, fontWeight: 700, padding: '5px 16px', borderRadius: 6, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer' }}>{saving ? 'Saving…' : 'Save'}</button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+export default function OldGoldPage({ isActive = false, onNavigate, icp = {} }) {
   // ── State ─────────────────────────────────────────────────────────────────
   const [prospects,   setProspects]   = useState([]);
   const [meetings,    setMeetings]    = useState([]);   // for active prospect
@@ -161,6 +221,11 @@ export default function OldGoldPage({ isActive = false, onNavigate }) {
   const [newTaskTitle, setNewTaskTitle] = useState('');
   const [newTaskDue,   setNewTaskDue]   = useState('');
   const [addingTask,   setAddingTask]   = useState(false);
+  const [deleteConfirmId, setDeleteConfirmId] = useState(null);
+  const [savedStack, setSavedStack] = useState([]);
+  const [autoSaveStatus, setAutoSaveStatus] = useState('idle'); // 'idle' | 'saving' | 'saved' | 'error'
+  const autoSaveTimer = useRef(null);
+  const hasEdited = useRef(false);
 
   // Quick-drop analysis (no contact required)
   const [dropDragging,   setDropDragging]   = useState(false);
@@ -186,12 +251,28 @@ export default function OldGoldPage({ isActive = false, onNavigate }) {
   const archiveConversation = (pid) => setConvArchivedIds(prev => { const n = new Set(prev); n.add(pid); localStorage.setItem('og_conv_archived', JSON.stringify([...n])); return n; });
   const unarchiveConversation = (pid) => setConvArchivedIds(prev => { const n = new Set(prev); n.delete(pid); localStorage.setItem('og_conv_archived', JSON.stringify([...n])); return n; });
 
+  const [companyPanel,        setCompanyPanel]        = useState(null);
+  const [companyPanelLoading, setCompanyPanelLoading] = useState(false);
+
+  // Thesis
+  const [thesisBuilding, setThesisBuilding] = useState(false);
+  const [thesisError,    setThesisError]    = useState('');
+  const [thesisModal,    setThesisModal]    = useState(null); // { thesis, risks, nextStep } | null
+
+  // Move to Pipeline
+  const [pipelineConfirm,   setPipelineConfirm]   = useState(null); // { stage } | null
+  const [movingToPipeline,  setMovingToPipeline]  = useState(false);
+  const [pipelineError,     setPipelineError]     = useState('');
+
   // Archived contacts (soft-delete) — "Delete contact" archives rather than
   // permanently deletes, and can be restored from this section.
   const [archivedProspects, setArchivedProspects] = useState([]);
   const [loadingArchived,   setLoadingArchived]   = useState(false);
   const [showArchived,      setShowArchived]      = useState(false);
   const [restoringId,       setRestoringId]       = useState(null);
+
+  // Load error (shown at top of page body if prospects fail to load)
+  const [loadError, setLoadError] = useState('');
 
   // CSV import (e.g. a LinkedIn "My Connections" export)
   const [importingCsv, setImportingCsv] = useState(false);
@@ -414,29 +495,31 @@ export default function OldGoldPage({ isActive = false, onNavigate }) {
   // ── Data fetching ─────────────────────────────────────────────────────────
   const loadProspects = useCallback(async () => {
     setLoading(true);
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('old_gold_prospects')
       .select('*')
       .is('archived_at', null)
       .order('created_at', { ascending: false });
+    if (error) { setLoadError('Failed to load contacts: ' + error.message); setLoading(false); return; }
     setProspects(data || []);
     setLoading(false);
   }, []);
 
   const loadArchivedProspects = useCallback(async () => {
     setLoadingArchived(true);
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('old_gold_prospects')
       .select('*')
       .not('archived_at', 'is', null)
       .order('archived_at', { ascending: false });
+    if (error) { setLoadError('Failed to load contacts: ' + error.message); setLoadingArchived(false); return; }
     setArchivedProspects(data || []);
     setLoadingArchived(false);
   }, []);
 
   const loadDetail = useCallback(async (prospect) => {
     setDetailLoading(true);
-    // Load meetings first so we can also query tasks by meeting_id (more reliable than prospect_id alone)
+    // Load meetings first so we can also query tasks by meeting_id
     const { data: mtgs } = await supabase
       .from('old_gold_meetings')
       .select('*')
@@ -454,11 +537,35 @@ export default function OldGoldPage({ isActive = false, onNavigate }) {
     }
     const results = await Promise.all(queries);
     const seen = new Set();
-    const merged = results
+    const dbTasks = results
       .flatMap(r => r.data || [])
       .filter(t => { if (seen.has(t.id)) return false; seen.add(t.id); return true; })
       .sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
-    setTasks(merged);
+
+    // Also surface tasks from meeting action_items JSON that never made it to old_gold_tasks
+    // (silent save failures, older imports, etc.) — dedup by lowercased title
+    const dbTitles = new Set(dbTasks.map(t => t.title?.trim().toLowerCase()));
+    const fallbackTasks = [];
+    (mtgs || []).forEach(mtg => {
+      (mtg.action_items || []).forEach(ai => {
+        if (ai.type && ai.type !== 'task') return;
+        const key = ai.title?.trim().toLowerCase();
+        if (!key || dbTitles.has(key)) return;
+        dbTitles.add(key);
+        fallbackTasks.push({
+          id: `mtg-${mtg.id}-${key}`,
+          prospect_id: prospect.id,
+          meeting_id: mtg.id,
+          title: ai.title,
+          due_date: ai.due_date || null,
+          notes: ai.owner ? `Owner: ${ai.owner}` : '',
+          completed: false,
+          _fromMeeting: true, // flag so we don't try to toggle/delete in DB by this id
+        });
+      });
+    });
+
+    setTasks([...dbTasks, ...fallbackTasks]);
     setDetailLoading(false);
   }, []);
 
@@ -500,8 +607,28 @@ export default function OldGoldPage({ isActive = false, onNavigate }) {
     setEditingProspect(false);
     setShowImport(false);
     setDossierContact(null);
+    setCompanyPanel(null);
     loadDetail(p);
     loadDossierContact(p);
+    loadCompanyPanel(p.company);
+  };
+
+  const loadCompanyPanel = async (companyName) => {
+    if (!companyName?.trim()) { setCompanyPanel(null); return; }
+    setCompanyPanelLoading(true);
+    try {
+      const [{ data: wlRows }, { data: dealRows }, { data: clientRows }] = await Promise.all([
+        supabase.from('companies').select('*').ilike('name', companyName.trim()).limit(1),
+        supabase.from('deals').select('id, company_name, stage, value').ilike('company_name', companyName.trim()).not('stage', 'eq', 'lost').order('created_at', { ascending: false }).limit(1),
+        supabase.from('clients').select('id, name, projects(id, name, status, archived_at)').ilike('name', companyName.trim()).limit(1),
+      ]);
+      setCompanyPanel({ watchlist: wlRows?.[0] || null, deal: dealRows?.[0] || null, client: clientRows?.[0] || null });
+    } catch (e) {
+      console.error('loadCompanyPanel:', e);
+      setCompanyPanel(null);
+    } finally {
+      setCompanyPanelLoading(false);
+    }
   };
 
   // Look up the matching entry in companies.contacts (shared with Watch List /
@@ -532,24 +659,52 @@ export default function OldGoldPage({ isActive = false, onNavigate }) {
     }
   };
 
+  const handleBuildThesis = async () => {
+    if (!active?.company?.trim()) { alert('Add a company for this contact first.'); return; }
+    const companyName = active.company.trim();
+    setThesisBuilding(true);
+    setThesisError('');
+    try {
+      const company = await findOrCreateCompany(companyName);
+      await runBuildThesis(company.id, company, icp, {}, () => {});
+      // Only refresh panel if overlay is still open for the same contact
+      if (active?.company?.trim() === companyName) await loadCompanyPanel(companyName);
+    } catch (e) {
+      setThesisError('Build failed: ' + e.message);
+    } finally {
+      setThesisBuilding(false);
+    }
+  };
+
+  const handleMoveToPipeline = useCallback(async () => {
+    if (!active || !pipelineConfirm) return;
+    setMovingToPipeline(true);
+    setPipelineError('');
+    try {
+      const deal = await upsertDeal({
+        company_name:  active.company || '',
+        contact_name:  active.name    || '',
+        contact_email: active.email   || '',
+        stage:         pipelineConfirm.stage,
+      });
+      closeOverlay();
+      onNavigate && onNavigate('deals', deal.id);
+    } catch (e) {
+      setPipelineError('Error: ' + e.message);
+      setMovingToPipeline(false);
+    }
+  }, [active, pipelineConfirm, closeOverlay, onNavigate]);
+
   // ── Prospect CRUD ─────────────────────────────────────────────────────────
   const handleSaveProspect = async () => {
     if (!prospectDraft.name.trim()) return;
     setSaving(true);
     try {
-      if (editingProspect && active) {
-        const { data, error } = await supabase.from('old_gold_prospects').update({ ...prospectDraft, updated_at: new Date().toISOString() }).eq('id', active.id).select().single();
-        if (error) throw new Error(error.message);
-        setActive(data);
-        setProspects(prev => prev.map(p => p.id === data.id ? data : p));
-        setEditingProspect(false);
-      } else {
-        const { data, error } = await supabase.from('old_gold_prospects').insert(prospectDraft).select().single();
-        if (error) throw new Error(error.message);
-        setProspects(prev => [data, ...prev]);
-        openProspect(data);
-        setAddingProspect(false);
-      }
+      const { data, error } = await supabase.from('old_gold_prospects').insert(prospectDraft).select().single();
+      if (error) throw new Error(error.message);
+      setProspects(prev => [data, ...prev]);
+      openProspect(data);
+      setAddingProspect(false);
       setProspectDraft(BLANK_PROSPECT);
     } catch (e) {
       alert('Error saving contact: ' + e.message);
@@ -558,13 +713,68 @@ export default function OldGoldPage({ isActive = false, onNavigate }) {
     }
   };
 
+  // Autosave contact edits with 800ms debounce
+  useEffect(() => {
+    if (!editingProspect || !active || !hasEdited.current) return;
+    if (!prospectDraft.name?.trim()) return;
+    const targetId = active.id; // capture so the async callback always writes the right row
+    clearTimeout(autoSaveTimer.current);
+    setAutoSaveStatus('saving');
+    autoSaveTimer.current = setTimeout(async () => {
+      try {
+        const { data, error } = await supabase.from('old_gold_prospects').update({ ...prospectDraft, updated_at: new Date().toISOString() }).eq('id', targetId).select().single();
+        if (error) throw error;
+        setActive(prev => prev?.id === targetId ? data : prev);
+        setProspects(prev => prev.map(p => p.id === data.id ? data : p));
+        setAutoSaveStatus('saved');
+        setTimeout(() => setAutoSaveStatus(s => s === 'saved' ? 'idle' : s), 2500);
+      } catch {
+        setAutoSaveStatus('error');
+      }
+    }, 800);
+  }, [prospectDraft, editingProspect, active]);
+
+  const handleDoneEditing = async () => {
+    clearTimeout(autoSaveTimer.current);
+    if (hasEdited.current && prospectDraft.name?.trim() && active) {
+      setAutoSaveStatus('saving');
+      try {
+        const { data, error } = await supabase.from('old_gold_prospects').update({ ...prospectDraft, updated_at: new Date().toISOString() }).eq('id', active.id).select().single();
+        if (error) throw error;
+        setActive(data);
+        setProspects(prev => prev.map(p => p.id === data.id ? data : p));
+      } catch (e) {
+        alert('Error saving contact: ' + e.message);
+        return;
+      }
+    }
+    setEditingProspect(false);
+    setAutoSaveStatus('idle');
+    setProspectDraft(BLANK_PROSPECT);
+    hasEdited.current = false;
+  };
+
+  const closeOverlay = useCallback(async () => {
+    clearTimeout(autoSaveTimer.current);
+    if (editingProspect && hasEdited.current && prospectDraft.name?.trim() && active) {
+      await supabase.from('old_gold_prospects').update({ ...prospectDraft, updated_at: new Date().toISOString() }).eq('id', active.id);
+    }
+    setActive(null); setMeetings([]); setTasks([]); setDossierContact(null); setCompanyPanel(null);
+    setEditingProspect(false); setAutoSaveStatus('idle'); setProspectDraft(BLANK_PROSPECT);
+    hasEdited.current = false;
+    setThesisBuilding(false); setThesisError(''); setThesisModal(null);
+    setPipelineConfirm(null); setMovingToPipeline(false); setPipelineError('');
+    setDeleteConfirmId(null);
+  }, [editingProspect, active, prospectDraft]);
+
   // Archives (never permanently deletes) a contact — hides it from the active
   // list and meeting feed, but it stays fully intact and restorable from the
   // "Archived contacts" section. Meetings/tasks are untouched either way.
   const handleArchiveProspect = async () => {
     if (!active || !window.confirm(`Archive ${active.name}? Their meetings and tasks stay intact, and you can restore them anytime from the Archived contacts section.`)) return;
     const archived_at = new Date().toISOString();
-    await supabase.from('old_gold_prospects').update({ archived_at }).eq('id', active.id);
+    const { error } = await supabase.from('old_gold_prospects').update({ archived_at }).eq('id', active.id);
+    if (error) { alert('Could not archive contact: ' + error.message); return; }
     setProspects(prev => prev.filter(p => p.id !== active.id));
     setArchivedProspects(prev => [{ ...active, archived_at }, ...prev]);
     setActive(null);
@@ -642,6 +852,7 @@ export default function OldGoldPage({ isActive = false, onNavigate }) {
 
       // Tag each unique company for Watch List and merge this person into its contacts
       let companiesTagged = 0;
+      let failedCount = 0;
       for (const [companyName, people] of peopleByCompany) {
         try {
           const company = await findOrCreateCompany(companyName);
@@ -651,14 +862,19 @@ export default function OldGoldPage({ isActive = false, onNavigate }) {
           await upsertCompanyContacts(company.id, people);
           companiesTagged++;
         } catch (e) {
+          failedCount++;
           console.warn('[Old Gold import] Failed to tag company for Watch List:', companyName, e.message);
         }
       }
 
-      alert(
-        `Imported ${newProspects.length} new contact${newProspects.length !== 1 ? 's' : ''} into Old Gold` +
-        (companiesTagged ? `, and tagged ${companiesTagged} compan${companiesTagged !== 1 ? 'ies' : 'y'} "Old Gold" in Watch List.` : '.')
-      );
+      if (failedCount > 0) {
+        alert(`Imported ${newProspects.length} contacts. ${failedCount} companies could not be tagged — check console for details.`);
+      } else {
+        alert(
+          `Imported ${newProspects.length} new contact${newProspects.length !== 1 ? 's' : ''} into Old Gold` +
+          (companiesTagged ? `, and tagged ${companiesTagged} compan${companiesTagged !== 1 ? 'ies' : 'y'} "Old Gold" in Watch List.` : '.')
+        );
+      }
     } catch (e) {
       alert('Import failed: ' + e.message);
     } finally {
@@ -738,61 +954,23 @@ export default function OldGoldPage({ isActive = false, onNavigate }) {
 
   const handleToggleTask = async (task) => {
     const completed = !task.completed;
-    await supabase.from('old_gold_tasks').update({ completed, completed_at: completed ? new Date().toISOString() : null }).eq('id', task.id);
+    if (!task._fromMeeting) {
+      await supabase.from('old_gold_tasks').update({ completed, completed_at: completed ? new Date().toISOString() : null }).eq('id', task.id);
+    }
     setTasks(prev => prev.map(t => t.id === task.id ? { ...t, completed, completed_at: completed ? new Date().toISOString() : null } : t));
   };
 
   const handleDeleteTask = async (id) => {
-    await supabase.from('old_gold_tasks').delete().eq('id', id);
+    const task = tasks.find(t => t.id === id);
+    if (!task?._fromMeeting) {
+      await supabase.from('old_gold_tasks').delete().eq('id', id);
+    }
     setTasks(prev => prev.filter(t => t.id !== id));
   };
 
-  // ── Prospect form ─────────────────────────────────────────────────────────
-  const ProspectForm = ({ onCancel }) => (
-    <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: 20, marginBottom: 20 }}>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
-        {[['name','Name *','text'],['title','Title','text'],['email','Email','email'],['linkedin','LinkedIn URL','url']].map(([field, label, type]) => (
-          <div key={field} style={field === 'name' ? { gridColumn: '1/-1' } : {}}>
-            <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 3 }}>{label}</label>
-            <input type={type} value={prospectDraft[field] || ''} onChange={e => setProspectDraft(d => ({ ...d, [field]: e.target.value }))} style={{ width: '100%', fontSize: 13 }} />
-          </div>
-        ))}
-        <div style={{ gridColumn: '1/-1' }}>
-          <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 3 }}>Company</label>
-          <input
-            list="og-company-datalist"
-            value={prospectDraft.company || ''}
-            onChange={e => setProspectDraft(d => ({ ...d, company: e.target.value }))}
-            placeholder="Type to search existing companies…"
-            style={{ width: '100%', fontSize: 13 }}
-          />
-          <datalist id="og-company-datalist">
-            {allCompanies.map(c => <option key={c.name} value={c.name} label={c.source === 'pipeline' ? '⚡ Pipeline' : '🧠 Company Intel'} />)}
-          </datalist>
-        </div>
-        <div>
-          <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 3 }}>Status</label>
-          <select value={prospectDraft.status} onChange={e => setProspectDraft(d => ({ ...d, status: e.target.value }))} style={{ width: '100%', fontSize: 13 }}>
-            {STATUS_OPTIONS.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
-          </select>
-        </div>
-        <div style={{ gridColumn: '1/-1' }}>
-          <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 3 }}>Notes</label>
-          <textarea rows={2} value={prospectDraft.notes || ''} onChange={e => setProspectDraft(d => ({ ...d, notes: e.target.value }))} style={{ width: '100%', fontSize: 12, lineHeight: 1.5 }} />
-        </div>
-      </div>
-      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-        <button onClick={onCancel} style={{ fontSize: 12, padding: '5px 14px', borderRadius: 6, border: '1px solid var(--border)', background: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}>Cancel</button>
-        <button onClick={handleSaveProspect} disabled={saving || !prospectDraft.name.trim()} style={{ fontSize: 12, fontWeight: 700, padding: '5px 16px', borderRadius: 6, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer' }}>{saving ? 'Saving…' : 'Save'}</button>
-      </div>
-    </div>
-  );
-
   // ── List view ─────────────────────────────────────────────────────────────
-  if (!active) {
-    const openTasks = {}; // prospect_id → open task count (loaded separately if needed)
-    return (
-      <div className="page-body">
+  return (
+    <div className="page-body">
         {/* Header */}
         <div className="page-header" style={{ marginBottom: 24 }}>
           <div className="page-header-left">
@@ -827,7 +1005,14 @@ export default function OldGoldPage({ isActive = false, onNavigate }) {
           </div>
         </div>
 
-        {addingProspect && <ProspectForm onCancel={() => setAddingProspect(false)} />}
+        {addingProspect && <ProspectForm draft={prospectDraft} setDraft={setProspectDraft} allCompanies={allCompanies} onSave={handleSaveProspect} saving={saving} onCancel={() => setAddingProspect(false)} />}
+
+        {loadError && (
+          <div style={{ marginBottom: 16, padding: '12px 16px', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8, display: 'flex', alignItems: 'center', gap: 12 }}>
+            <span style={{ fontSize: 13, color: '#b91c1c', flex: 1 }}>{loadError}</span>
+            <button onClick={() => { setLoadError(''); loadProspects(); }} style={{ fontSize: 12, fontWeight: 700, padding: '4px 12px', borderRadius: 6, border: '1px solid #fca5a5', background: 'transparent', color: '#b91c1c', cursor: 'pointer', whiteSpace: 'nowrap' }}>Retry</button>
+          </div>
+        )}
 
         {/* ── Quick transcript drop zone ── */}
         <div style={{ marginBottom: 24 }}>
@@ -1065,12 +1250,13 @@ export default function OldGoldPage({ isActive = false, onNavigate }) {
               return Array.from(seen.values());
             })();
             return (
-            <div key={groupKey} style={{ border: '1px solid var(--accent)', borderRadius: 10, background: 'var(--surface)', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-              {/* Header — always visible, click to expand */}
-              <div
-                onClick={() => setExpandedMtgIds(prev => { const s = new Set(prev); s.has(groupKey) ? s.delete(groupKey) : s.add(groupKey); return s; })}
-                style={{ display: 'flex', alignItems: 'flex-start', padding: '10px 16px', background: '#fffbeb', borderBottom: expanded ? '1px solid #fde68a' : 'none', cursor: 'pointer', gap: 10, userSelect: 'none' }}
-              >
+            <div
+              key={groupKey}
+              onClick={() => p && openProspect(p)}
+              style={{ border: '1px solid var(--accent)', borderRadius: 10, background: 'var(--surface)', overflow: 'hidden', display: 'flex', flexDirection: 'column', cursor: p ? 'pointer' : 'default' }}
+            >
+              {/* Header */}
+              <div style={{ display: 'flex', alignItems: 'flex-start', padding: '10px 16px', background: '#fffbeb', borderBottom: (combinedTasks.length > 0 || combinedMoments.length > 0) ? '1px solid #fde68a' : 'none', gap: 10, userSelect: 'none' }}>
                 <span style={{ fontSize: 13, fontWeight: 700, color: '#92400e', flex: 1, lineHeight: 1.4 }}>
                   {p?.name || 'Unknown'}
                   {p?.company ? ` — ${p.company}` : ''}
@@ -1080,11 +1266,12 @@ export default function OldGoldPage({ isActive = false, onNavigate }) {
                     <span style={{ fontSize: 11, fontWeight: 600, color: '#b45309', marginLeft: 8 }}>· {conversations.length} conversations</span>
                   )}
                 </span>
-                <span style={{ fontSize: 11, color: '#92400e', flexShrink: 0 }}>{expanded ? '▲' : '▼'}</span>
+                {sm && <span style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 20, background: sm.bg, color: sm.color, flexShrink: 0 }}>{sm.label}</span>}
+                <span style={{ fontSize: 11, color: '#92400e', flexShrink: 0 }}>→</span>
               </div>
 
-              {/* Tasks + rapport moments when collapsed */}
-              {!expanded && (combinedTasks.length > 0 || combinedMoments.length > 0) && (
+              {/* Preview: next steps + rapport moment pills */}
+              {(combinedTasks.length > 0 || combinedMoments.length > 0) && (
                 <div style={{ padding: '8px 16px 12px', display: 'flex', flexDirection: 'column', gap: 8 }}>
                   {combinedTasks.length > 0 && (
                     <div>
@@ -1107,96 +1294,6 @@ export default function OldGoldPage({ isActive = false, onNavigate }) {
                           {MOMENT_CATEGORY_ICON[m2.category] || '💬'} {m2.title}
                         </span>
                       ))}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {expanded && (
-                <div style={{ padding: 16 }}>
-                  {/* Inline contact card */}
-                  {p && (
-                    <div style={{ marginBottom: 14, padding: '10px 14px', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 10, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--text)' }}>{p.name}</div>
-                        {p.company && (
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 2 }}>
-                            <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{p.company}</span>
-                            {linkedCo && (
-                              <button onClick={e => { e.stopPropagation(); onNavigate && onNavigate(linkedCo.source === 'pipeline' ? 'deals' : 'clients', linkedCo.source === 'pipeline' ? linkedCo.id : null); }}
-                                style={{ fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 10, border: `1px solid ${linkedCo.source === 'pipeline' ? '#fbbf24' : '#c4b5fd'}`, background: linkedCo.source === 'pipeline' ? '#fffbeb' : '#f5f3ff', color: linkedCo.source === 'pipeline' ? '#92400e' : '#5b21b6', cursor: 'pointer' }}>
-                                {linkedCo.source === 'pipeline' ? `⚡ ${linkedCo.name} →` : `🧠 ${linkedCo.name} →`}
-                              </button>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                      {sm && <span style={{ fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 20, background: sm.bg, color: sm.color }}>{sm.label}</span>}
-                      <button onClick={e => { e.stopPropagation(); openProspect(p); }}
-                        style={{ fontSize: 11, fontWeight: 700, padding: '3px 12px', borderRadius: 20, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-muted)', cursor: 'pointer', whiteSpace: 'nowrap' }}>See All Conversations</button>
-                    </div>
-                  )}
-
-                  {/* Each conversation, newest first */}
-                  {conversations.map((mtg, ci) => (
-                    <div key={mtg.id} style={{ marginBottom: ci < conversations.length - 1 ? 16 : 0, paddingBottom: ci < conversations.length - 1 ? 16 : 0, borderBottom: ci < conversations.length - 1 ? '1px solid var(--border)' : 'none' }}>
-                      {conversations.length > 1 && (
-                        <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 8 }}>
-                          {mtg.meeting_date ? new Date(mtg.meeting_date + 'T12:00:00').toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : 'Undated conversation'}
-                        </div>
-                      )}
-                      {mtg.summary && (
-                        <div style={{ marginBottom: 14 }}>
-                          <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 5 }}>Summary</div>
-                          <div style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.6 }}>{mtg.summary}</div>
-                        </div>
-                      )}
-                      {(() => {
-                        const mTasks   = (mtg.action_items || []).filter(ai => !ai.type || ai.type === 'task');
-                        const mMoments = (mtg.action_items || []).filter(ai => ai.type === 'moment' && !/^pete/i.test(ai.person || ''));
-                        return (<>
-                          {mTasks.length > 0 && (
-                            <div style={{ marginBottom: mMoments.length > 0 ? 10 : 0 }}>
-                              <div style={{ fontSize: 10, fontWeight: 700, color: '#6d28d9', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 6 }}>Next Steps</div>
-                              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                                {mTasks.map((ai, i) => (
-                                  <div key={i} style={{ fontSize: 12, padding: '5px 9px', borderRadius: 6, background: '#ede9fe', display: 'flex', gap: 8, alignItems: 'baseline' }}>
-                                    {ai.owner && <span style={{ fontWeight: 700, color: '#6d28d9', flexShrink: 0 }}>{ai.owner}</span>}
-                                    <span style={{ flex: 1 }}>{ai.title}</span>
-                                    {ai.due_date && <span style={{ fontSize: 10, color: '#7c3aed', flexShrink: 0 }}>{ai.due_date}</span>}
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          )}
-                          {mMoments.length > 0 && (
-                            <div>
-                              <div style={{ fontSize: 10, fontWeight: 700, color: '#92400e', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 6 }}>Conversation Notes</div>
-                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
-                                {mMoments.map((m2, i) => (
-                                  <span key={i} title={m2.followup_prompt || m2.description || ''} style={{ fontSize: 11, padding: '3px 9px', borderRadius: 20, background: '#fef3c7', color: '#92400e', border: '1px solid #fde68a' }}>
-                                    {MOMENT_CATEGORY_ICON[m2.category] || '💬'} {m2.title}
-                                  </span>
-                                ))}
-                              </div>
-                            </div>
-                          )}
-                        </>);
-                      })()}
-                      <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 12 }}>
-                        <button
-                          onClick={e => { e.stopPropagation(); if (window.confirm('Delete this meeting record?')) { supabase.from('old_gold_tasks').delete().eq('meeting_id', mtg.id).then(() => supabase.from('old_gold_meetings').delete().eq('id', mtg.id)); setAllMeetings(prev => prev.filter(m => m.id !== mtg.id)); }}}
-                          style={{ fontSize: 10, padding: '2px 8px', borderRadius: 20, border: '1px solid #fca5a5', background: 'transparent', color: '#b91c1c', cursor: 'pointer' }}
-                        >Delete transcript</button>
-                      </div>
-                    </div>
-                  ))}
-                  {p?.id && (
-                    <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
-                      <button
-                        onClick={e => { e.stopPropagation(); archiveConversation(p.id); setExpandedMtgIds(prev => { const s = new Set(prev); s.delete(groupKey); return s; }); }}
-                        style={{ fontSize: 11, padding: '4px 12px', borderRadius: 20, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-muted)', cursor: 'pointer' }}
-                      >Archive Conversation</button>
                     </div>
                   )}
                 </div>
@@ -1354,31 +1451,28 @@ export default function OldGoldPage({ isActive = false, onNavigate }) {
             )
           )}
         </div>
-      </div>
-    );
-  }
-
-  // ── Detail view ───────────────────────────────────────────────────────────
-  const sm = statusMeta(active.status);
-  const openTaskCount  = tasks.filter(t => !t.completed).length;
-  const doneTaskCount  = tasks.filter(t => t.completed).length;
-
-  return (
-    <div className="page-body">
-      {/* Back breadcrumb */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
-        <button onClick={() => { setActive(null); setMeetings([]); setTasks([]); setDossierContact(null); }} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 4, padding: '4px 0' }}>
-          ← Old Gold
-        </button>
-        <span style={{ color: 'var(--border)' }}>|</span>
-        <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>{active.name}</span>
-        {active.company && <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>· {active.company}</span>}
-      </div>
+      {/* ── Contact Detail Overlay ── */}
+      {active && (() => {
+        const sm = statusMeta(active.status);
+        const openTaskCount = tasks.filter(t => !t.completed).length;
+        const doneTaskCount = tasks.filter(t => t.completed).length;
+        return (
+          <div
+            style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '24px 16px', overflowY: 'auto' }}
+            onClick={e => { if (e.target === e.currentTarget) { closeOverlay(); } }}
+          >
+            <div style={{ width: '100%', maxWidth: 920, background: 'var(--bg)', borderRadius: 14, boxShadow: '0 24px 80px rgba(0,0,0,0.35)', position: 'relative', marginBottom: 24 }}>
+              <button
+                onClick={() => { closeOverlay(); }}
+                style={{ position: 'absolute', top: 14, right: 14, zIndex: 10, background: 'none', border: 'none', cursor: 'pointer', fontSize: 22, lineHeight: 1, color: 'var(--text-faint)', padding: '2px 6px', borderRadius: 6 }}
+                title="Close"
+              >×</button>
+              <div style={{ padding: '20px 24px' }}>
 
       {/* ── Header card — full width ── */}
       <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: '16px 20px', marginBottom: 14 }}>
         {editingProspect ? (
-          <ProspectForm onCancel={() => { setEditingProspect(false); setProspectDraft(BLANK_PROSPECT); }} />
+          <ProspectForm draft={prospectDraft} setDraft={u => { hasEdited.current = true; setProspectDraft(u); }} allCompanies={allCompanies} onDone={handleDoneEditing} autoSaveStatus={autoSaveStatus} />
         ) : (
           <div style={{ display: 'flex', alignItems: 'flex-start', gap: 20, flexWrap: 'wrap' }}>
             {/* Name / title / company / links */}
@@ -1389,7 +1483,7 @@ export default function OldGoldPage({ isActive = false, onNavigate }) {
                   <>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
                       <span style={{ fontSize: 18, fontWeight: 800, color: 'var(--text)' }}>{active.name}</span>
-                      <button onClick={() => { setEditingProspect(true); setProspectDraft({ name: active.name, company: active.company || '', title: active.title || '', email: active.email || '', linkedin: active.linkedin || '', notes: active.notes || '', status: active.status || 'warm' }); }} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: 'var(--text-faint)', padding: '2px 4px' }} title="Edit">✏️</button>
+                      <button onClick={() => { hasEdited.current = false; setAutoSaveStatus('idle'); setEditingProspect(true); setProspectDraft({ name: active.name, company: active.company || '', title: active.title || '', email: active.email || '', linkedin: active.linkedin || '', notes: active.notes || '', status: active.status || 'warm' }); }} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: 'var(--text-faint)', padding: '2px 4px' }} title="Edit">✏️</button>
                     </div>
                     {active.title && <div style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 4 }}>{active.title}</div>}
                     {active.company && (
@@ -1426,14 +1520,11 @@ export default function OldGoldPage({ isActive = false, onNavigate }) {
               ))}
             </div>
 
-            {/* Status + archive */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'flex-end' }}>
-              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-                {STATUS_OPTIONS.map(s => (
-                  <button key={s.id} onClick={async () => { await supabase.from('old_gold_prospects').update({ status: s.id }).eq('id', active.id); const updated = { ...active, status: s.id }; setActive(updated); setProspects(prev => prev.map(p => p.id === active.id ? updated : p)); }} style={{ fontSize: 11, fontWeight: active.status === s.id ? 800 : 400, padding: '4px 10px', borderRadius: 20, border: `1.5px solid ${active.status === s.id ? s.color : 'var(--border)'}`, background: active.status === s.id ? s.bg : 'none', color: active.status === s.id ? s.color : 'var(--text-muted)', cursor: 'pointer', transition: 'all .1s', whiteSpace: 'nowrap' }}>{s.label}</button>
-                ))}
-              </div>
-              <button onClick={handleArchiveProspect} style={{ fontSize: 10, padding: '2px 8px', borderRadius: 20, border: '1px solid #fca5a5', background: 'transparent', color: '#b91c1c', cursor: 'pointer' }}>Archive contact</button>
+            {/* Status */}
+            <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+              {STATUS_OPTIONS.map(s => (
+                <button key={s.id} onClick={async () => { await supabase.from('old_gold_prospects').update({ status: s.id }).eq('id', active.id); const updated = { ...active, status: s.id }; setActive(updated); setProspects(prev => prev.map(p => p.id === active.id ? updated : p)); }} style={{ fontSize: 11, fontWeight: active.status === s.id ? 800 : 400, padding: '4px 10px', borderRadius: 20, border: `1.5px solid ${active.status === s.id ? s.color : 'var(--border)'}`, background: active.status === s.id ? s.bg : 'none', color: active.status === s.id ? s.color : 'var(--text-muted)', cursor: 'pointer', transition: 'all .1s', whiteSpace: 'nowrap' }}>{s.label}</button>
+              ))}
             </div>
           </div>
         )}
@@ -1486,99 +1577,329 @@ export default function OldGoldPage({ isActive = false, onNavigate }) {
                       {t.notes && <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 1 }}>{t.notes}</div>}
                     </div>
                     {t.due_date && <span style={{ fontSize: 11, color: 'var(--text-faint)', flexShrink: 0, whiteSpace: 'nowrap' }}>{fmtDate(t.due_date)}</span>}
-                    <button onClick={() => handleDeleteTask(t.id)} style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 13, padding: '0 2px', flexShrink: 0 }}>✕</button>
-                  </div>
-                ))}
-                {/* Completed tasks */}
-                {tasks.filter(t => t.completed).map(t => (
-                  <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 8px', borderRadius: 6, opacity: 0.5 }}>
-                    <input type="checkbox" checked={true} onChange={() => handleToggleTask(t)} style={{ accentColor: '#10b981', cursor: 'pointer', flexShrink: 0 }} />
-                    <div style={{ flex: 1, fontSize: 12, color: 'var(--text-muted)', textDecoration: 'line-through' }}>{t.title}</div>
-                    <button onClick={() => handleDeleteTask(t.id)} style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 12, padding: '0 2px', flexShrink: 0 }}>✕</button>
+                    {deleteConfirmId === t.id ? (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+                        <span style={{ fontSize: 11, color: '#ef4444', whiteSpace: 'nowrap' }}>Delete?</span>
+                        <button onClick={() => { handleDeleteTask(t.id); setDeleteConfirmId(null); }} style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 4, border: 'none', background: '#ef4444', color: '#fff', cursor: 'pointer' }}>Yes</button>
+                        <button onClick={() => setDeleteConfirmId(null)} style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}>No</button>
+                      </div>
+                    ) : (
+                      <button onClick={() => setDeleteConfirmId(t.id)} style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 13, padding: '0 2px', flexShrink: 0 }}>✕</button>
+                    )}
                   </div>
                 ))}
               </div>
             )}
           </div>
 
-      {/* ── Bottom grid: Dossier (3/4) + Meeting Log (1/4) ── */}
-      <div style={{ display: 'grid', gridTemplateColumns: '3fr 1fr', gap: 14, alignItems: 'start' }}>
-
-        {/* Dossier */}
-        <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: 18 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
-            <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--text)' }}>Dossier</div>
-            <button
-              onClick={handleBuildDossier}
-              disabled={buildingDossier}
-              style={{ fontSize: 11, fontWeight: 700, padding: '4px 12px', borderRadius: 6, border: '1px solid var(--accent)', background: buildingDossier ? 'none' : 'var(--accent)', color: buildingDossier ? 'var(--text-muted)' : '#fff', cursor: 'pointer' }}
-            >{buildingDossier ? '⏳ Building…' : '✨ Build Dossier'}</button>
+      {/* ── Company Panel ── */}
+      {active.company && (() => {
+        if (companyPanelLoading) return (
+          <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: '12px 18px', marginBottom: 14, display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div className="spinner" style={{ width: 14, height: 14 }} />
+            <span style={{ fontSize: 12, color: 'var(--text-faint)' }}>Loading company info…</span>
           </div>
-          {dossierContact ? (
-            <ContactDossier contact={dossierContact} />
-          ) : (
-            <div style={{ fontSize: 12, color: 'var(--text-faint)', fontStyle: 'italic' }}>
-              No dossier yet.{active.company ? ' Click Build Dossier to run a deep search on this person.' : ' Add a company for this contact first.'}
+        );
+        const { watchlist, deal, client } = companyPanel || {};
+        const hasAny = watchlist || deal || client;
+        if (!hasAny && companyPanel !== null) return (
+          <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: '12px 18px', marginBottom: 14, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>🏢 <strong>{active.company}</strong> — not yet in your CRM</span>
+            <button onClick={() => { closeOverlay(); onNavigate && onNavigate('signals'); }} style={{ fontSize: 11, padding: '3px 10px', borderRadius: 20, border: '1px solid var(--border)', background: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}>+ Add to Watch List</button>
+          </div>
+        );
+        if (!hasAny) return null;
+        const sourceLabel = client ? 'Client' : deal ? 'Pipeline' : 'Watch List';
+        const sourceBg    = client ? '#f0fdf4' : deal ? '#fffbeb' : '#f5f3ff';
+        const sourceColor = client ? '#166534' : deal ? '#92400e' : '#5b21b6';
+        const stageMeta   = deal ? STAGES.find(s => s.id === deal.stage) : null;
+        const hasSummary  = !!watchlist?.summary;
+        return (
+          <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, marginBottom: 14, overflow: 'hidden' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 18px', background: 'var(--bg)', borderBottom: '1px solid var(--border)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>{watchlist?.name || deal?.company_name || client?.name || active.company}</span>
+                <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 20, background: sourceBg, color: sourceColor }}>{sourceLabel}</span>
+              </div>
+              <button
+                onClick={() => { const companyName = watchlist?.name || deal?.company_name || client?.name || active.company; closeOverlay(); if (client) onNavigate && onNavigate('clients'); else if (deal) onNavigate && onNavigate('deals', deal.id); else onNavigate && onNavigate('signals', companyName); }}
+                style={{ fontSize: 11, padding: '3px 10px', borderRadius: 20, border: '1px solid var(--border)', background: 'none', color: 'var(--text-muted)', cursor: 'pointer', whiteSpace: 'nowrap' }}
+              >Open full card →</button>
             </div>
-          )}
+
+            {watchlist && (watchlist.icp_score || watchlist.overall_score || watchlist.employee_count_num) && (
+              <div style={{ display: 'flex', borderBottom: (deal?.stage || client || hasSummary) ? '1px solid var(--border)' : 'none' }}>
+                {[
+                  { label: 'ICP', val: watchlist.icp_score },
+                  { label: 'SIG', val: watchlist.overall_score },
+                  { label: 'Employees', val: watchlist.employee_count_num ? (watchlist.employee_count_num >= 1000 ? `${Math.round(watchlist.employee_count_num / 1000)}k+` : watchlist.employee_count_num) : null },
+                ].filter(r => r.val).map((r, i, arr) => (
+                  <div key={r.label} style={{ flex: 1, padding: '10px 18px', textAlign: 'center', borderRight: i < arr.length - 1 ? '1px solid var(--border)' : 'none' }}>
+                    <div style={{ fontSize: 10, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 2 }}>{r.label}</div>
+                    <div style={{ fontSize: 18, fontWeight: 800, color: typeof r.val === 'number' ? (r.val >= 70 ? '#10b981' : r.val >= 40 ? '#f59e0b' : '#ef4444') : 'var(--text)' }}>{r.val}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {deal && stageMeta && (
+              <div style={{ padding: '10px 18px', display: 'flex', alignItems: 'center', gap: 10, borderBottom: hasSummary ? '1px solid var(--border)' : 'none' }}>
+                <span style={{ fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 20, background: `${stageMeta.color}22`, color: stageMeta.color }}>{stageMeta.label}</span>
+                {deal.value && <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>${Number(deal.value).toLocaleString()}</span>}
+              </div>
+            )}
+
+            {client?.projects?.filter(pr => !pr.archived_at).length > 0 && (
+              <div style={{ padding: '10px 18px', borderBottom: hasSummary ? '1px solid var(--border)' : 'none' }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 6 }}>Active Projects</div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+                  {client.projects.filter(pr => !pr.archived_at).map(pr => (
+                    <span key={pr.id} style={{ fontSize: 11, padding: '2px 8px', borderRadius: 20, background: 'var(--bg)', border: '1px solid var(--border)', color: 'var(--text-muted)' }}>{pr.name}</span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {hasSummary && (
+              <div style={{ padding: '12px 18px', borderBottom: '1px solid var(--border)' }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 6 }}>Recent Intel</div>
+                <div style={{ fontSize: 12, color: 'var(--text)', lineHeight: 1.6 }}>{watchlist.summary}</div>
+                {watchlist.recommended_angle && (
+                  <div style={{ marginTop: 8, fontSize: 11, color: '#5b21b6', background: '#f5f3ff', padding: '5px 10px', borderRadius: 6, lineHeight: 1.5 }}>
+                    💡 {watchlist.recommended_angle}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Thesis row */}
+            <div style={{ padding: '10px 18px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              {thesisBuilding ? (
+                <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Building thesis…</span>
+              ) : (
+                <>
+                  <button
+                    onClick={handleBuildThesis}
+                    style={{ fontSize: 11, fontWeight: 700, padding: '4px 12px', borderRadius: 6, border: '1px solid var(--accent)', background: 'none', color: 'var(--accent)', cursor: 'pointer' }}
+                  >{watchlist?.thesis ? 'Refresh Thesis' : 'Build Thesis'}</button>
+                  {watchlist?.thesis && (
+                    <button
+                      onClick={() => setThesisModal({ thesis: watchlist.thesis, risks: watchlist.thesis_risks, nextStep: watchlist.thesis_next_step })}
+                      style={{ fontSize: 11, padding: '4px 12px', borderRadius: 6, border: '1px solid #5b21b6', background: '#f5f3ff', color: '#5b21b6', cursor: 'pointer' }}
+                    >See full thesis →</button>
+                  )}
+                  {thesisError && <span style={{ fontSize: 11, color: '#ef4444' }}>{thesisError}</span>}
+                </>
+              )}
+            </div>
+
+            {/* Move to Pipeline row */}
+            <div style={{ padding: '10px 18px', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              {pipelineConfirm ? (
+                <>
+                  <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600 }}>Stage:</span>
+                  <select
+                    value={pipelineConfirm.stage}
+                    onChange={e => setPipelineConfirm(p => ({ ...p, stage: e.target.value }))}
+                    style={{ fontSize: 11, padding: '3px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface)', cursor: 'pointer' }}
+                  >
+                    {STAGES.filter(s => !['won', 'lost'].includes(s.id)).map(s => (
+                      <option key={s.id} value={s.id}>{s.label}</option>
+                    ))}
+                  </select>
+                  <button
+                    onClick={handleMoveToPipeline}
+                    disabled={movingToPipeline}
+                    style={{ fontSize: 11, fontWeight: 700, padding: '4px 12px', borderRadius: 6, border: 'none', background: '#10b981', color: '#fff', cursor: 'pointer' }}
+                  >{movingToPipeline ? 'Moving…' : 'Confirm →'}</button>
+                  <button
+                    onClick={() => { setPipelineConfirm(null); setPipelineError(''); }}
+                    style={{ fontSize: 11, padding: '4px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}
+                  >Cancel</button>
+                  {pipelineError && <span style={{ fontSize: 11, color: '#ef4444' }}>{pipelineError}</span>}
+                </>
+              ) : (
+                <button
+                  onClick={() => setPipelineConfirm({ stage: 'discovery_call' })}
+                  style={{ fontSize: 11, fontWeight: 700, padding: '4px 12px', borderRadius: 6, border: '1px solid #10b981', background: 'none', color: '#10b981', cursor: 'pointer' }}
+                >→ Move to Pipeline</button>
+              )}
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ── Meeting Log — full width ── */}
+      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: 18, marginBottom: 14 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--text)' }}>
+            Meeting Log
+            {meetings.length > 0 && <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--text-faint)', marginLeft: 8 }}>{meetings.length} meeting{meetings.length !== 1 ? 's' : ''}</span>}
+          </div>
+          <button
+            onClick={() => { setShowImport(v => !v); setImportError(''); }}
+            style={{ fontSize: 11, fontWeight: 700, padding: '4px 12px', borderRadius: 6, border: showImport ? '1px solid var(--border)' : '1px solid var(--accent)', background: showImport ? 'none' : 'var(--accent)', color: showImport ? 'var(--text-muted)' : '#fff', cursor: 'pointer' }}
+          >{showImport ? '✕ Cancel' : '+ Import Transcript'}</button>
         </div>
 
-        {/* Meeting Log */}
-        <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: 18 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
-            <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--text)' }}>
-              Meeting Log
-              {meetings.length > 0 && <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--text-faint)', marginLeft: 8 }}>{meetings.length} meeting{meetings.length !== 1 ? 's' : ''}</span>}
+        {/* Import form */}
+        {showImport && (
+          <div style={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 8, padding: 14, marginBottom: 16 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 8, marginBottom: 8 }}>
+              <div>
+                <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 3 }}>Meeting title</label>
+                <input type="text" value={importTitle} onChange={e => setImportTitle(e.target.value)} placeholder={`Meeting with ${active.name}…`} style={{ width: '100%', fontSize: 12 }} />
+              </div>
+              <div>
+                <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 3 }}>Date</label>
+                <input type="date" value={importDate} onChange={e => setImportDate(e.target.value)} style={{ fontSize: 12, padding: '5px 8px', width: 'auto' }} />
+              </div>
             </div>
-            <button
-              onClick={() => { setShowImport(v => !v); setImportError(''); }}
-              style={{ fontSize: 11, fontWeight: 700, padding: '4px 12px', borderRadius: 6, border: showImport ? '1px solid var(--border)' : '1px solid var(--accent)', background: showImport ? 'none' : 'var(--accent)', color: showImport ? 'var(--text-muted)' : '#fff', cursor: 'pointer' }}
-            >{showImport ? '✕ Cancel' : '+ Import Transcript'}</button>
+            <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 3 }}>Granola transcript</label>
+            <textarea
+              rows={6}
+              value={importTranscript}
+              onChange={e => setImportTranscript(e.target.value)}
+              placeholder="Paste your Granola transcript here…"
+              style={{ width: '100%', fontSize: 12, lineHeight: 1.6, fontFamily: 'monospace', marginBottom: 10 }}
+            />
+            {importError && <div style={{ fontSize: 12, color: '#ef4444', marginBottom: 8 }}>{importError}</div>}
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button onClick={() => { setShowImport(false); setImportTranscript(''); setImportError(''); }} style={{ fontSize: 12, padding: '5px 14px', borderRadius: 6, border: '1px solid var(--border)', background: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}>Cancel</button>
+              <button onClick={handleImport} disabled={importing || !importTranscript.trim()} style={{ fontSize: 12, fontWeight: 700, padding: '5px 16px', borderRadius: 6, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer' }}>
+                {importing ? '⏳ Processing…' : '✨ Import & Extract Tasks'}
+              </button>
+            </div>
           </div>
+        )}
 
-          {/* Import form */}
-          {showImport && (
-            <div style={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 8, padding: 14, marginBottom: 16 }}>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 8, marginBottom: 8 }}>
-                <div>
-                  <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 3 }}>Meeting title</label>
-                  <input type="text" value={importTitle} onChange={e => setImportTitle(e.target.value)} placeholder={`Meeting with ${active.name}…`} style={{ width: '100%', fontSize: 12 }} />
+        {/* Meeting list */}
+        {!detailLoading && meetings.length === 0 && !showImport && (
+          <div style={{ fontSize: 12, color: 'var(--text-faint)', fontStyle: 'italic' }}>No meetings yet. Import a Granola transcript to get started.</div>
+        )}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {meetings.map(m => (
+            <MeetingCard key={m.id} meeting={m} tasks={tasks} />
+          ))}
+        </div>
+      </div>
+
+      {/* ── Dossier — full width ── */}
+      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: 18 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--text)' }}>Dossier</div>
+          <button
+            onClick={handleBuildDossier}
+            disabled={buildingDossier}
+            style={{ fontSize: 11, fontWeight: 700, padding: '4px 12px', borderRadius: 6, border: '1px solid var(--accent)', background: buildingDossier ? 'none' : 'var(--accent)', color: buildingDossier ? 'var(--text-muted)' : '#fff', cursor: 'pointer' }}
+          >{buildingDossier ? '⏳ Building…' : '✨ Build Dossier'}</button>
+        </div>
+        {dossierContact ? (
+          <ContactDossier contact={dossierContact} />
+        ) : (
+          <div style={{ fontSize: 12, color: 'var(--text-faint)', fontStyle: 'italic' }}>
+            No dossier yet.{active.company ? ' Click Build Dossier to run a deep search on this person.' : ' Add a company for this contact first.'}
+          </div>
+        )}
+      </div>
+
+      {/* ── Archived Tasks ── */}
+      {tasks.filter(t => t.completed).length > 0 && (
+        <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: 18, marginTop: 14, opacity: 0.85 }}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--text-muted)', marginBottom: 12 }}>
+            Archived Tasks
+            <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-faint)', marginLeft: 8 }}>{tasks.filter(t => t.completed).length} completed</span>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {tasks.filter(t => t.completed).map(t => (
+              <div key={t.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '6px 8px', borderRadius: 6, background: 'var(--bg)' }}>
+                <input type="checkbox" checked={true} onChange={() => handleToggleTask(t)} style={{ marginTop: 2, accentColor: '#10b981', cursor: 'pointer', flexShrink: 0 }} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, color: 'var(--text-muted)', textDecoration: 'line-through', lineHeight: 1.4 }}>{t.title}</div>
+                  {t.completed_at && (
+                    <div style={{ fontSize: 10, color: 'var(--text-faint)', marginTop: 2 }}>
+                      Completed {new Date(t.completed_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                    </div>
+                  )}
                 </div>
-                <div>
-                  <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 3 }}>Date</label>
-                  <input type="date" value={importDate} onChange={e => setImportDate(e.target.value)} style={{ fontSize: 12, padding: '5px 8px', width: 'auto' }} />
-                </div>
-              </div>
-              <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 3 }}>Granola transcript</label>
-              <textarea
-                rows={6}
-                value={importTranscript}
-                onChange={e => setImportTranscript(e.target.value)}
-                placeholder="Paste your Granola transcript here…"
-                style={{ width: '100%', fontSize: 12, lineHeight: 1.6, fontFamily: 'monospace', marginBottom: 10 }}
-              />
-              {importError && <div style={{ fontSize: 12, color: '#ef4444', marginBottom: 8 }}>{importError}</div>}
-              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-                <button onClick={() => { setShowImport(false); setImportTranscript(''); setImportError(''); }} style={{ fontSize: 12, padding: '5px 14px', borderRadius: 6, border: '1px solid var(--border)', background: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}>Cancel</button>
-                <button onClick={handleImport} disabled={importing || !importTranscript.trim()} style={{ fontSize: 12, fontWeight: 700, padding: '5px 16px', borderRadius: 6, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer' }}>
-                  {importing ? '⏳ Processing…' : '✨ Import & Extract Tasks'}
+                <button
+                  onClick={() => handleToggleTask(t)}
+                  style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'none', color: 'var(--text-muted)', cursor: 'pointer', flexShrink: 0, whiteSpace: 'nowrap' }}
+                >
+                  Restore
                 </button>
+                {deleteConfirmId === t.id ? (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+                    <span style={{ fontSize: 11, color: '#ef4444', whiteSpace: 'nowrap' }}>Delete?</span>
+                    <button onClick={() => { handleDeleteTask(t.id); setDeleteConfirmId(null); }} style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 4, border: 'none', background: '#ef4444', color: '#fff', cursor: 'pointer' }}>Yes</button>
+                    <button onClick={() => setDeleteConfirmId(null)} style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}>No</button>
+                  </div>
+                ) : (
+                  <button onClick={() => setDeleteConfirmId(t.id)} style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 13, padding: '0 2px', flexShrink: 0 }}>✕</button>
+                )}
               </div>
-            </div>
-          )}
-
-          {/* Meeting list */}
-          {!detailLoading && meetings.length === 0 && !showImport && (
-            <div style={{ fontSize: 12, color: 'var(--text-faint)', fontStyle: 'italic' }}>No meetings yet. Import a Granola transcript to get started.</div>
-          )}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            {meetings.map(m => (
-              <MeetingCard key={m.id} meeting={m} tasks={tasks} />
             ))}
           </div>
         </div>
+      )}
 
-      </div>
+          {/* ── Bottom footer ── */}
+          <div style={{ marginTop: 20, paddingTop: 14, borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'flex-start' }}>
+            <button
+              onClick={handleArchiveProspect}
+              style={{ fontSize: 11, fontWeight: 600, padding: '4px 14px', borderRadius: 20, border: '1px solid #fca5a5', background: 'transparent', color: '#b91c1c', cursor: 'pointer' }}
+            >Archive contact</button>
+          </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ── Thesis full-view modal ── */}
+      {thesisModal && (
+        <div
+          onClick={() => setThesisModal(null)}
+          style={{ position: 'fixed', inset: 0, zIndex: 1100, background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, width: '100%', maxWidth: 700, maxHeight: '85vh', display: 'flex', flexDirection: 'column', boxShadow: '0 20px 60px rgba(0,0,0,0.35)' }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 22px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--text)' }}>{active?.company} — Investment Thesis</div>
+                <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 2 }}>Shared across Watch List, Pipeline & Clients</div>
+              </div>
+              <button onClick={() => setThesisModal(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 20, color: 'var(--text-faint)', padding: '2px 6px', lineHeight: 1 }}>✕</button>
+            </div>
+            <div style={{ overflowY: 'auto', padding: '20px 22px', flex: 1, display: 'flex', flexDirection: 'column', gap: 20 }}>
+              {thesisModal.thesis && (
+                <div>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 8 }}>Thesis</div>
+                  <div style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.7 }}>{thesisModal.thesis}</div>
+                </div>
+              )}
+              {thesisModal.risks?.length > 0 && (
+                <div>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: '#ef4444', textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 8 }}>Risks</div>
+                  <ul style={{ margin: 0, paddingLeft: 16, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    {thesisModal.risks.map((r, i) => (
+                      <li key={i} style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.7 }}>{typeof r === 'string' ? r : r.risk || r.label || r.title || JSON.stringify(r)}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {thesisModal.nextStep && (
+                <div>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: '#10b981', textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 8 }}>Recommended Next Step</div>
+                  <div style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.7 }}>{thesisModal.nextStep}</div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1608,11 +1929,6 @@ function TranscriptModal({ title, date, transcript, onClose }) {
     </div>
   );
 }
-
-const MOMENT_CATEGORY_ICON = {
-  pets: '🐾', family: '👨‍👩‍👧', health: '🏥', hobbies: '🎯',
-  sports: '🏆', milestone: '🎉', professional: '💼', other: '💬',
-};
 
 // ── Meeting card (collapsible) ────────────────────────────────────────────────
 function MeetingCard({ meeting: m, tasks }) {

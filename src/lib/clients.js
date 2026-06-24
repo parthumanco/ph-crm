@@ -17,25 +17,28 @@ export function sortContactsOldGoldFirst(contacts) {
 // ── Clients ───────────────────────────────────────────────────────────────────
 
 export async function fetchClients() {
-  // First ensure any projects with client_name but no client_id are reconciled
-  try {
-    const { data: orphans } = await supabase
-      .from('projects')
-      .select('id, client_name')
-      .not('client_name', 'is', null)
-      .neq('client_name', '')
-      .is('client_id', null);
+  // Reconcile orphaned projects (client_name set but no client_id) once per session.
+  // sessionStorage is cleared when the tab closes, so this runs at most once per sitting.
+  if (!sessionStorage.getItem('ph_clients_reconciled')) {
+    try {
+      const { data: orphans } = await supabase
+        .from('projects')
+        .select('id, client_name')
+        .not('client_name', 'is', null)
+        .neq('client_name', '')
+        .is('client_id', null);
 
-    if (orphans?.length > 0) {
-      // Create missing client records and link them
-      for (const p of orphans) {
-        const client = await findOrCreateClient(p.client_name);
-        if (client) {
-          await supabase.from('projects').update({ client_id: client.id }).eq('id', p.id);
+      if (orphans?.length > 0) {
+        for (const p of orphans) {
+          const client = await findOrCreateClient(p.client_name);
+          if (client) {
+            await supabase.from('projects').update({ client_id: client.id }).eq('id', p.id);
+          }
         }
       }
-    }
-  } catch { /* non-fatal — fetch still proceeds */ }
+      sessionStorage.setItem('ph_clients_reconciled', '1');
+    } catch { /* non-fatal — fetch still proceeds; flag not set so it retries next call */ }
+  }
 
   const { data, error } = await supabase
     .from('clients')
@@ -55,7 +58,7 @@ export async function findOrCreateClient(name) {
     .select('*')
     .ilike('name', clean)
     .limit(1)
-    .single();
+    .maybeSingle();
   if (existing) return existing;
 
   // Create new
