@@ -823,7 +823,204 @@ export default function OldGoldPage({ isActive = false, onNavigate }) {
 
         {addingProspect && <ProspectForm onCancel={() => setAddingProspect(false)} />}
 
-        {/* ── All saved meetings, grouped by contact, newest conversation first ── */}
+        {/* ── Quick transcript drop zone ── */}
+        <div style={{ marginBottom: 24 }}>
+          {!showQuickPanel ? (
+            /* Collapsed: small drop target */
+            <div
+              onClick={() => setShowQuickPanel(true)}
+              style={{
+                border: `2px dashed ${dropDragging ? 'var(--accent)' : 'var(--border)'}`,
+                borderRadius: 10,
+                padding: '16px 20px',
+                background: dropDragging ? '#fffbeb' : 'var(--surface)',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 12,
+                transition: 'all .15s',
+              }}
+            >
+              <span style={{ fontSize: 22 }}>🪩</span>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: dropDragging ? 'var(--accent)' : 'var(--text)' }}>
+                  {dropDragging ? 'Drop to analyze' : 'Drop or paste a transcript'}
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 1 }}>
+                  Granola .rtf / .txt — saved automatically
+                </div>
+              </div>
+            </div>
+          ) : (
+            /* Expanded / minimized panel */
+            <div style={{ border: '1px solid var(--accent)', borderRadius: 10, background: 'var(--surface)', overflow: 'hidden' }}>
+
+              {/* Header — always visible */}
+              <div
+                onClick={() => quickResult && setQuickMinimized(m => !m)}
+                style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 16px', background: '#fffbeb', borderBottom: quickMinimized ? 'none' : '1px solid #fde68a', cursor: quickResult ? 'pointer' : 'default', userSelect: 'none' }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 0 }}>
+                  {quickSaved ? (
+                    <span style={{ fontSize: 13, fontWeight: 700, color: '#92400e', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {quickSaved.ourName} & {quickSaved.prospect.name}
+                      {quickSaved.prospect.company ? ` — ${quickSaved.prospect.company}` : ''}
+                      {', '}
+                      {quickSaved.savedAt.toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: '2-digit' })}
+                      {', '}
+                      {quickSaved.savedAt.toLocaleTimeString('en-GB', { hour: 'numeric', minute: '2-digit', hour12: true })}
+                    </span>
+                  ) : null}
+                </div>
+                {quickResult && (
+                  <span style={{ fontSize: 12, color: '#92400e', flexShrink: 0, marginLeft: 8 }}>
+                    {quickMinimized ? '▼' : '▲'}
+                  </span>
+                )}
+              </div>
+
+              {/* Minimized action-items strip */}
+              {quickMinimized && quickResult?.action_items?.length > 0 && (
+                <div style={{ padding: '8px 16px', borderTop: '1px solid #fde68a', background: '#fffbeb', display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  {quickResult.action_items.map((ai, i) => (
+                    <span key={i} style={{ fontSize: 11, padding: '3px 10px', borderRadius: 20, background: '#ede9fe', color: '#5b21b6' }}>
+                      {ai.owner && <strong style={{ marginRight: 4 }}>{ai.owner}</strong>}{ai.title}
+                      {ai.due_date && <span style={{ marginLeft: 6, opacity: 0.7 }}>{ai.due_date}</span>}
+                    </span>
+                  ))}
+                </div>
+              )}
+
+              {!quickMinimized && <div style={{ padding: 16 }}>
+                {!quickResult ? (
+                  <>
+                    <textarea
+                      autoFocus
+                      rows={8}
+                      value={quickText}
+                      onChange={e => setQuickText(e.target.value)}
+                      placeholder="Paste your Granola transcript here, or drag a .rtf / .txt file onto this area…"
+                      style={{ width: '100%', fontSize: 12, lineHeight: 1.6, fontFamily: 'monospace', marginBottom: 10, background: 'var(--bg)' }}
+                    />
+                    {quickError && <div style={{ fontSize: 12, color: '#ef4444', marginBottom: 8 }}>{quickError}</div>}
+                    <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                      <button
+                        onClick={() => handleQuickAnalyze(quickText)}
+                        disabled={quickAnalyzing || !quickText.trim()}
+                        style={{ fontSize: 12, fontWeight: 700, padding: '5px 18px', borderRadius: 6, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer' }}
+                      >{quickAnalyzing ? '⏳ Analyzing…' : '✨ Analyze'}</button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    {quickError && (
+                      <div style={{ fontSize: 13, color: '#ef4444', marginBottom: 14, padding: '10px 12px', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8, fontWeight: 600 }}>
+                        ⚠ {quickError}
+                      </div>
+                    )}
+                    {quickSaved && (() => {
+                      const p = quickSaved.prospect;
+                      const sm = statusMeta(p.status);
+                      const linkedCo = p.company ? allCompanies.find(c => c.name.toLowerCase() === p.company.toLowerCase()) : null;
+                      return (
+                        <div style={{ marginBottom: 14, padding: '10px 14px', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 10, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--text)' }}>{p.name}</div>
+                            {p.company && (
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 2 }}>
+                                <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{p.company}</span>
+                                {linkedCo && (
+                                  <button onClick={() => { onNavigate && onNavigate(linkedCo.source === 'pipeline' ? 'deals' : 'clients', linkedCo.source === 'pipeline' ? linkedCo.id : null); }}
+                                    style={{ fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 10, border: `1px solid ${linkedCo.source === 'pipeline' ? '#fbbf24' : '#c4b5fd'}`, background: linkedCo.source === 'pipeline' ? '#fffbeb' : '#f5f3ff', color: linkedCo.source === 'pipeline' ? '#92400e' : '#5b21b6', cursor: 'pointer' }}>
+                                    {linkedCo.source === 'pipeline' ? `⚡ ${linkedCo.name} →` : `🧠 ${linkedCo.name} →`}
+                                  </button>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                          <span style={{ fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 20, background: sm.bg, color: sm.color }}>{sm.label}</span>
+                          <button
+                            onClick={() => { openProspect(p); setQuickMinimized(true); }}
+                            style={{ fontSize: 11, fontWeight: 700, padding: '3px 12px', borderRadius: 20, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-muted)', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                          >See All Conversations</button>
+                          {quickCrossRefs?.pipeline?.map(deal => (
+                            <div key={deal.id} style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8, paddingTop: 8, borderTop: '1px solid var(--border)', flexWrap: 'wrap' }}>
+                              <span style={{ fontSize: 11, color: '#78350f', flex: 1 }}>
+                                ⚡ <strong>{deal.company_name}</strong> is in your Pipeline{deal.stage ? ` (${deal.stage})` : ''} — move the conversation there?
+                              </span>
+                              <button onClick={() => handleSaveToDeal(deal)} disabled={quickSaving}
+                                style={{ fontSize: 12, fontWeight: 700, padding: '4px 12px', borderRadius: 6, border: '1px solid #fbbf24', background: '#fffbeb', color: '#92400e', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}
+                              >{quickSaving ? 'Moving…' : `Move to ${deal.company_name} →`}</button>
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    })()}
+                    {quickResult?.summary && (
+                      <div style={{ marginBottom: 14 }}>
+                        <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 5 }}>Summary</div>
+                        <div style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.6 }}>{quickResult.summary}</div>
+                      </div>
+                    )}
+                    {quickResult?.action_items?.length > 0 && (
+                      <div style={{ marginBottom: 8 }}>
+                        <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--accent)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 6 }}>Action Items</div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                          {quickResult.action_items.map((ai, i) => (
+                            <div key={i} style={{ fontSize: 12, padding: '5px 9px', borderRadius: 6, background: '#ede9fe', display: 'flex', gap: 8, alignItems: 'baseline' }}>
+                              {ai.owner && <span style={{ fontWeight: 700, color: '#6d28d9', flexShrink: 0 }}>{ai.owner}</span>}
+                              <span style={{ flex: 1 }}>{ai.title}</span>
+                              {ai.due_date && <span style={{ fontSize: 10, color: '#7c3aed', flexShrink: 0 }}>{ai.due_date}</span>}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )}
+                {quickResult && (
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 12 }}>
+                    <button
+                      onClick={() => { if (window.confirm('Delete this transcript? The contact card will stay but the meeting record will be removed.')) resetQuickPanel({ deleteRecords: true }); }}
+                      style={{ fontSize: 10, padding: '2px 8px', borderRadius: 20, border: '1px solid #fca5a5', background: 'transparent', color: '#b91c1c', cursor: 'pointer' }}
+                    >Delete transcript</button>
+                  </div>
+                )}
+              </div>}
+            </div>
+          )}
+        </div>
+
+        {/* ── New transcript drop zone — shown after a transcript is already saved ── */}
+        {quickSaved && (
+          <div
+            onClick={() => {
+              if (quickSaved) setSavedStack(prev => [{ saved: quickSaved, result: quickResult }, ...prev]);
+              setQuickResult(null); setQuickExtracted(null); setQuickCrossRefs(null);
+              setQuickEmailHint(''); setQuickSaved(null); setQuickMinimized(false); setQuickError('');
+              setShowQuickPanel(true);
+            }}
+            style={{
+              marginBottom: 24,
+              border: `2px dashed ${dropDragging ? 'var(--accent)' : 'var(--border)'}`,
+              borderRadius: 10,
+              padding: '10px 16px',
+              background: dropDragging ? '#fffbeb' : 'transparent',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 10,
+              transition: 'all .15s',
+            }}
+          >
+            <span style={{ fontSize: 16 }}>🪩</span>
+            <span style={{ fontSize: 12, color: dropDragging ? 'var(--accent)' : 'var(--text-muted)', fontWeight: 600 }}>
+              {dropDragging ? 'Drop to analyze' : '+ Analyze another transcript'}
+            </span>
+          </div>
+        )}
+
+        {/* ── Active Conversations ── */}
         {(() => {
           const visible = allMeetings.filter(mtg => !quickSaved || mtg.id !== quickSaved.meetingId);
           const groups = new Map();
@@ -1000,208 +1197,11 @@ export default function OldGoldPage({ isActive = false, onNavigate }) {
           );
         })()}
 
-        {/* ── Quick transcript drop zone ── */}
-        <div style={{ marginBottom: 24 }}>
-          {!showQuickPanel ? (
-            /* Collapsed: small drop target */
-            <div
-              onClick={() => setShowQuickPanel(true)}
-              style={{
-                border: `2px dashed ${dropDragging ? 'var(--accent)' : 'var(--border)'}`,
-                borderRadius: 10,
-                padding: '16px 20px',
-                background: dropDragging ? '#fffbeb' : 'var(--surface)',
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: 12,
-                transition: 'all .15s',
-              }}
-            >
-              <span style={{ fontSize: 22 }}>🪩</span>
-              <div>
-                <div style={{ fontSize: 13, fontWeight: 700, color: dropDragging ? 'var(--accent)' : 'var(--text)' }}>
-                  {dropDragging ? 'Drop to analyze' : 'Drop or paste a transcript'}
-                </div>
-                <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 1 }}>
-                  Granola .rtf / .txt — saved automatically
-                </div>
-              </div>
-            </div>
-          ) : (
-            /* Expanded / minimized panel */
-            <div style={{ border: '1px solid var(--accent)', borderRadius: 10, background: 'var(--surface)', overflow: 'hidden' }}>
-
-              {/* Header — always visible */}
-              <div
-                onClick={() => quickResult && setQuickMinimized(m => !m)}
-                style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 16px', background: '#fffbeb', borderBottom: quickMinimized ? 'none' : '1px solid #fde68a', cursor: quickResult ? 'pointer' : 'default', userSelect: 'none' }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 0 }}>
-                  {quickSaved ? (
-                    <span style={{ fontSize: 13, fontWeight: 700, color: '#92400e', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {quickSaved.ourName} & {quickSaved.prospect.name}
-                      {quickSaved.prospect.company ? ` — ${quickSaved.prospect.company}` : ''}
-                      {', '}
-                      {quickSaved.savedAt.toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: '2-digit' })}
-                      {', '}
-                      {quickSaved.savedAt.toLocaleTimeString('en-GB', { hour: 'numeric', minute: '2-digit', hour12: true })}
-                    </span>
-                  ) : null}
-                </div>
-                {quickResult && (
-                  <span style={{ fontSize: 12, color: '#92400e', flexShrink: 0, marginLeft: 8 }}>
-                    {quickMinimized ? '▼' : '▲'}
-                  </span>
-                )}
-              </div>
-
-              {/* Minimized action-items strip */}
-              {quickMinimized && quickResult?.action_items?.length > 0 && (
-                <div style={{ padding: '8px 16px', borderTop: '1px solid #fde68a', background: '#fffbeb', display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                  {quickResult.action_items.map((ai, i) => (
-                    <span key={i} style={{ fontSize: 11, padding: '3px 10px', borderRadius: 20, background: '#ede9fe', color: '#5b21b6' }}>
-                      {ai.owner && <strong style={{ marginRight: 4 }}>{ai.owner}</strong>}{ai.title}
-                      {ai.due_date && <span style={{ marginLeft: 6, opacity: 0.7 }}>{ai.due_date}</span>}
-                    </span>
-                  ))}
-                </div>
-              )}
-
-              {!quickMinimized && <div style={{ padding: 16 }}>
-                {!quickResult ? (
-                  <>
-                    <textarea
-                      autoFocus
-                      rows={8}
-                      value={quickText}
-                      onChange={e => setQuickText(e.target.value)}
-                      placeholder="Paste your Granola transcript here, or drag a .rtf / .txt file onto this area…"
-                      style={{ width: '100%', fontSize: 12, lineHeight: 1.6, fontFamily: 'monospace', marginBottom: 10, background: 'var(--bg)' }}
-                    />
-                    {quickError && <div style={{ fontSize: 12, color: '#ef4444', marginBottom: 8 }}>{quickError}</div>}
-                    <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-                      <button
-                        onClick={() => handleQuickAnalyze(quickText)}
-                        disabled={quickAnalyzing || !quickText.trim()}
-                        style={{ fontSize: 12, fontWeight: 700, padding: '5px 18px', borderRadius: 6, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer' }}
-                      >{quickAnalyzing ? '⏳ Analyzing…' : '✨ Analyze'}</button>
-                    </div>
-                  </>
-                ) : (
-                  /* Results — already auto-saved, show confirmation + options */
-                  <>
-                    {quickError && (
-                      <div style={{ fontSize: 13, color: '#ef4444', marginBottom: 14, padding: '10px 12px', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8, fontWeight: 600 }}>
-                        ⚠ {quickError}
-                      </div>
-                    )}
-
-                    {/* Inline contact card */}
-                    {quickSaved && (() => {
-                      const p = quickSaved.prospect;
-                      const sm = statusMeta(p.status);
-                      const linkedCo = p.company ? allCompanies.find(c => c.name.toLowerCase() === p.company.toLowerCase()) : null;
-                      return (
-                        <div style={{ marginBottom: 14, padding: '10px 14px', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 10, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--text)' }}>{p.name}</div>
-                            {p.company && (
-                              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 2 }}>
-                                <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{p.company}</span>
-                                {linkedCo && (
-                                  <button onClick={() => { onNavigate && onNavigate(linkedCo.source === 'pipeline' ? 'deals' : 'clients', linkedCo.source === 'pipeline' ? linkedCo.id : null); }}
-                                    style={{ fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 10, border: `1px solid ${linkedCo.source === 'pipeline' ? '#fbbf24' : '#c4b5fd'}`, background: linkedCo.source === 'pipeline' ? '#fffbeb' : '#f5f3ff', color: linkedCo.source === 'pipeline' ? '#92400e' : '#5b21b6', cursor: 'pointer' }}>
-                                    {linkedCo.source === 'pipeline' ? `⚡ ${linkedCo.name} →` : `🧠 ${linkedCo.name} →`}
-                                  </button>
-                                )}
-                              </div>
-                            )}
-                          </div>
-                          <span style={{ fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 20, background: sm.bg, color: sm.color }}>{sm.label}</span>
-                          <button
-                            onClick={() => { openProspect(p); setQuickMinimized(true); }}
-                            style={{ fontSize: 11, fontWeight: 700, padding: '3px 12px', borderRadius: 20, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-muted)', cursor: 'pointer', whiteSpace: 'nowrap' }}
-                          >See All Conversations</button>
-
-                          {/* Move to Pipeline option */}
-                          {quickCrossRefs?.pipeline?.map(deal => (
-                            <div key={deal.id} style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8, paddingTop: 8, borderTop: '1px solid var(--border)', flexWrap: 'wrap' }}>
-                              <span style={{ fontSize: 11, color: '#78350f', flex: 1 }}>
-                                ⚡ <strong>{deal.company_name}</strong> is in your Pipeline{deal.stage ? ` (${deal.stage})` : ''} — move the conversation there?
-                              </span>
-                              <button onClick={() => handleSaveToDeal(deal)} disabled={quickSaving}
-                                style={{ fontSize: 12, fontWeight: 700, padding: '4px 12px', borderRadius: 6, border: '1px solid #fbbf24', background: '#fffbeb', color: '#92400e', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}
-                              >{quickSaving ? 'Moving…' : `Move to ${deal.company_name} →`}</button>
-                            </div>
-                          ))}
-                        </div>
-                      );
-                    })()}
-
-                    {quickResult?.summary && (
-                      <div style={{ marginBottom: 14 }}>
-                        <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 5 }}>Summary</div>
-                        <div style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.6 }}>{quickResult.summary}</div>
-                      </div>
-                    )}
-                    {quickResult?.action_items?.length > 0 && (
-                      <div style={{ marginBottom: 8 }}>
-                        <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--accent)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 6 }}>Action Items</div>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                          {quickResult.action_items.map((ai, i) => (
-                            <div key={i} style={{ fontSize: 12, padding: '5px 9px', borderRadius: 6, background: '#ede9fe', display: 'flex', gap: 8, alignItems: 'baseline' }}>
-                              {ai.owner && <span style={{ fontWeight: 700, color: '#6d28d9', flexShrink: 0 }}>{ai.owner}</span>}
-                              <span style={{ flex: 1 }}>{ai.title}</span>
-                              {ai.due_date && <span style={{ fontSize: 10, color: '#7c3aed', flexShrink: 0 }}>{ai.due_date}</span>}
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </>
-                )}
-
-                {/* Delete — tiny pill, bottom right, expanded only */}
-                {quickResult && (
-                  <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 12 }}>
-                    <button
-                      onClick={() => { if (window.confirm('Delete this transcript? The contact card will stay but the meeting record will be removed.')) resetQuickPanel({ deleteRecords: true }); }}
-                      style={{ fontSize: 10, padding: '2px 8px', borderRadius: 20, border: '1px solid #fca5a5', background: 'transparent', color: '#b91c1c', cursor: 'pointer' }}
-                    >Delete transcript</button>
-                  </div>
-                )}
-              </div>}
-            </div>
-          )}
-        </div>
-
-        {/* ── New transcript drop zone — shown after a transcript is already saved ── */}
-        {quickSaved && (
-          <div
-            onClick={() => {
-              if (quickSaved) setSavedStack(prev => [{ saved: quickSaved, result: quickResult }, ...prev]);
-              setQuickResult(null); setQuickExtracted(null); setQuickCrossRefs(null);
-              setQuickEmailHint(''); setQuickSaved(null); setQuickMinimized(false); setQuickError('');
-              setShowQuickPanel(true);
-            }}
-            style={{
-              marginBottom: 24,
-              border: `2px dashed ${dropDragging ? 'var(--accent)' : 'var(--border)'}`,
-              borderRadius: 10,
-              padding: '10px 16px',
-              background: dropDragging ? '#fffbeb' : 'transparent',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 10,
-              transition: 'all .15s',
-            }}
-          >
-            <span style={{ fontSize: 16 }}>🪩</span>
-            <span style={{ fontSize: 12, color: dropDragging ? 'var(--accent)' : 'var(--text-muted)', fontWeight: 600 }}>
-              {dropDragging ? 'Drop to analyze' : '+ Analyze another transcript'}
-            </span>
+        {allMeetings.length > 0 && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '28px 0 20px' }}>
+            <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
+            <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.06em' }}>All Contacts</span>
+            <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
           </div>
         )}
 
