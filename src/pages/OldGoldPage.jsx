@@ -180,6 +180,12 @@ export default function OldGoldPage({ isActive = false, onNavigate }) {
   const [allMeetings,    setAllMeetings]    = useState([]);   // all old_gold_meetings, newest first
   const [expandedMtgIds, setExpandedMtgIds] = useState(new Set());
 
+  // Conversation-level archive (localStorage-backed): moves a contact's convo below the fold without deleting it
+  const [convArchivedIds,     setConvArchivedIds]     = useState(() => { try { return new Set(JSON.parse(localStorage.getItem('og_conv_archived') || '[]')); } catch { return new Set(); } });
+  const [expandedArchivedIds, setExpandedArchivedIds] = useState(new Set());
+  const archiveConversation = (pid) => setConvArchivedIds(prev => { const n = new Set(prev); n.add(pid); localStorage.setItem('og_conv_archived', JSON.stringify([...n])); return n; });
+  const unarchiveConversation = (pid) => setConvArchivedIds(prev => { const n = new Set(prev); n.delete(pid); localStorage.setItem('og_conv_archived', JSON.stringify([...n])); return n; });
+
   // Archived contacts (soft-delete) — "Delete contact" archives rather than
   // permanently deletes, and can be restored from this section.
   const [archivedProspects, setArchivedProspects] = useState([]);
@@ -1035,6 +1041,7 @@ export default function OldGoldPage({ isActive = false, onNavigate }) {
             const sm = p ? statusMeta(p.status) : null;
             const linkedCo = p?.company ? allCompanies.find(c => c.name.toLowerCase() === p.company.toLowerCase()) : null;
             const groupKey = p?.id || latest.id;
+            if (p?.id && convArchivedIds.has(p.id)) return null;
             const expanded = expandedMtgIds.has(groupKey);
             // Combined action items across every conversation with this contact,
             // deduped by title (most recent conversation's version wins).
@@ -1184,20 +1191,29 @@ export default function OldGoldPage({ isActive = false, onNavigate }) {
                       </div>
                     </div>
                   ))}
+                  {p?.id && (
+                    <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
+                      <button
+                        onClick={e => { e.stopPropagation(); archiveConversation(p.id); setExpandedMtgIds(prev => { const s = new Set(prev); s.delete(groupKey); return s; }); }}
+                        style={{ fontSize: 11, padding: '4px 12px', borderRadius: 20, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-muted)', cursor: 'pointer' }}
+                      >Archive Conversation</button>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
             );
           });
-          if (!cards.length) return null;
+          const validCards = cards.filter(Boolean);
+          if (!validCards.length) return null;
           return (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 14, marginBottom: 14 }}>
-              {cards}
+              {validCards}
             </div>
           );
         })()}
 
-        {allMeetings.length > 0 && (
+        {prospects.length > 0 && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '28px 0 20px' }}>
             <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
             <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.06em' }}>All Contacts</span>
@@ -1215,52 +1231,92 @@ export default function OldGoldPage({ isActive = false, onNavigate }) {
             <button onClick={() => { setProspectDraft(BLANK_PROSPECT); setAddingProspect(true); }} className="btn btn-primary">+ Add Contact</button>
           </div>
         ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 14 }}>
-            {prospects.filter(p => {
-                // Hide contacts already shown in the meeting list or active panel
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+            {prospects
+              .filter(p => {
                 const inMeetingList = allMeetings.some(m => m.prospect_id === p.id);
+                const isConvArchived = convArchivedIds.has(p.id);
                 const inActivePanel = quickSaved?.prospect?.id === p.id;
-                if (inMeetingList || inActivePanel) return false;
+                if (inActivePanel) return false;
+                if (inMeetingList && !isConvArchived) return false;
                 if (!search.trim()) return true;
                 const q = search.trim().toLowerCase();
                 return [p.name, p.company, p.title, p.email].some(f => f?.toLowerCase().includes(q));
-              }).map(p => {
-              const sm = statusMeta(p.status);
-              const linkedCo = p.company ? allCompanies.find(c => c.name.toLowerCase() === p.company.toLowerCase()) : null;
-              return (
-                <div
-                  key={p.id}
-                  onClick={() => openProspect(p)}
-                  style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, padding: '16px 18px', cursor: 'pointer', transition: 'box-shadow .15s, border-color .15s', position: 'relative' }}
-                  onMouseEnter={e => { e.currentTarget.style.boxShadow = '0 4px 16px rgba(0,0,0,0.1)'; e.currentTarget.style.borderColor = 'var(--accent)'; }}
-                  onMouseLeave={e => { e.currentTarget.style.boxShadow = ''; e.currentTarget.style.borderColor = 'var(--border)'; }}
-                >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 }}>
-                    <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--text)', lineHeight: 1.3 }}>{p.name}</div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0, marginLeft: 8 }}>
-                      <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 20, background: sm.bg, color: sm.color }}>{sm.label}</span>
+              })
+              .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+              .map(p => {
+                const sm = statusMeta(p.status);
+                const isConvArchived = convArchivedIds.has(p.id);
+                const isExpanded = expandedArchivedIds.has(p.id);
+                const archivedConvs = isConvArchived ? allMeetings.filter(m => m.prospect_id === p.id) : [];
+                return (
+                  <div key={p.id}>
+                    <div
+                      onClick={() => {
+                        if (isConvArchived) {
+                          setExpandedArchivedIds(prev => { const s = new Set(prev); s.has(p.id) ? s.delete(p.id) : s.add(p.id); return s; });
+                        } else {
+                          openProspect(p);
+                        }
+                      }}
+                      style={{ display: 'flex', alignItems: 'center', padding: '9px 14px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: isExpanded ? '8px 8px 0 0' : 8, cursor: 'pointer', gap: 10, transition: 'border-color .15s' }}
+                      onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--accent)'; }}
+                      onMouseLeave={e => { e.currentTarget.style.borderColor = isExpanded ? 'var(--accent)' : 'var(--border)'; }}
+                    >
+                      <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', minWidth: 160 }}>{p.name}</div>
+                      {p.company && <div style={{ fontSize: 12, color: 'var(--text-muted)', flex: 1 }}>{p.company}</div>}
+                      {p.title && <div style={{ fontSize: 11, color: 'var(--text-faint)', flexShrink: 0 }}>{p.title}</div>}
+                      <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 20, background: sm.bg, color: sm.color, flexShrink: 0 }}>{sm.label}</span>
+                      <span style={{ fontSize: 11, color: 'var(--text-faint)', flexShrink: 0, minWidth: 10 }}>{isConvArchived ? (isExpanded ? '▲' : '▼') : '→'}</span>
                     </div>
+                    {isExpanded && archivedConvs.length > 0 && (
+                      <div style={{ border: '1px solid var(--border)', borderTop: 'none', borderRadius: '0 0 8px 8px', background: 'var(--surface)', padding: '12px 14px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                          <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.06em' }}>Archived Conversations</span>
+                          <button
+                            onClick={e => { e.stopPropagation(); unarchiveConversation(p.id); setExpandedArchivedIds(prev => { const s = new Set(prev); s.delete(p.id); return s; }); }}
+                            style={{ fontSize: 10, padding: '2px 8px', borderRadius: 20, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer' }}
+                          >↑ Move to Active</button>
+                        </div>
+                        {archivedConvs.map((mtg, ci) => {
+                          const mTasks   = (mtg.action_items || []).filter(ai => !ai.type || ai.type === 'task');
+                          const mMoments = (mtg.action_items || []).filter(ai => ai.type === 'moment' && !/^pete/i.test(ai.person || ''));
+                          return (
+                            <div key={mtg.id} style={{ marginBottom: ci < archivedConvs.length - 1 ? 14 : 0, paddingBottom: ci < archivedConvs.length - 1 ? 14 : 0, borderBottom: ci < archivedConvs.length - 1 ? '1px solid var(--border)' : 'none' }}>
+                              <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 6 }}>
+                                {mtg.meeting_date ? new Date(mtg.meeting_date + 'T12:00:00').toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : 'Undated'}
+                              </div>
+                              {mTasks.length > 0 && (
+                                <div style={{ marginBottom: mMoments.length > 0 ? 8 : 0 }}>
+                                  <div style={{ fontSize: 9, fontWeight: 800, color: '#6d28d9', textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 4 }}>Next Steps</div>
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                                    {mTasks.map((ai, i) => (
+                                      <div key={i} style={{ fontSize: 11, padding: '3px 8px', borderRadius: 6, background: '#ede9fe', display: 'flex', gap: 6, alignItems: 'baseline' }}>
+                                        {ai.owner && <strong style={{ color: '#6d28d9', flexShrink: 0 }}>{ai.owner}</strong>}
+                                        <span style={{ flex: 1 }}>{ai.title}</span>
+                                        {ai.due_date && <span style={{ fontSize: 10, opacity: 0.6, flexShrink: 0 }}>{ai.due_date}</span>}
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+                              {mMoments.length > 0 && (
+                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+                                  {mMoments.map((m2, i) => (
+                                    <span key={i} title={m2.followup_prompt || m2.description || ''} style={{ fontSize: 10, padding: '2px 8px', borderRadius: 20, background: '#fef3c7', color: '#92400e', border: '1px solid #fde68a' }}>
+                                      {MOMENT_CATEGORY_ICON[m2.category] || '💬'} {m2.title}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
-                  {p.company && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
-                      <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{p.company}</span>
-                      {linkedCo && (
-                        <button
-                          onClick={e => { e.stopPropagation(); onNavigate && onNavigate(linkedCo.source === 'pipeline' ? 'deals' : 'clients', linkedCo.source === 'pipeline' ? linkedCo.id : null); }}
-                          style={{ fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 10, border: `1px solid ${linkedCo.source === 'pipeline' ? '#fbbf24' : '#c4b5fd'}`, background: linkedCo.source === 'pipeline' ? '#fffbeb' : '#f5f3ff', color: linkedCo.source === 'pipeline' ? '#92400e' : '#5b21b6', cursor: 'pointer' }}
-                          title={`View in ${linkedCo.source === 'pipeline' ? 'Pipeline' : 'Company Intel'}`}
-                        >{linkedCo.source === 'pipeline' ? `⚡ ${linkedCo.name}` : `🧠 ${linkedCo.name}`} →</button>
-                      )}
-                    </div>
-                  )}
-                  {p.title && <div style={{ fontSize: 11, color: 'var(--text-faint)' }}>{p.title}</div>}
-                  {p.notes && <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 8, lineHeight: 1.5, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>{p.notes}</div>}
-                  <div style={{ marginTop: 12, display: 'flex', justifyContent: 'flex-end' }}>
-                    <span style={{ fontSize: 11, fontWeight: 700, padding: '3px 12px', borderRadius: 20, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-muted)' }}>See All Conversations</span>
-                  </div>
-                </div>
-              );
-            })}
+                );
+              })}
           </div>
         )}
 
