@@ -832,7 +832,7 @@ export default function OldGoldPage({ isActive = false, onNavigate }) {
             if (!groups.has(key)) groups.set(key, []);
             groups.get(key).push(mtg);
           });
-          return Array.from(groups.values()).map(conversations => {
+          const cards = Array.from(groups.values()).map(conversations => {
             const latest = conversations[0];
             const p = latest.old_gold_prospects;
             const sm = p ? statusMeta(p.status) : null;
@@ -861,13 +861,13 @@ export default function OldGoldPage({ isActive = false, onNavigate }) {
               return Array.from(seen.values());
             })();
             return (
-            <div key={groupKey} style={{ marginBottom: 8, border: '1px solid var(--accent)', borderRadius: 10, background: 'var(--surface)', overflow: 'hidden' }}>
+            <div key={groupKey} style={{ border: '1px solid var(--accent)', borderRadius: 10, background: 'var(--surface)', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
               {/* Header — always visible, click to expand */}
               <div
                 onClick={() => setExpandedMtgIds(prev => { const s = new Set(prev); s.has(groupKey) ? s.delete(groupKey) : s.add(groupKey); return s; })}
-                style={{ display: 'flex', alignItems: 'center', padding: '10px 16px', background: '#fffbeb', borderBottom: expanded ? '1px solid #fde68a' : 'none', cursor: 'pointer', gap: 10, userSelect: 'none' }}
+                style={{ display: 'flex', alignItems: 'flex-start', padding: '10px 16px', background: '#fffbeb', borderBottom: expanded ? '1px solid #fde68a' : 'none', cursor: 'pointer', gap: 10, userSelect: 'none' }}
               >
-                <span style={{ fontSize: 13, fontWeight: 700, color: '#92400e', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                <span style={{ fontSize: 13, fontWeight: 700, color: '#92400e', flex: 1, lineHeight: 1.4 }}>
                   {p?.name || 'Unknown'}
                   {p?.company ? ` — ${p.company}` : ''}
                   {latest.meeting_date ? `, ${new Date(latest.meeting_date + 'T12:00:00').toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: '2-digit' })}` : ''}
@@ -992,6 +992,12 @@ export default function OldGoldPage({ isActive = false, onNavigate }) {
             </div>
             );
           });
+          if (!cards.length) return null;
+          return (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 14, marginBottom: 14 }}>
+              {cards}
+            </div>
+          );
         })()}
 
         {/* ── Quick transcript drop zone ── */}
