@@ -538,6 +538,59 @@
 }
 .v2-row-actions svg { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 2; }
 
+/* Archived-row actions (Restore / Delete links) + file-count badge */
+.v2-row-actions__archived {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+}
+.v2-row-actions__link {
+    font-family: var(--v2-font-serif);
+    font-style: italic;
+    font-size: 12px;
+    color: var(--v2-blue);
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    text-transform: lowercase;
+    letter-spacing: 0.02em;
+    transition: color 0.15s ease;
+}
+.v2-row-actions__link:hover {
+    text-decoration: underline;
+}
+.v2-row-actions__link--danger {
+    color: #c2451a;
+}
+.v2-row-actions__link--danger:hover {
+    color: #9a3717;
+}
+
+.v2-project-row__file-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--crm-text-3);
+    background: var(--crm-surface-alt);
+    padding: 2px 7px;
+    border-radius: 9999px;
+    flex-shrink: 0;
+    margin-left: 8px;
+}
+.v2-project-row__file-badge svg {
+    width: 11px;
+    height: 11px;
+    opacity: 0.7;
+}
+
+.v2-project-row.is-archived {
+    opacity: 0.7;
+}
+.v2-project-row.is-archived:hover { opacity: 1; }
+
 /* ============================================
    EMPTY & LOADING STATES
 ============================================ */

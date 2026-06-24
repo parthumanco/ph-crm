@@ -82,9 +82,17 @@ Tracked here so they're visible, not silent. Fix in priority order
   color, overdue red, file count, "via {owner}" inherited badge,
   rejection notes preview. Edit/approve/reject stay in legacy
   via per-row edit ↗ link.
-- **Archived projects collapsible** with Restore / hard-delete.
-- **File-count badge**, **contact_name**, **end_date** on the row.
-- Dead `review` status filter (no matching data).
+- ~~**Archived projects** with Restore / hard-delete~~ — closed.
+  Archived filter now fetches via `fetchArchivedProjects`; rows
+  show archive date and offer Restore / Delete links via V2Confirm.
+- ~~**File-count badge**~~ — closed. Rendered as a pill on the
+  name cell. `fetchProjectFiles` runs as part of the per-row meta.
+- ~~**contact_name** on the row~~ — closed. Rendered next to
+  `client_name` in the meta line.
+- ~~**end_date** on the row~~ — closed. Shown as a small sub-line
+  under the next milestone (or under "No milestones" when empty).
+- ~~Dead `review` filter~~ — closed. Removed from STATUS_FILTERS;
+  `cancelled` added in its place to match `PROJECT_STATUSES`.
 
 ### Accounts list — `V2AccountsPage`
 - **Semantic divergence** — V2 derives accounts from any

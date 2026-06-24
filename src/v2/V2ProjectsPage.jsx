@@ -1,11 +1,18 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
     fetchProjects,
+    fetchArchivedProjects,
     fetchMilestones,
     fetchProjectTasks,
+    fetchProjectFiles,
     fmtDate,
 } from './safe-data.js';
+import {
+    restoreProject,
+    deleteProject,
+} from './write-data.js';
 import V2Modal from './V2Modal.jsx';
+import V2Confirm from './V2Confirm.jsx';
 import ProjectForm from './forms/ProjectForm.jsx';
 
 /* ============================================
@@ -24,12 +31,17 @@ import ProjectForm from './forms/ProjectForm.jsx';
    and the project isn't yet half done.
 ============================================ */
 
+// Status filter options. Mirrors lib/projects PROJECT_STATUSES — no 'review'
+// since legacy doesn't define that status (the old V2 filter was a dead
+// option that never matched anything). 'archived' is special: it switches
+// to a separate fetch (fetchArchivedProjects) rather than filtering the
+// active list.
 const STATUS_FILTERS = [
     { id: 'all',       label: 'All' },
     { id: 'active',    label: 'Active' },
     { id: 'on_hold',   label: 'On Hold' },
-    { id: 'review',    label: 'Review' },
     { id: 'completed', label: 'Completed' },
+    { id: 'cancelled', label: 'Cancelled' },
     { id: 'archived',  label: 'Archived' },
 ];
 
@@ -80,8 +92,13 @@ function statusDotClass(status) {
 
 export default function V2ProjectsPage({ onSelect }) {
     const [projects, setProjects] = useState([]);
-    const [rowsMeta, setRowsMeta] = useState({});  // { [projectId]: { nextMilestone, progress, totalTasks, doneTasks } }
+    const [archived, setArchived] = useState([]);
+    const [rowsMeta, setRowsMeta] = useState({});  // { [projectId]: { next, progress, totalTasks, doneTasks, fileCount } }
     const [filter, setFilter] = useState('all');
+    const [restoreTarget, setRestoreTarget] = useState(null); // null | project
+    const [deleteTarget, setDeleteTarget] = useState(null);   // null | project
+    const [working, setWorking] = useState(false);
+    const [toast, setToast] = useState(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
     const [showNewModal, setShowNewModal] = useState(false);
@@ -90,21 +107,31 @@ export default function V2ProjectsPage({ onSelect }) {
         try {
             setLoading(true);
             setError(null);
-            const list = await fetchProjects();
-            setProjects(list);
 
+            // Active and archived load in parallel so flipping the filter
+            // doesn't trigger a second round-trip.
+            const [list, archivedList] = await Promise.all([
+                fetchProjects(),
+                fetchArchivedProjects().catch(() => []),
+            ]);
+            setProjects(list);
+            setArchived(archivedList);
+
+            // Per-project meta: next milestone, progress, task count, and
+            // file count. One round-trip per project, all in parallel.
             const metaEntries = await Promise.all(
                 list.map(async (p) => {
                     try {
-                        const [milestones, tasks] = await Promise.all([
+                        const [milestones, tasks, files] = await Promise.all([
                             fetchMilestones(p.id),
                             fetchProjectTasks(p.id),
+                            fetchProjectFiles(p.id).catch(() => []),
                         ]);
                         const next = pickNextMilestone(milestones);
                         const total = tasks.length;
                         const done = tasks.filter((t) => t.completed).length;
                         const progress = total ? Math.round((done / total) * 100) : 0;
-                        return [p.id, { next, progress, total, done }];
+                        return [p.id, { next, progress, total, done, fileCount: files.length }];
                     } catch (err) {
                         console.warn('Failed to load meta for project', p.id, err);
                         return [p.id, null];
@@ -121,11 +148,50 @@ export default function V2ProjectsPage({ onSelect }) {
 
     useEffect(() => { load(); }, [load]);
 
+    // Auto-dismiss toast
+    useEffect(() => {
+        if (!toast) return;
+        const t = setTimeout(() => setToast(null), 4000);
+        return () => clearTimeout(t);
+    }, [toast]);
+
+    const handleRestore = useCallback(async () => {
+        if (!restoreTarget) return;
+        setWorking(true);
+        try {
+            await restoreProject(restoreTarget.id);
+            setRestoreTarget(null);
+            await load();
+            setFilter('active');
+            setToast({ kind: 'win', text: `Restored ${restoreTarget.name}.` });
+        } catch (err) {
+            setToast({ kind: 'warn', text: err.message || 'Couldn\'t restore' });
+        } finally {
+            setWorking(false);
+        }
+    }, [restoreTarget, load]);
+
+    const handleHardDelete = useCallback(async () => {
+        if (!deleteTarget) return;
+        setWorking(true);
+        try {
+            await deleteProject(deleteTarget.id);
+            setDeleteTarget(null);
+            await load();
+            setToast({ kind: 'info', text: `Deleted ${deleteTarget.name}.` });
+        } catch (err) {
+            setToast({ kind: 'warn', text: err.message || 'Couldn\'t delete' });
+        } finally {
+            setWorking(false);
+        }
+    }, [deleteTarget, load]);
+
     const visible = useMemo(() => {
+        if (filter === 'archived') return archived;
         if (filter === 'all') return projects;
-        if (filter === 'archived') return [];  // archived list isn't fetched in this view yet
         return projects.filter((p) => p.status === filter);
-    }, [projects, filter]);
+    }, [projects, archived, filter]);
+    const viewingArchived = filter === 'archived';
 
     const stats = useMemo(() => {
         const active = projects.filter((p) => p.status === 'active').length;
@@ -250,8 +316,14 @@ export default function V2ProjectsPage({ onSelect }) {
 
                 {!loading && visible.length === 0 && (
                     <div className="v2-empty">
-                        <strong>No projects match this filter</strong>
-                        {filter !== 'all' && 'Try switching to "All" or change the project status.'}
+                        <strong>
+                            {viewingArchived
+                                ? 'No archived projects'
+                                : 'No projects match this filter'}
+                        </strong>
+                        {viewingArchived
+                            ? 'Projects you archive will land here. Restore them to bring them back.'
+                            : filter !== 'all' && 'Try switching to "All" or change the project status.'}
                     </div>
                 )}
 
@@ -263,12 +335,14 @@ export default function V2ProjectsPage({ onSelect }) {
                     const progress = meta?.progress ?? 0;
                     const total = meta?.total ?? 0;
                     const done = meta?.done ?? 0;
+                    const fileCount = meta?.fileCount ?? 0;
 
                     return (
                         <div
                             key={p.id}
-                            className="v2-project-row"
-                            onClick={() => onSelect && onSelect(p.id)}
+                            className={`v2-project-row ${viewingArchived ? 'is-archived' : ''}`}
+                            onClick={() => !viewingArchived && onSelect && onSelect(p.id)}
+                            style={viewingArchived ? { cursor: 'default' } : null}
                         >
                             <div className="v2-project-cell-name">
                                 <span className={statusDotClass(p.status)} />
@@ -276,8 +350,15 @@ export default function V2ProjectsPage({ onSelect }) {
                                     <div className="v2-project-cell-name__title">{p.name}</div>
                                     <div className="v2-project-cell-name__client">
                                         {p.client_name || 'No client'}
+                                        {p.contact_name && <> · {p.contact_name}</>}
                                     </div>
                                 </div>
+                                {fileCount > 0 && (
+                                    <span className="v2-project-row__file-badge" title={`${fileCount} file${fileCount === 1 ? '' : 's'}`}>
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 11v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h6"/><path d="M17 3l4 4-9 9H8v-4z"/></svg>
+                                        {fileCount}
+                                    </span>
+                                )}
                             </div>
 
                             <div>
@@ -287,13 +368,29 @@ export default function V2ProjectsPage({ onSelect }) {
                             </div>
 
                             <div className="v2-dates">
-                                {nextMs ? (
+                                {viewingArchived ? (
+                                    <span>
+                                        {p.archived_at ? <>archived <strong>{fmtDate(p.archived_at)}</strong></> : 'archived'}
+                                    </span>
+                                ) : nextMs ? (
                                     <>
                                         <strong>{nextMs.name}</strong>
                                         {' · '}
                                         <span style={dueSoon ? { color: 'var(--v2-orange)', fontWeight: 600 } : null}>
                                             {nextMs.due_date ? fmtDate(nextMs.due_date) : 'no due date'}
                                         </span>
+                                        {p.end_date && (
+                                            <div style={{ fontSize: 11, color: 'var(--crm-text-3)', marginTop: 2 }}>
+                                                Project ends {fmtDate(p.end_date)}
+                                            </div>
+                                        )}
+                                    </>
+                                ) : p.end_date ? (
+                                    <>
+                                        <em>No milestones</em>
+                                        <div style={{ fontSize: 11, color: 'var(--crm-text-3)', marginTop: 2 }}>
+                                            ends {fmtDate(p.end_date)}
+                                        </div>
                                     </>
                                 ) : (
                                     <em>No milestones</em>
@@ -315,12 +412,65 @@ export default function V2ProjectsPage({ onSelect }) {
                             </div>
 
                             <div className="v2-row-actions">
-                                <svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg>
+                                {viewingArchived ? (
+                                    <div className="v2-row-actions__archived">
+                                        <button
+                                            type="button"
+                                            className="v2-row-actions__link"
+                                            onClick={(e) => { e.stopPropagation(); setRestoreTarget(p); }}
+                                        >
+                                            Restore
+                                        </button>
+                                        <button
+                                            type="button"
+                                            className="v2-row-actions__link v2-row-actions__link--danger"
+                                            onClick={(e) => { e.stopPropagation(); setDeleteTarget(p); }}
+                                        >
+                                            Delete
+                                        </button>
+                                    </div>
+                                ) : (
+                                    <svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg>
+                                )}
                             </div>
                         </div>
                     );
                 })}
             </div>
+
+            {/* Toast */}
+            {toast && (
+                <div className={`v2-toast v2-toast--${toast.kind}`}>
+                    <span className="v2-toast__icon">{toast.kind === 'win' ? '✓' : toast.kind === 'warn' ? '!' : '·'}</span>
+                    <span>{toast.text}</span>
+                </div>
+            )}
+
+            {/* Restore confirm */}
+            <V2Confirm
+                open={restoreTarget !== null}
+                onClose={() => setRestoreTarget(null)}
+                onConfirm={handleRestore}
+                eyebrow="restore"
+                title="Restore this project?"
+                description={restoreTarget ? `${restoreTarget.name} will move back to the active list.` : null}
+                confirmLabel="Restore"
+                confirmTone="primary"
+                loading={working}
+            />
+
+            {/* Hard delete confirm */}
+            <V2Confirm
+                open={deleteTarget !== null}
+                onClose={() => setDeleteTarget(null)}
+                onConfirm={handleHardDelete}
+                eyebrow="careful"
+                title="Permanently delete this project?"
+                description={deleteTarget ? `${deleteTarget.name} and all its milestones, tasks, and files will be permanently removed. This can't be undone.` : null}
+                confirmLabel="Delete permanently"
+                confirmTone="danger"
+                loading={working}
+            />
         </>
     );
 }
