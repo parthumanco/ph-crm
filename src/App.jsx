@@ -151,13 +151,10 @@ export default function App() {
       <main className="main-content">
         {/* Unified page header driven by page state */}
         <div className="app-page-header">
-          <button
-            onClick={() => { handleSetPage('projects'); projectsGoHome.current?.(); }}
-            style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', textAlign: 'left' }}
-          >
+          <div>
             <h2 className="app-page-title">{pt.title}</h2>
             <p className="app-page-sub">{pt.sub}</p>
-          </button>
+          </div>
         </div>
         <PageSlot active={page === 'clients'}>
           <ClientsPage onNavigate={handleSetPage} refreshKey={pageKeys.clients || 0} icp={icp} targetClientName={targetClientName} onTargetClientConsumed={() => setTargetClientName(null)} />
