@@ -5,6 +5,7 @@ import { findOrCreateCompany, enrichCompanyContact, upsertCompanyContacts, runBu
 import { STAGES, upsertDeal } from '../lib/deals';
 import ContactDossier from '../components/ContactDossier';
 import ContactsPanel from '../components/ContactsPanel';
+import CompanyIntelPanel from '../components/CompanyIntelPanel';
 import { parseCsvRows } from '../lib/csv';
 
 // ── Tiny AI helper: extract summary + action items + contact info ─────────────
@@ -1859,7 +1860,7 @@ export default function OldGoldPage({ isActive = false, onNavigate, icp = {} }) 
                   >{watchlist?.thesis ? 'Refresh Thesis' : 'Build Thesis'}</button>
                   {watchlist?.thesis && (
                     <button
-                      onClick={() => setThesisModal({ thesis: watchlist.thesis, risks: watchlist.thesis_risks, nextStep: watchlist.thesis_next_step })}
+                      onClick={() => setThesisModal(watchlist)}
                       style={{ fontSize: 11, padding: '4px 12px', borderRadius: 6, border: '1px solid #5b21b6', background: '#f5f3ff', color: '#5b21b6', cursor: 'pointer' }}
                     >See full thesis →</button>
                   )}
@@ -2023,7 +2024,7 @@ export default function OldGoldPage({ isActive = false, onNavigate, icp = {} }) 
         >
           <div
             onClick={e => e.stopPropagation()}
-            style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, width: '100%', maxWidth: 700, maxHeight: '85vh', display: 'flex', flexDirection: 'column', boxShadow: '0 20px 60px rgba(0,0,0,0.35)' }}
+            style={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 14, width: '100%', maxWidth: 860, maxHeight: '90vh', display: 'flex', flexDirection: 'column', boxShadow: '0 20px 60px rgba(0,0,0,0.35)' }}
           >
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 22px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
               <div>
@@ -2032,29 +2033,8 @@ export default function OldGoldPage({ isActive = false, onNavigate, icp = {} }) 
               </div>
               <button onClick={() => setThesisModal(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 20, color: 'var(--text-faint)', padding: '2px 6px', lineHeight: 1 }}>✕</button>
             </div>
-            <div style={{ overflowY: 'auto', padding: '20px 22px', flex: 1, display: 'flex', flexDirection: 'column', gap: 20 }}>
-              {thesisModal.thesis && (
-                <div>
-                  <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 8 }}>Thesis</div>
-                  <div style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.7 }}>{thesisModal.thesis}</div>
-                </div>
-              )}
-              {thesisModal.risks?.length > 0 && (
-                <div>
-                  <div style={{ fontSize: 10, fontWeight: 700, color: '#ef4444', textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 8 }}>Risks</div>
-                  <ul style={{ margin: 0, paddingLeft: 16, display: 'flex', flexDirection: 'column', gap: 4 }}>
-                    {thesisModal.risks.map((r, i) => (
-                      <li key={i} style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.7 }}>{typeof r === 'string' ? r : r.risk || r.label || r.title || JSON.stringify(r)}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-              {thesisModal.nextStep && (
-                <div>
-                  <div style={{ fontSize: 10, fontWeight: 700, color: '#10b981', textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 8 }}>Recommended Next Step</div>
-                  <div style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.7 }}>{thesisModal.nextStep}</div>
-                </div>
-              )}
+            <div style={{ overflowY: 'auto', padding: '20px 22px', flex: 1 }}>
+              <CompanyIntelPanel intel={thesisModal} />
             </div>
           </div>
         </div>
