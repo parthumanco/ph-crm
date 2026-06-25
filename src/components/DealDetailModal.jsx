@@ -2209,115 +2209,6 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
               {/* ── Research ── */}
               {tab === 'research' && (
                 <div>
-                  {/* ── Research Materials ── */}
-                  {(() => {
-                    const items = companyIntel?.research_items || [];
-                    const ITEM_ICONS = { link: '🔗', document: '📄', note: '📝' };
-                    return (
-                      <div style={{ marginBottom: 20 }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                          <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em' }}>
-                            Research Materials{items.length > 0 ? ` (${items.length})` : ''}
-                          </span>
-                          {!addingItem && (
-                            <button
-                              onClick={() => setAddingItem(true)}
-                              style={{ fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 6, border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff', cursor: 'pointer' }}
-                            >
-                              + Add
-                            </button>
-                          )}
-                        </div>
-
-                        {/* Add form */}
-                        {addingItem && (
-                          <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: 12, marginBottom: 10 }}>
-                            <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-                              {['link','document','note'].map(t => (
-                                <button
-                                  key={t}
-                                  onClick={() => setItemDraft(d => ({ ...d, type: t }))}
-                                  style={{
-                                    padding: '4px 10px', fontSize: 11, fontWeight: 700, borderRadius: 6, cursor: 'pointer',
-                                    background: itemDraft.type === t ? 'var(--accent)' : 'var(--bg)',
-                                    color: itemDraft.type === t ? '#fff' : 'var(--text-muted)',
-                                    border: `1px solid ${itemDraft.type === t ? 'var(--accent)' : 'var(--border)'}`,
-                                  }}
-                                >
-                                  {ITEM_ICONS[t]} {t.charAt(0).toUpperCase() + t.slice(1)}
-                                </button>
-                              ))}
-                            </div>
-                            <input
-                              type="text"
-                              placeholder="Title (optional)"
-                              value={itemDraft.title}
-                              onChange={e => setItemDraft(d => ({ ...d, title: e.target.value }))}
-                              style={{ width: '100%', fontSize: 12, marginBottom: 6 }}
-                            />
-                            {itemDraft.type === 'link' && (
-                              <input
-                                type="url"
-                                placeholder="https://…"
-                                value={itemDraft.url}
-                                onChange={e => setItemDraft(d => ({ ...d, url: e.target.value }))}
-                                style={{ width: '100%', fontSize: 12, marginBottom: 6 }}
-                              />
-                            )}
-                            {(itemDraft.type === 'document' || itemDraft.type === 'note') && (
-                              <textarea
-                                rows={5}
-                                placeholder={itemDraft.type === 'document' ? 'Paste document content, transcript, article text…' : 'Write your note…'}
-                                value={itemDraft.body}
-                                onChange={e => setItemDraft(d => ({ ...d, body: e.target.value }))}
-                                style={{ width: '100%', fontSize: 12, lineHeight: 1.5, marginBottom: 6 }}
-                              />
-                            )}
-                            <div style={{ display: 'flex', gap: 6 }}>
-                              <button className="btn btn-primary btn-sm" onClick={handleAddItem} disabled={savingItem}>
-                                {savingItem ? 'Saving…' : 'Add'}
-                              </button>
-                              <button className="btn btn-ghost btn-sm" onClick={() => { setAddingItem(false); setItemDraft({ type: 'link', title: '', url: '', body: '' }); }}>
-                                Cancel
-                              </button>
-                            </div>
-                          </div>
-                        )}
-
-                        {/* Items list */}
-                        {items.length > 0 && (
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-                            {items.map(item => (
-                              <div key={item.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '7px 10px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 6 }}>
-                                <span style={{ fontSize: 13, flexShrink: 0, marginTop: 1 }}>{ITEM_ICONS[item.type] || '📎'}</span>
-                                <div style={{ flex: 1, minWidth: 0 }}>
-                                  <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)', marginBottom: item.url ? 2 : 0 }}>{item.title}</div>
-                                  {item.url && (
-                                    <a href={item.url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, color: 'var(--accent)', wordBreak: 'break-all' }}>{item.url}</a>
-                                  )}
-                                  {item.body && (
-                                    <div style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.5, marginTop: 2, maxHeight: 40, overflow: 'hidden', maskImage: 'linear-gradient(to bottom, black 60%, transparent)' }}>
-                                      {item.body.slice(0, 120)}{item.body.length > 120 ? '…' : ''}
-                                    </div>
-                                  )}
-                                </div>
-                                <button onClick={() => handleRemoveItem(item.id)} style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 14, flexShrink: 0, padding: '0 2px', lineHeight: 1 }}>×</button>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-
-                        {items.length === 0 && !addingItem && (
-                          <p style={{ fontSize: 11, color: 'var(--text-faint)', margin: 0 }}>
-                            Add links, documents or notes — they'll be fed into the thesis builder as primary source intel.
-                          </p>
-                        )}
-                      </div>
-                    );
-                  })()}
-
-                  <hr style={{ border: 'none', borderTop: '1px solid var(--border)', margin: '0 0 16px' }} />
-
                   {/* Header row */}
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -2594,6 +2485,71 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
                       </button>
                     </div>
                   )}
+
+                  {/* ── Research Materials ── */}
+                  {(() => {
+                    const items = companyIntel?.research_items || [];
+                    const ITEM_ICONS = { link: '🔗', document: '📄', note: '📝' };
+                    return (
+                      <div style={{ marginTop: 28, paddingTop: 20, borderTop: '1px solid var(--border)' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                          <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em' }}>
+                            Research Materials{items.length > 0 ? ` (${items.length})` : ''}
+                          </span>
+                          {!addingItem && (
+                            <button onClick={() => setAddingItem(true)} style={{ fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 6, border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff', cursor: 'pointer' }}>
+                              + Add
+                            </button>
+                          )}
+                        </div>
+
+                        {addingItem && (
+                          <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: 12, marginBottom: 10 }}>
+                            <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                              {['link','document','note'].map(t => (
+                                <button key={t} onClick={() => setItemDraft(d => ({ ...d, type: t }))} style={{ padding: '4px 10px', fontSize: 11, fontWeight: 700, borderRadius: 6, cursor: 'pointer', background: itemDraft.type === t ? 'var(--accent)' : 'var(--bg)', color: itemDraft.type === t ? '#fff' : 'var(--text-muted)', border: `1px solid ${itemDraft.type === t ? 'var(--accent)' : 'var(--border)'}` }}>
+                                  {ITEM_ICONS[t]} {t.charAt(0).toUpperCase() + t.slice(1)}
+                                </button>
+                              ))}
+                            </div>
+                            <input type="text" placeholder="Title (optional)" value={itemDraft.title} onChange={e => setItemDraft(d => ({ ...d, title: e.target.value }))} style={{ width: '100%', fontSize: 12, marginBottom: 6 }} />
+                            {itemDraft.type === 'link' && (
+                              <input type="url" placeholder="https://…" value={itemDraft.url} onChange={e => setItemDraft(d => ({ ...d, url: e.target.value }))} style={{ width: '100%', fontSize: 12, marginBottom: 6 }} />
+                            )}
+                            {(itemDraft.type === 'document' || itemDraft.type === 'note') && (
+                              <textarea rows={5} placeholder={itemDraft.type === 'document' ? 'Paste document content, transcript, article text…' : 'Write your note…'} value={itemDraft.body} onChange={e => setItemDraft(d => ({ ...d, body: e.target.value }))} style={{ width: '100%', fontSize: 12, lineHeight: 1.5, marginBottom: 6 }} />
+                            )}
+                            <div style={{ display: 'flex', gap: 6 }}>
+                              <button className="btn btn-primary btn-sm" onClick={handleAddItem} disabled={savingItem}>{savingItem ? 'Saving…' : 'Add'}</button>
+                              <button className="btn btn-ghost btn-sm" onClick={() => { setAddingItem(false); setItemDraft({ type: 'link', title: '', url: '', body: '' }); }}>Cancel</button>
+                            </div>
+                          </div>
+                        )}
+
+                        {items.length > 0 && (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                            {items.map(item => (
+                              <div key={item.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '7px 10px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 6 }}>
+                                <span style={{ fontSize: 13, flexShrink: 0, marginTop: 1 }}>{ITEM_ICONS[item.type] || '📎'}</span>
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                  <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)', marginBottom: item.url ? 2 : 0 }}>{item.title}</div>
+                                  {item.url && <a href={item.url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, color: 'var(--accent)', wordBreak: 'break-all' }}>{item.url}</a>}
+                                  {item.body && <div style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.5, marginTop: 2, maxHeight: 40, overflow: 'hidden', maskImage: 'linear-gradient(to bottom, black 60%, transparent)' }}>{item.body.slice(0, 120)}{item.body.length > 120 ? '…' : ''}</div>}
+                                </div>
+                                <button onClick={() => handleRemoveItem(item.id)} style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 14, flexShrink: 0, padding: '0 2px', lineHeight: 1 }}>×</button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        {items.length === 0 && !addingItem && (
+                          <p style={{ fontSize: 11, color: 'var(--text-faint)', margin: 0 }}>
+                            Add links, documents or notes — they'll be fed into the thesis builder as primary source intel.
+                          </p>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </div>
               )}
 
