@@ -225,17 +225,24 @@ export default function ContactsPanel({ clientId, companyId, companyName, contac
                       </button>
                     )}
                     <button
-                      onClick={() => handleEnrichContact(c)}
-                      disabled={!!enrichingContact}
-                      title="Enrich with AI — builds full dossier from web search"
-                      style={{ fontSize: 10, fontWeight: 700, padding: '4px 10px', borderRadius: 6, border: '1px solid var(--accent)', background: isEnriching ? 'var(--surface-2)' : 'var(--accent)', color: isEnriching ? 'var(--accent)' : '#fff', cursor: enrichingContact ? 'default' : 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}
+                      onClick={() => {
+                        if (isExpanded) {
+                          setExpandedContact(null);
+                        } else {
+                          if (!enrichingContact) handleEnrichContact(c);
+                          setExpandedContact(c.name);
+                        }
+                      }}
+                      disabled={!!enrichingContact && !isExpanded}
+                      style={{ fontSize: 10, fontWeight: 700, padding: '4px 10px', borderRadius: 6, border: '1px solid var(--accent)', background: isEnriching ? 'var(--surface-2)' : 'var(--accent)', color: isEnriching ? 'var(--accent)' : '#fff', cursor: (enrichingContact && !isExpanded) ? 'default' : 'pointer', display: 'flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap' }}
                     >
-                      {isEnriching ? <><span style={{ display: 'inline-block', width: 8, height: 8, border: '1.5px solid var(--accent)', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} /> enriching…</> : '🔬 Enrich'}
+                      {isEnriching
+                        ? <><span style={{ display: 'inline-block', width: 8, height: 8, border: '1.5px solid var(--accent)', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} /> Building…</>
+                        : isExpanded
+                          ? '▲ Less'
+                          : isEnriched ? 'ↂ Refresh Dossier' : 'ↂ Build Dossier'}
                     </button>
                     <button onClick={() => startEdit(c)} title="Edit contact" style={{ background: 'none', border: '1px solid var(--border)', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 12, padding: '4px 7px', borderRadius: 6 }}>✏️</button>
-                    <button onClick={() => setExpandedContact(isExpanded ? null : c.name)} style={{ fontSize: 10, fontWeight: 700, padding: '4px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-muted)', cursor: 'pointer' }}>
-                      {isExpanded ? '▲ Less' : '▼ Dossier'}
-                    </button>
                   </div>
                 </div>
 
