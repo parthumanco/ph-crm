@@ -1189,17 +1189,19 @@ export default function SignalWatchPage({ onNavigate, icp, refreshKey = 0, isAct
     onTargetCompanyConsumed?.();
   }, [targetCompany]);
 
-  // Fire the jump once companies are loaded and there's a pending target
+  // Fire the jump once companies are loaded and there's a pending target.
+  // Gate on !loading so we always use the fresh list, not stale pre-reload data
+  // (important when the target company was just created by findOrCreateCompany).
   useEffect(() => {
     if (!pendingJumpName) return;
-    if (companies.length === 0) return; // wait for load
-    // Small delay lets React finish rendering the full list before jumping
+    if (loading) return;            // wait for the current fetch to finish
+    if (companies.length === 0) return;
     const t = setTimeout(() => {
       jumpToCompany(pendingJumpName);
       setPendingJumpName(null);
     }, 50);
     return () => clearTimeout(t);
-  }, [pendingJumpName, companies.length]);
+  }, [pendingJumpName, companies.length, loading]);
 
   const toolbarLabel = txt => (
     <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.07em', textTransform: 'uppercase', color: 'var(--text-muted)', minWidth: 48, flexShrink: 0 }}>{txt}</span>
