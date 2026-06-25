@@ -590,7 +590,7 @@ export default function OldGoldPage({ isActive = false, onNavigate, icp = {} }) 
       const [{ data: companies }, { data: deals }, { data: clients }] = await Promise.all([
         supabase.from('companies').select('id, name').order('name'),
         supabase.from('deals').select('id, company_name, stage').not('company_name', 'is', null).not('stage', 'eq', 'lost').not('stage', 'eq', 'won'),
-        supabase.from('clients').select('id, name'),
+        supabase.from('clients').select('id, name, archived_at'),
       ]);
       const map = new Map();
       (companies || []).forEach(c => {
@@ -601,10 +601,11 @@ export default function OldGoldPage({ isActive = false, onNavigate, icp = {} }) 
           map.set(d.company_name.toLowerCase(), { name: d.company_name, source: 'pipeline', id: d.id, stage: d.stage });
       });
       (clients || []).forEach(c => {
+        const src = c.archived_at ? 'former_client' : 'client';
         if (c.name && !map.has(c.name.toLowerCase()))
-          map.set(c.name.toLowerCase(), { name: c.name, source: 'client', id: c.id });
+          map.set(c.name.toLowerCase(), { name: c.name, source: src, id: c.id });
         else if (c.name && map.get(c.name.toLowerCase())?.source !== 'pipeline')
-          map.set(c.name.toLowerCase(), { ...map.get(c.name.toLowerCase()), source: 'client', clientId: c.id });
+          map.set(c.name.toLowerCase(), { ...map.get(c.name.toLowerCase()), source: src, clientId: c.id });
       });
       setAllCompanies(Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name)));
     }
@@ -1148,10 +1149,10 @@ export default function OldGoldPage({ isActive = false, onNavigate, icp = {} }) 
                             {p.company && (
                               <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 2 }}>
                                 <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{p.company}</span>
-                                {linkedCo && (
+                                {linkedCo && linkedCo.source !== 'intel' && (
                                   <button onClick={() => { onNavigate && onNavigate(linkedCo.source === 'pipeline' ? 'deals' : 'clients', linkedCo.source === 'pipeline' ? linkedCo.id : linkedCo.name); }}
-                                    style={{ fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 10, border: `1px solid ${linkedCo.source === 'pipeline' ? '#fbbf24' : '#c4b5fd'}`, background: linkedCo.source === 'pipeline' ? '#fffbeb' : '#f5f3ff', color: linkedCo.source === 'pipeline' ? '#92400e' : '#5b21b6', cursor: 'pointer' }}>
-                                    {linkedCo.source === 'pipeline' ? `⚡ ${linkedCo.name} →` : `🧠 ${linkedCo.name} →`}
+                                    style={{ fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 10, border: `1px solid ${linkedCo.source === 'pipeline' ? '#fbbf24' : linkedCo.source === 'former_client' ? '#d1d5db' : '#c4b5fd'}`, background: linkedCo.source === 'pipeline' ? '#fffbeb' : linkedCo.source === 'former_client' ? '#f3f4f6' : '#f5f3ff', color: linkedCo.source === 'pipeline' ? '#92400e' : linkedCo.source === 'former_client' ? '#6b7280' : '#5b21b6', cursor: 'pointer' }}>
+                                    {linkedCo.source === 'pipeline' ? `⚡ ${linkedCo.name} →` : linkedCo.source === 'former_client' ? `⭮ ${linkedCo.name} →` : `✓ ${linkedCo.name} →`}
                                   </button>
                                 )}
                               </div>
@@ -1396,6 +1397,7 @@ export default function OldGoldPage({ isActive = false, onNavigate, icp = {} }) 
                         if (!co) return null;
                         if (co.source === 'pipeline') return <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 10, background: '#fffbeb', color: '#92400e', border: '1px solid #fbbf24', flexShrink: 0 }}>⚡ Pipeline</span>;
                         if (co.source === 'client') return <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 10, background: '#f0fdf4', color: '#065f46', border: '1px solid #bbf7d0', flexShrink: 0 }}>✓ Client</span>;
+                        if (co.source === 'former_client') return <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 10, background: '#f3f4f6', color: '#6b7280', border: '1px solid #d1d5db', flexShrink: 0 }}>⭮ Former Client</span>;
                         return null;
                       })()}
                       <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 20, background: sm.bg, color: sm.color, flexShrink: 0 }}>{sm.label}</span>
@@ -1524,9 +1526,9 @@ export default function OldGoldPage({ isActive = false, onNavigate, icp = {} }) 
                     {active.company && (
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
                         <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>{active.company}</span>
-                        {linkedCo && (
-                          <button onClick={() => onNavigate && onNavigate(linkedCo.source === 'pipeline' ? 'deals' : 'clients', linkedCo.source === 'pipeline' ? linkedCo.id : linkedCo.name)} style={{ fontSize: 10, fontWeight: 700, padding: '1px 7px', borderRadius: 10, border: `1px solid ${linkedCo.source === 'pipeline' ? '#fbbf24' : '#c4b5fd'}`, background: linkedCo.source === 'pipeline' ? '#fffbeb' : '#f5f3ff', color: linkedCo.source === 'pipeline' ? '#92400e' : '#5b21b6', cursor: 'pointer' }}>
-                            {linkedCo.source === 'pipeline' ? `⚡ ${linkedCo.name}` : `🧠 ${linkedCo.name}`} →
+                        {linkedCo && linkedCo.source !== 'intel' && (
+                          <button onClick={() => onNavigate && onNavigate(linkedCo.source === 'pipeline' ? 'deals' : 'clients', linkedCo.source === 'pipeline' ? linkedCo.id : linkedCo.name)} style={{ fontSize: 10, fontWeight: 700, padding: '1px 7px', borderRadius: 10, border: `1px solid ${linkedCo.source === 'pipeline' ? '#fbbf24' : linkedCo.source === 'former_client' ? '#d1d5db' : '#c4b5fd'}`, background: linkedCo.source === 'pipeline' ? '#fffbeb' : linkedCo.source === 'former_client' ? '#f3f4f6' : '#f5f3ff', color: linkedCo.source === 'pipeline' ? '#92400e' : linkedCo.source === 'former_client' ? '#6b7280' : '#5b21b6', cursor: 'pointer' }}>
+                            {linkedCo.source === 'pipeline' ? `⚡ ${linkedCo.name}` : linkedCo.source === 'former_client' ? `⭮ ${linkedCo.name}` : `✓ ${linkedCo.name}`} →
                           </button>
                         )}
                       </div>

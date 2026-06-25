@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { supabase } from '../lib/supabase';
 import {
   fetchClients, fetchClientDetail, fetchCompanyIntel, runClientDeepScan, runBuildThesis,
   upsertClient, findOrCreateCompany,
@@ -54,6 +55,8 @@ export default function ClientsPage({ onNavigate, refreshKey, icp, targetClientN
   const [confirmDeleteProjectId, setConfirmDeleteProjectId] = useState(null); // project id awaiting delete confirmation
   const [deletingProjectId, setDeletingProjectId]     = useState(null);
   const [restoringProjectId, setRestoringProjectId]   = useState(null);
+  const [showArchivedClients, setShowArchivedClients] = useState(false);
+  const [archivingClientId, setArchivingClientId]     = useState(null);
 
   // New client
   const [showNewClient, setShowNewClient] = useState(false);
@@ -196,7 +199,10 @@ export default function ClientsPage({ onNavigate, refreshKey, icp, targetClientN
     return () => { cancelled = true; };
   }, [selected]);
 
-  const filtered = clients.filter(c => c.name.toLowerCase().includes(search.toLowerCase()));
+  const filtered = clients.filter(c =>
+    c.name.toLowerCase().includes(search.toLowerCase()) &&
+    (showArchivedClients ? !!c.archived_at : !c.archived_at)
+  );
 
   // ── Handlers ──────────────────────────────────────────────────────────────
   const handleCreateClient = async () => {
@@ -258,6 +264,26 @@ export default function ClientsPage({ onNavigate, refreshKey, icp, targetClientN
     } finally {
       setCreatingProject(false);
     }
+  };
+
+  const handleArchiveClient = async (clientId) => {
+    setArchivingClientId(clientId);
+    try {
+      const archived_at = new Date().toISOString();
+      await supabase.from('clients').update({ archived_at }).eq('id', clientId);
+      setClients(prev => prev.map(c => c.id === clientId ? { ...c, archived_at } : c));
+      if (selected === clientId) setSelected(clients.find(c => !c.archived_at && c.id !== clientId)?.id || null);
+    } catch (e) { console.error(e); }
+    finally { setArchivingClientId(null); }
+  };
+
+  const handleRestoreClient = async (clientId) => {
+    setArchivingClientId(clientId);
+    try {
+      await supabase.from('clients').update({ archived_at: null }).eq('id', clientId);
+      setClients(prev => prev.map(c => c.id === clientId ? { ...c, archived_at: null } : c));
+    } catch (e) { console.error(e); }
+    finally { setArchivingClientId(null); }
   };
 
   const handleSaveClient = async () => {
@@ -560,27 +586,48 @@ ${allContacts.map(c => `<div class="contact-row"><div><strong>${esc(c.name)}</st
               <span style={{ display: 'inline-block', width: 16, height: 16, border: '2px solid var(--accent)', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} />
             </div>
           ) : filtered.length === 0 ? (
-            <div style={{ fontSize: 12, color: 'var(--text-faint)', textAlign: 'center', padding: '24px 12px' }}>{search ? 'No match' : 'No clients yet'}</div>
+            <div style={{ fontSize: 12, color: 'var(--text-faint)', textAlign: 'center', padding: '24px 12px' }}>{search ? 'No match' : showArchivedClients ? 'No archived clients' : 'No clients yet'}</div>
           ) : (
             filtered.map(c => {
               const activeCount = (c.projects || []).filter(p => !p.archived_at && p.status === 'active').length;
+              const isSelected = selected === c.id;
               return (
-                <button
-                  key={c.id}
-                  onClick={() => setSelected(c.id)}
-                  style={{ width: '100%', textAlign: 'left', background: selected === c.id ? 'var(--accent)' : 'none', border: 'none', padding: '8px 14px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}
-                >
-                  <span style={{ fontSize: 13, fontWeight: 600, color: selected === c.id ? '#fff' : 'var(--text)', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{c.name}</span>
-                  {activeCount > 0 && (
-                    <span style={{ fontSize: 10, fontWeight: 700, background: selected === c.id ? 'rgba(255,255,255,0.25)' : '#dcfce7', color: selected === c.id ? '#fff' : '#059669', borderRadius: 10, padding: '1px 6px', flexShrink: 0 }}>{activeCount}</span>
-                  )}
-                </button>
+                <div key={c.id} style={{ display: 'flex', alignItems: 'center', background: isSelected ? 'var(--accent)' : 'none' }}>
+                  <button
+                    onClick={() => setSelected(c.id)}
+                    style={{ flex: 1, minWidth: 0, textAlign: 'left', background: 'none', border: 'none', padding: '8px 8px 8px 14px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}
+                  >
+                    <span style={{ fontSize: 13, fontWeight: 600, color: isSelected ? '#fff' : 'var(--text)', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{c.name}</span>
+                    {!showArchivedClients && activeCount > 0 && (
+                      <span style={{ fontSize: 10, fontWeight: 700, background: isSelected ? 'rgba(255,255,255,0.25)' : '#dcfce7', color: isSelected ? '#fff' : '#059669', borderRadius: 10, padding: '1px 6px', flexShrink: 0 }}>{activeCount}</span>
+                    )}
+                    {showArchivedClients && (
+                      <span style={{ fontSize: 9, fontWeight: 700, background: isSelected ? 'rgba(255,255,255,0.2)' : '#f3f4f6', color: isSelected ? '#fff' : '#6b7280', borderRadius: 8, padding: '1px 5px', flexShrink: 0 }}>ARCHIVED</span>
+                    )}
+                  </button>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); showArchivedClients ? handleRestoreClient(c.id) : handleArchiveClient(c.id); }}
+                    disabled={archivingClientId === c.id}
+                    title={showArchivedClients ? 'Restore client' : 'Archive client'}
+                    style={{ flexShrink: 0, padding: '4px 8px', background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, opacity: archivingClientId === c.id ? 0.4 : 0.45, color: isSelected ? '#fff' : 'var(--text-muted)' }}
+                  >{showArchivedClients ? '↩' : '⊘'}</button>
+                </div>
               );
             })
           )}
         </div>
-        <div style={{ padding: '8px 12px', borderTop: '1px solid var(--border)', fontSize: 10, color: 'var(--text-faint)' }}>
-          {clients.length} client{clients.length !== 1 ? 's' : ''}
+        <div style={{ padding: '8px 12px', borderTop: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+          <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>
+            {showArchivedClients
+              ? `${clients.filter(c => !!c.archived_at).length} archived`
+              : `${clients.filter(c => !c.archived_at).length} active`}
+          </span>
+          {clients.some(c => !!c.archived_at) && (
+            <button
+              onClick={() => { setShowArchivedClients(v => !v); setSelected(null); }}
+              style={{ fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 8, border: '1px solid var(--border)', background: showArchivedClients ? 'var(--accent)' : 'none', color: showArchivedClients ? '#fff' : 'var(--text-muted)', cursor: 'pointer' }}
+            >{showArchivedClients ? '← Active' : `Archived (${clients.filter(c => !!c.archived_at).length})`}</button>
+          )}
         </div>
       </div>
 

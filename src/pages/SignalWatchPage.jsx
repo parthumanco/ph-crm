@@ -165,6 +165,8 @@ export default function SignalWatchPage({ onNavigate, icp, refreshKey = 0, isAct
   const [weeklyScanChanges, setWeeklyScanChanges]   = useState([]);
   const [weeklyScanError, setWeeklyScanError]       = useState(null);
   const [siloAlerts, setSiloAlerts]                 = useState([]);
+  const [resolvingAlertId, setResolvingAlertId]     = useState(null); // prospect.id being resolved
+  const [resolvingInFlight, setResolvingInFlight]   = useState(false);
   const [lastWeeklyScan, setLastWeeklyScan]         = useState(null);
   const [serverScanNotification, setServerScanNotification] = useState(null);
   const [hqFillRunning, setHqFillRunning]   = useState(false);
@@ -264,9 +266,9 @@ export default function SignalWatchPage({ onNavigate, icp, refreshKey = 0, isAct
     // Cross-silo reconciliation: Old Gold prospects whose company is already in Pipeline or Clients
     async function checkCrossSilo() {
       const [{ data: prospects }, { data: deals }, { data: clients }] = await Promise.all([
-        supabase.from('old_gold_prospects').select('id, name, company, status').not('company', 'is', null).is('archived_at', null),
+        supabase.from('old_gold_prospects').select('id, name, company, status').not('company', 'is', null).is('archived_at', null).is('silo_resolution', null),
         supabase.from('deals').select('id, company_name, stage').not('stage', 'eq', 'lost').not('stage', 'eq', 'won'),
-        supabase.from('clients').select('id, name'),
+        supabase.from('clients').select('id, name, archived_at'),
       ]);
       const dealMap   = new Map((deals   || []).map(d => [d.company_name?.toLowerCase().trim(), d]));
       const clientMap = new Map((clients || []).map(c => [c.name?.toLowerCase().trim(), c]));
@@ -277,12 +279,28 @@ export default function SignalWatchPage({ onNavigate, icp, refreshKey = 0, isAct
         const deal   = dealMap.get(co);
         const client = clientMap.get(co);
         if (deal)   alerts.push({ prospect: p, type: 'pipeline', deal });
-        if (client) alerts.push({ prospect: p, type: 'client',   client });
+        if (client) alerts.push({ prospect: p, type: client.archived_at ? 'former_client' : 'client', client });
       });
       setSiloAlerts(alerts);
     }
     checkCrossSilo();
   }, [refreshKey]);
+
+  // ── Cross-silo resolution ──────────────────────────────────────────────────
+  const resolveAlert = async (alert, resolution) => {
+    setResolvingInFlight(true);
+    try {
+      const update = { silo_resolution: resolution };
+      if (resolution === 'moved') update.archived_at = new Date().toISOString();
+      await supabase.from('old_gold_prospects').update(update).eq('id', alert.prospect.id);
+      setSiloAlerts(prev => prev.filter(a => a.prospect.id !== alert.prospect.id));
+      setResolvingAlertId(null);
+    } catch (e) {
+      console.error('resolveAlert failed:', e);
+    } finally {
+      setResolvingInFlight(false);
+    }
+  };
 
   // ── CSV import ──────────────────────────────────────────────────────────────
 
@@ -1528,18 +1546,65 @@ export default function SignalWatchPage({ onNavigate, icp, refreshKey = 0, isAct
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               {siloAlerts.map((a, i) => (
-                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                  <span style={{ fontSize: 12, color: '#78350f' }}>
-                    <strong>{a.prospect.name}</strong> <span style={{ fontWeight: 400 }}>({a.prospect.company})</span>
-                    {a.type === 'pipeline'
-                      ? <> — company is in Pipeline <span style={{ fontWeight: 600 }}>({a.deal.stage?.replace(/_/g, ' ')})</span></>
-                      : <> — company is a <span style={{ fontWeight: 600 }}>Client</span></>
-                    }
-                  </span>
-                  <button
-                    onClick={() => onNavigate && onNavigate(a.type === 'pipeline' ? 'deals' : 'clients', a.type === 'pipeline' ? a.deal.id : a.client.name)}
-                    style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 10, border: '1px solid #fbbf24', background: 'none', color: '#92400e', cursor: 'pointer', whiteSpace: 'nowrap' }}
-                  >Open {a.type === 'pipeline' ? 'Deal' : 'Client'} →</button>
+                <div key={`${a.prospect.id}-${a.type}`} style={{ borderRadius: 6, overflow: 'hidden', border: resolvingAlertId === `${a.prospect.id}-${a.type}` ? '1px solid #fbbf24' : '1px solid transparent' }}>
+                  {/* Summary row */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', padding: '2px 0' }}>
+                    <span style={{ fontSize: 12, color: '#78350f', flex: 1, minWidth: 0 }}>
+                      <strong>{a.prospect.name}</strong> <span style={{ fontWeight: 400 }}>({a.prospect.company})</span>
+                      {a.type === 'pipeline'
+                        ? <> — company is in Pipeline <span style={{ fontWeight: 600 }}>({a.deal.stage?.replace(/_/g, ' ')})</span></>
+                        : a.type === 'former_client'
+                        ? <> — company is a <span style={{ fontWeight: 600 }}>Former Client</span></>
+                        : <> — company is a <span style={{ fontWeight: 600 }}>Client</span></>
+                      }
+                    </span>
+                    <button
+                      onClick={() => onNavigate && onNavigate(a.type === 'pipeline' ? 'deals' : 'clients', a.type === 'pipeline' ? a.deal.id : a.client.name)}
+                      style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 10, border: '1px solid #fbbf24', background: 'none', color: '#92400e', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                    >Open {a.type === 'pipeline' ? 'Deal' : 'Client'} →</button>
+                    <button
+                      onClick={() => setResolvingAlertId(prev => prev === `${a.prospect.id}-${a.type}` ? null : `${a.prospect.id}-${a.type}`)}
+                      style={{ fontSize: 11, fontWeight: 700, padding: '2px 10px', borderRadius: 10, border: '1px solid #d97706', background: resolvingAlertId === `${a.prospect.id}-${a.type}` ? '#fde68a' : '#fff7ed', color: '#92400e', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                    >Resolve ↓</button>
+                  </div>
+
+                  {/* Inline resolution panel */}
+                  {resolvingAlertId === `${a.prospect.id}-${a.type}` && (
+                    <div style={{ margin: '6px 0 4px', padding: '10px 12px', background: '#fff7ed', borderRadius: 6, border: '1px solid #fde68a', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: '#92400e', marginBottom: 2 }}>How do you want to handle {a.prospect.name}?</div>
+                      {[
+                        {
+                          key: 'linked',
+                          label: `Keep in Old Gold, linked to ${a.prospect.company}`,
+                          sub: `Stays active in Old Gold. Connection badge shown. Alert dismissed.`,
+                          color: '#065f46', bg: '#f0fdf4', border: '#bbf7d0',
+                        },
+                        {
+                          key: 'moved',
+                          label: `Archive from Old Gold — conversations stay with ${a.type === 'pipeline' ? 'the deal' : 'the client'}`,
+                          sub: `Removes from Old Gold list. All conversations retained and linked.`,
+                          color: '#1e40af', bg: '#eff6ff', border: '#bfdbfe',
+                        },
+                        {
+                          key: 'separate',
+                          label: 'Keep separate — dismiss alert',
+                          sub: 'Old Gold and CRM records treated as unrelated. Alert won\'t reappear.',
+                          color: '#374151', bg: '#f9fafb', border: '#e5e7eb',
+                        },
+                      ].map(opt => (
+                        <button
+                          key={opt.key}
+                          onClick={() => resolveAlert(a, opt.key)}
+                          disabled={resolvingInFlight}
+                          style={{ textAlign: 'left', padding: '8px 12px', borderRadius: 6, border: `1px solid ${opt.border}`, background: opt.bg, cursor: 'pointer', opacity: resolvingInFlight ? 0.5 : 1 }}
+                        >
+                          <div style={{ fontSize: 12, fontWeight: 700, color: opt.color }}>{opt.label}</div>
+                          <div style={{ fontSize: 11, color: '#6b7280', marginTop: 1 }}>{opt.sub}</div>
+                        </button>
+                      ))}
+                      <button onClick={() => setResolvingAlertId(null)} style={{ fontSize: 11, color: '#9ca3af', background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', padding: '2px 0' }}>Cancel</button>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
