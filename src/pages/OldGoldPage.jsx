@@ -1791,14 +1791,20 @@ export default function OldGoldPage({ isActive = false, onNavigate, icp = {} }) 
         const stageMeta   = deal ? STAGES.find(s => s.id === deal.stage) : null;
         const hasSummary  = !!watchlist?.summary;
         return (
-          <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, marginBottom: 14, overflow: 'hidden' }}>
+          <div
+            onClick={() => watchlist && setThesisModal(watchlist)}
+            onMouseEnter={e => { if (watchlist) { e.currentTarget.style.borderColor = 'var(--accent)'; e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,0.08)'; } }}
+            onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.boxShadow = 'none'; }}
+            style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, marginBottom: 14, overflow: 'hidden', cursor: watchlist ? 'pointer' : 'default', transition: 'border-color .15s, box-shadow .15s' }}
+          >
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 18px', background: 'var(--bg)', borderBottom: '1px solid var(--border)' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>{watchlist?.name || deal?.company_name || client?.name || active.company}</span>
                 <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 20, background: sourceBg, color: sourceColor }}>{sourceLabel}</span>
+                {watchlist && <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>— click to expand</span>}
               </div>
               <button
-                onClick={() => { const companyName = watchlist?.name || deal?.company_name || client?.name || active.company; closeOverlay(); if (client) onNavigate && onNavigate('clients', client.name); else if (deal) onNavigate && onNavigate('deals', deal.id); else onNavigate && onNavigate('signals', companyName); }}
+                onClick={e => { e.stopPropagation(); const companyName = watchlist?.name || deal?.company_name || client?.name || active.company; closeOverlay(); if (client) onNavigate && onNavigate('clients', client.name); else if (deal) onNavigate && onNavigate('deals', deal.id); else onNavigate && onNavigate('signals', companyName); }}
                 style={{ fontSize: 11, padding: '3px 10px', borderRadius: 20, border: '1px solid var(--border)', background: 'none', color: 'var(--text-muted)', cursor: 'pointer', whiteSpace: 'nowrap' }}
               >Open full card →</button>
             </div>
@@ -1849,7 +1855,7 @@ export default function OldGoldPage({ isActive = false, onNavigate, icp = {} }) 
             )}
 
             {/* Thesis row */}
-            <div style={{ padding: '10px 18px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <div onClick={e => e.stopPropagation()} style={{ padding: '10px 18px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               {thesisBuilding ? (
                 <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Building thesis…</span>
               ) : (
@@ -1858,19 +1864,13 @@ export default function OldGoldPage({ isActive = false, onNavigate, icp = {} }) 
                     onClick={handleBuildThesis}
                     style={{ fontSize: 11, fontWeight: 700, padding: '5px 14px', borderRadius: 20, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer' }}
                   >{watchlist?.thesis ? 'Refresh Thesis' : 'Build Thesis'}</button>
-                  {watchlist?.thesis && (
-                    <button
-                      onClick={() => setThesisModal(watchlist)}
-                      style={{ fontSize: 11, padding: '4px 12px', borderRadius: 6, border: '1px solid #5b21b6', background: '#f5f3ff', color: '#5b21b6', cursor: 'pointer' }}
-                    >See full thesis →</button>
-                  )}
                   {thesisError && <span style={{ fontSize: 11, color: '#ef4444' }}>{thesisError}</span>}
                 </>
               )}
             </div>
 
             {/* Move to Pipeline row */}
-            <div style={{ padding: '10px 18px', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <div onClick={e => e.stopPropagation()} style={{ padding: '10px 18px', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               {companyPanel?.deal ? (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <span style={{ fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 20, background: '#fffbeb', color: '#92400e', border: '1px solid #fbbf24' }}>
