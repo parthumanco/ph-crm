@@ -264,7 +264,7 @@ export default function SignalWatchPage({ onNavigate, icp, refreshKey = 0, isAct
     // Cross-silo reconciliation: Old Gold prospects whose company is already in Pipeline or Clients
     async function checkCrossSilo() {
       const [{ data: prospects }, { data: deals }, { data: clients }] = await Promise.all([
-        supabase.from('old_gold_prospects').select('id, name, company, status').not('company', 'is', null),
+        supabase.from('old_gold_prospects').select('id, name, company, status').not('company', 'is', null).is('archived_at', null),
         supabase.from('deals').select('id, company_name, stage').not('stage', 'eq', 'lost').not('stage', 'eq', 'won'),
         supabase.from('clients').select('id, name'),
       ]);
@@ -1537,7 +1537,7 @@ export default function SignalWatchPage({ onNavigate, icp, refreshKey = 0, isAct
                     }
                   </span>
                   <button
-                    onClick={() => onNavigate && onNavigate(a.type === 'pipeline' ? 'deals' : 'clients', a.type === 'pipeline' ? a.deal.id : null)}
+                    onClick={() => onNavigate && onNavigate(a.type === 'pipeline' ? 'deals' : 'clients', a.type === 'pipeline' ? a.deal.id : a.client.name)}
                     style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 10, border: '1px solid #fbbf24', background: 'none', color: '#92400e', cursor: 'pointer', whiteSpace: 'nowrap' }}
                   >Open {a.type === 'pipeline' ? 'Deal' : 'Client'} →</button>
                 </div>

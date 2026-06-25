@@ -589,7 +589,7 @@ export default function OldGoldPage({ isActive = false, onNavigate, icp = {} }) 
     async function loadAllCompanies() {
       const [{ data: companies }, { data: deals }, { data: clients }] = await Promise.all([
         supabase.from('companies').select('id, name').order('name'),
-        supabase.from('deals').select('id, company_name, stage').not('company_name', 'is', null).not('stage', 'eq', 'lost'),
+        supabase.from('deals').select('id, company_name, stage').not('company_name', 'is', null).not('stage', 'eq', 'lost').not('stage', 'eq', 'won'),
         supabase.from('clients').select('id, name'),
       ]);
       const map = new Map();
@@ -722,6 +722,7 @@ export default function OldGoldPage({ isActive = false, onNavigate, icp = {} }) 
     setPipelineError('');
     try {
       const deal = await upsertDeal({
+        company_id:    companyPanel?.watchlist?.id || null,
         company_name:  active.company || '',
         contact_name:  active.name    || '',
         contact_email: active.email   || '',
@@ -1148,7 +1149,7 @@ export default function OldGoldPage({ isActive = false, onNavigate, icp = {} }) 
                               <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 2 }}>
                                 <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{p.company}</span>
                                 {linkedCo && (
-                                  <button onClick={() => { onNavigate && onNavigate(linkedCo.source === 'pipeline' ? 'deals' : 'clients', linkedCo.source === 'pipeline' ? linkedCo.id : null); }}
+                                  <button onClick={() => { onNavigate && onNavigate(linkedCo.source === 'pipeline' ? 'deals' : 'clients', linkedCo.source === 'pipeline' ? linkedCo.id : linkedCo.name); }}
                                     style={{ fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 10, border: `1px solid ${linkedCo.source === 'pipeline' ? '#fbbf24' : '#c4b5fd'}`, background: linkedCo.source === 'pipeline' ? '#fffbeb' : '#f5f3ff', color: linkedCo.source === 'pipeline' ? '#92400e' : '#5b21b6', cursor: 'pointer' }}>
                                     {linkedCo.source === 'pipeline' ? `⚡ ${linkedCo.name} →` : `🧠 ${linkedCo.name} →`}
                                   </button>
@@ -1524,7 +1525,7 @@ export default function OldGoldPage({ isActive = false, onNavigate, icp = {} }) 
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
                         <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>{active.company}</span>
                         {linkedCo && (
-                          <button onClick={() => onNavigate && onNavigate(linkedCo.source === 'pipeline' ? 'deals' : 'clients', linkedCo.source === 'pipeline' ? linkedCo.id : null)} style={{ fontSize: 10, fontWeight: 700, padding: '1px 7px', borderRadius: 10, border: `1px solid ${linkedCo.source === 'pipeline' ? '#fbbf24' : '#c4b5fd'}`, background: linkedCo.source === 'pipeline' ? '#fffbeb' : '#f5f3ff', color: linkedCo.source === 'pipeline' ? '#92400e' : '#5b21b6', cursor: 'pointer' }}>
+                          <button onClick={() => onNavigate && onNavigate(linkedCo.source === 'pipeline' ? 'deals' : 'clients', linkedCo.source === 'pipeline' ? linkedCo.id : linkedCo.name)} style={{ fontSize: 10, fontWeight: 700, padding: '1px 7px', borderRadius: 10, border: `1px solid ${linkedCo.source === 'pipeline' ? '#fbbf24' : '#c4b5fd'}`, background: linkedCo.source === 'pipeline' ? '#fffbeb' : '#f5f3ff', color: linkedCo.source === 'pipeline' ? '#92400e' : '#5b21b6', cursor: 'pointer' }}>
                             {linkedCo.source === 'pipeline' ? `⚡ ${linkedCo.name}` : `🧠 ${linkedCo.name}`} →
                           </button>
                         )}
