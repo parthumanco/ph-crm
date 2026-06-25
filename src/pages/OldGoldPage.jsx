@@ -685,13 +685,8 @@ export default function OldGoldPage({ isActive = false, onNavigate, icp = {} }) 
       const merged = await enrichCompanyContact(company.id, baseContact, company.name);
       const updated = merged.find(c => c.name?.trim().toLowerCase() === active.name?.trim().toLowerCase());
       setDossierContact(updated || null);
-      // Sync enriched contact into companyPanel so the Contacts section updates live
-      if (merged?.length) {
-        setCompanyPanel(prev => prev?.watchlist
-          ? { ...prev, watchlist: { ...prev.watchlist, contacts: merged } }
-          : prev
-        );
-      }
+      // Don't auto-sync to companyPanel here — the Discovered section will show the contact
+      // for the user to explicitly promote via "+ Add", which then updates the contacts list.
     } catch (e) {
       alert('Error building dossier: ' + e.message);
     } finally {
@@ -1417,7 +1412,7 @@ export default function OldGoldPage({ isActive = false, onNavigate, icp = {} }) 
                 const sm = statusMeta(p.status);
                 const isConvArchived = convArchivedIds.has(p.id);
                 const isExpanded = expandedArchivedIds.has(p.id);
-                const isInactive = !!p.silo_resolution;
+                const isInactive = p.silo_resolution === 'moved';
                 const archivedConvs = isConvArchived ? allMeetings.filter(m => m.prospect_id === p.id) : [];
                 return (
                   <div key={p.id}>
