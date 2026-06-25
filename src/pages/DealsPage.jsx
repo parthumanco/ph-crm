@@ -644,26 +644,13 @@ export default function DealsPage({ refreshKey = 0, targetDealId = null, onTarge
                         </div>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                           {stageDeals.map(d => (
-                            <div key={d.id} style={{ position: 'relative' }}>
-                              <DealCard
-                                deal={d}
-                                onClick={() => { setShowNewDeal(false); setSelectedDeal(d); }}
-                                onDragStart={e => { e.dataTransfer.setData('dealId', d.id); setIsDragging(true); }}
-                                onDragEnd={() => { setIsDragging(false); setTrashHover(false); setWonCardHover(false); }}
-                              />
-                              {confirmDeleteNurtureId === d.id ? (
-                                <div style={{ position: 'absolute', top: 8, right: 8, display: 'flex', alignItems: 'center', gap: 6, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: '4px 8px', zIndex: 10 }}>
-                                  <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Remove?</span>
-                                  <button onClick={e => { e.stopPropagation(); handleDeleteNurtureDeal(d.id); }} style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 6, border: 'none', background: '#ef4444', color: '#fff', cursor: 'pointer' }}>Yes</button>
-                                  <button onClick={e => { e.stopPropagation(); setConfirmDeleteNurtureId(null); }} style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer' }}>No</button>
-                                </div>
-                              ) : (
-                                <button
-                                  onClick={e => { e.stopPropagation(); setConfirmDeleteNurtureId(d.id); }}
-                                  style={{ position: 'absolute', top: 8, right: 8, width: 20, height: 20, borderRadius: '50%', border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-faint)', fontSize: 11, lineHeight: 1, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-                                >×</button>
-                              )}
-                            </div>
+                            <DealCard
+                              key={d.id}
+                              deal={d}
+                              onClick={() => { setShowNewDeal(false); setSelectedDeal(d); }}
+                              onDragStart={e => { e.dataTransfer.setData('dealId', d.id); setIsDragging(true); }}
+                              onDragEnd={() => { setIsDragging(false); setTrashHover(false); setWonCardHover(false); }}
+                            />
                           ))}
                         </div>
                       </div>

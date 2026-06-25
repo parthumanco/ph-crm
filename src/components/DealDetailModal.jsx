@@ -334,32 +334,38 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
     if (movingBack) return;
     setMovingBack(true);
     try {
-      // Move deal to nurture stage — preserves all tasks, files, activities, meetings
-      await upsertDeal({ ...deal, stage: 'nurture' });
-      // Sync pipeline_entries so Signal Watch / Watch List views pick it up correctly
-      if (deal.company_id) {
-        const { data: existing } = await supabase
-          .from('pipeline_entries')
-          .select('id, status')
-          .eq('company_id', deal.company_id)
-          .order('updated_at', { ascending: false })
-          .limit(1);
-        if (existing?.length) {
-          await supabase.from('pipeline_entries')
-            .update({ status: 'watch_list', updated_at: new Date().toISOString() })
-            .eq('id', existing[0].id);
-        } else {
-          await supabase.from('pipeline_entries').insert({
-            company_id: deal.company_id,
-            status: 'watch_list',
-            notes: deal.notes || null,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          });
+      if (deal.stage === 'nurture') {
+        // Already in nurture/Watch List — just remove from pipeline entirely
+        await deleteDeal(deal.id);
+        onClose();
+        onSaved?.(null);
+      } else {
+        // Move deal to nurture stage and sync pipeline_entries
+        await upsertDeal({ ...deal, stage: 'nurture' });
+        if (deal.company_id) {
+          const { data: existing } = await supabase
+            .from('pipeline_entries')
+            .select('id, status')
+            .eq('company_id', deal.company_id)
+            .order('updated_at', { ascending: false })
+            .limit(1);
+          if (existing?.length) {
+            await supabase.from('pipeline_entries')
+              .update({ status: 'watch_list', updated_at: new Date().toISOString() })
+              .eq('id', existing[0].id);
+          } else {
+            await supabase.from('pipeline_entries').insert({
+              company_id: deal.company_id,
+              status: 'watch_list',
+              notes: deal.notes || null,
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            });
+          }
         }
+        onClose();
+        onSaved?.({ ...deal, stage: 'nurture' });
       }
-      onClose();
-      onSaved?.({ ...deal, stage: 'nurture' });
     } catch (e) {
       alert('Error moving to Watch List: ' + e.message);
     } finally {
