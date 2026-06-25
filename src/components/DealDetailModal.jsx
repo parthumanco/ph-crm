@@ -1390,10 +1390,9 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
               <div style={{ position: 'sticky', top: -20, zIndex: 10, display: 'flex', gap: 0, borderBottom: '2px solid var(--border)', overflowX: 'auto', background: 'var(--bg)', margin: '0 -24px 16px', padding: '0 24px' }}>
                 {[
                   { id: 'nextsteps',  label: openTasks.length > 0 ? `Next Steps (${openTasks.length})` : 'Next Steps' },
-                  { id: 'activities', label: 'Activity' },
+                  { id: 'research',   label: 'Company Overview' },
                   { id: 'meetings',   label: meetings.length > 0 ? `Meetings (${meetings.length})` : 'Meetings' },
                   { id: 'files',      label: allDealFiles.length > 0 ? `Files (${allDealFiles.length})` : 'Files' },
-                  { id: 'research',   label: 'Research' },
                   { id: 'contacts',   label: 'Contacts' },
                   { id: 'oldgold',    label: ogHistory?.length ? `Old Gold (${ogHistory.reduce((n, p) => n + p.meetings.length, 0)})` : 'Old Gold' },
                 ].map(t => (
@@ -1414,87 +1413,6 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
               </div>
 
               {/* ── Activities ── */}
-              {tab === 'activities' && (
-                <div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-                    <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em' }}>Activity Log</span>
-                    <button className="btn btn-primary btn-xs" onClick={() => setAddingAct(a => !a)}>+ Log Activity</button>
-                  </div>
-
-                  {addingAct && (
-                    <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: 12, marginBottom: 12 }}>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 8 }}>
-                        <select value={actForm.type} onChange={e => setActForm(f => ({ ...f, type: e.target.value }))} style={{ fontSize: 12 }}>
-                          {ACTIVITY_TYPES.map(t => <option key={t} value={t}>{t.charAt(0).toUpperCase() + t.slice(1)}</option>)}
-                        </select>
-                        <input type="date" value={actForm.activity_date} onChange={e => setActForm(f => ({ ...f, activity_date: e.target.value }))} style={{ fontSize: 12 }} />
-                        <select value={actForm.assigned_to} onChange={e => setActForm(f => ({ ...f, assigned_to: e.target.value }))} style={{ fontSize: 12 }}>
-                          {OWNERS.map(o => <option key={o} value={o}>{o}</option>)}
-                        </select>
-                      </div>
-                      <textarea rows={2} placeholder="What happened? Key points, outcomes…" value={actForm.summary} onChange={e => setActForm(f => ({ ...f, summary: e.target.value }))} style={{ width: '100%', fontSize: 12, lineHeight: 1.5, marginBottom: 8 }} />
-                      <div style={{ display: 'flex', gap: 6 }}>
-                        <button className="btn btn-primary btn-sm" onClick={submitActivity} disabled={savingAct}>{savingAct ? 'Saving…' : 'Log'}</button>
-                        <button className="btn btn-ghost btn-sm" onClick={() => setAddingAct(false)}>Cancel</button>
-                      </div>
-                    </div>
-                  )}
-
-                  {activities.length === 0 && !addingAct && (
-                    <p style={{ fontSize: 12, color: 'var(--text-faint)', textAlign: 'center', padding: '16px 0' }}>No activity logged yet.</p>
-                  )}
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                    {activities.map(a => {
-                      // Parse optional [ToName] prefix embedded at save time
-                      const toMatch = a.type === 'email' ? a.summary?.match(/^\[([^\]]+)\]/) : null;
-                      const toName  = toMatch?.[1] || null;
-                      const displaySummary = toName ? a.summary.replace(/^\[[^\]]+\]/, '') : a.summary;
-                      return (
-                      <div key={a.id} style={{ display: 'flex', gap: 10, padding: '10px 12px', background: 'var(--surface)', borderRadius: 6, border: `1px solid ${confirmDeleteActId === a.id ? '#fca5a5' : 'var(--border)'}`, transition: 'border-color .15s' }}>
-                        <span style={{ fontSize: 16, flexShrink: 0, marginTop: 1 }}>{ACTIVITY_ICONS[a.type] || '📝'}</span>
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', marginBottom: 2 }}>
-                            <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'capitalize' }}>{a.type}</span>
-                            <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>{a.activity_date}</span>
-                            {a.assigned_to && <span style={{ fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 3, background: a.assigned_to === 'Mike' ? '#f3e8ff' : '#eff6ff', color: a.assigned_to === 'Mike' ? '#7c3aed' : '#1d4ed8' }}>{a.assigned_to}</span>}
-                            {toName && (
-                              <span style={{ fontSize: 11, color: 'var(--text-faint)', display: 'flex', alignItems: 'center', gap: 3 }}>
-                                <span style={{ fontSize: 9, opacity: 0.5 }}>→</span>
-                                <span style={{ fontWeight: 600, color: 'var(--text-muted)' }}>{toName}</span>
-                              </span>
-                            )}
-                          </div>
-                          <p style={{ fontSize: 12, color: 'var(--text)', margin: 0, lineHeight: 1.5 }}>{displaySummary}</p>
-                        </div>
-                        {/* Delete control */}
-                        <div style={{ flexShrink: 0, display: 'flex', alignItems: 'flex-start', gap: 4, paddingTop: 1 }}>
-                          {confirmDeleteActId === a.id ? (
-                            <>
-                              <button
-                                onClick={() => { removeActivity(a.id); setConfirmDeleteActId(null); }}
-                                style={{ fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 4, border: '1px solid #fca5a5', background: '#fee2e2', color: '#dc2626', cursor: 'pointer' }}
-                              >Delete</button>
-                              <button
-                                onClick={() => setConfirmDeleteActId(null)}
-                                style={{ fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text-muted)', cursor: 'pointer' }}
-                              >Cancel</button>
-                            </>
-                          ) : (
-                            <button
-                              onClick={() => setConfirmDeleteActId(a.id)}
-                              title="Delete activity"
-                              style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 14, lineHeight: 1, padding: '1px 3px', borderRadius: 3, opacity: 0.5 }}
-                              onMouseEnter={e => e.currentTarget.style.opacity = '1'}
-                              onMouseLeave={e => e.currentTarget.style.opacity = '0.5'}
-                            >🗑</button>
-                          )}
-                        </div>
-                      </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
 
               {/* ── Next Steps ── */}
               {tab === 'nextsteps' && (
@@ -2091,6 +2009,73 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
                   <button className="btn btn-secondary btn-sm" onClick={saveNotes} disabled={savingNotes}>
                     {savingNotes ? 'Saving…' : 'Save Notes'}
                   </button>
+                </div>
+
+                {/* ── Activity Log ── */}
+                <div style={{ marginTop: 28, paddingTop: 20, borderTop: '1px solid var(--border)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                    <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em' }}>Activity Log</span>
+                    <button className="btn btn-primary btn-xs" onClick={() => setAddingAct(a => !a)}>+ Log Activity</button>
+                  </div>
+
+                  {addingAct && (
+                    <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: 12, marginBottom: 12 }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 8 }}>
+                        <select value={actForm.type} onChange={e => setActForm(f => ({ ...f, type: e.target.value }))} style={{ fontSize: 12 }}>
+                          {ACTIVITY_TYPES.map(t => <option key={t} value={t}>{t.charAt(0).toUpperCase() + t.slice(1)}</option>)}
+                        </select>
+                        <input type="date" value={actForm.activity_date} onChange={e => setActForm(f => ({ ...f, activity_date: e.target.value }))} style={{ fontSize: 12 }} />
+                        <select value={actForm.assigned_to} onChange={e => setActForm(f => ({ ...f, assigned_to: e.target.value }))} style={{ fontSize: 12 }}>
+                          {OWNERS.map(o => <option key={o} value={o}>{o}</option>)}
+                        </select>
+                      </div>
+                      <textarea rows={2} placeholder="What happened? Key points, outcomes…" value={actForm.summary} onChange={e => setActForm(f => ({ ...f, summary: e.target.value }))} style={{ width: '100%', fontSize: 12, lineHeight: 1.5, marginBottom: 8 }} />
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        <button className="btn btn-primary btn-sm" onClick={submitActivity} disabled={savingAct}>{savingAct ? 'Saving…' : 'Log'}</button>
+                        <button className="btn btn-ghost btn-sm" onClick={() => setAddingAct(false)}>Cancel</button>
+                      </div>
+                    </div>
+                  )}
+
+                  {activities.length === 0 && !addingAct && (
+                    <p style={{ fontSize: 12, color: 'var(--text-faint)', textAlign: 'center', padding: '16px 0' }}>No activity logged yet.</p>
+                  )}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {activities.map(a => {
+                      const toMatch = a.type === 'email' ? a.summary?.match(/^\[([^\]]+)\]/) : null;
+                      const toName  = toMatch?.[1] || null;
+                      const displaySummary = toName ? a.summary.replace(/^\[[^\]]+\]/, '') : a.summary;
+                      return (
+                        <div key={a.id} style={{ display: 'flex', gap: 10, padding: '10px 12px', background: 'var(--surface)', borderRadius: 6, border: `1px solid ${confirmDeleteActId === a.id ? '#fca5a5' : 'var(--border)'}`, transition: 'border-color .15s' }}>
+                          <span style={{ fontSize: 16, flexShrink: 0, marginTop: 1 }}>{ACTIVITY_ICONS[a.type] || '📝'}</span>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', marginBottom: 2 }}>
+                              <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'capitalize' }}>{a.type}</span>
+                              <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>{a.activity_date}</span>
+                              {a.assigned_to && <span style={{ fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 3, background: a.assigned_to === 'Mike' ? '#f3e8ff' : '#eff6ff', color: a.assigned_to === 'Mike' ? '#7c3aed' : '#1d4ed8' }}>{a.assigned_to}</span>}
+                              {toName && (
+                                <span style={{ fontSize: 11, color: 'var(--text-faint)', display: 'flex', alignItems: 'center', gap: 3 }}>
+                                  <span style={{ fontSize: 9, opacity: 0.5 }}>→</span>
+                                  <span style={{ fontWeight: 600, color: 'var(--text-muted)' }}>{toName}</span>
+                                </span>
+                              )}
+                            </div>
+                            <p style={{ fontSize: 12, color: 'var(--text)', margin: 0, lineHeight: 1.5 }}>{displaySummary}</p>
+                          </div>
+                          <div style={{ flexShrink: 0, display: 'flex', alignItems: 'flex-start', gap: 4, paddingTop: 1 }}>
+                            {confirmDeleteActId === a.id ? (
+                              <>
+                                <button onClick={() => { removeActivity(a.id); setConfirmDeleteActId(null); }} style={{ fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 4, border: '1px solid #fca5a5', background: '#fee2e2', color: '#dc2626', cursor: 'pointer' }}>Delete</button>
+                                <button onClick={() => setConfirmDeleteActId(null)} style={{ fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text-muted)', cursor: 'pointer' }}>Cancel</button>
+                              </>
+                            ) : (
+                              <button onClick={() => setConfirmDeleteActId(a.id)} title="Delete activity" style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 14, lineHeight: 1, padding: '1px 3px', borderRadius: 3, opacity: 0.5 }} onMouseEnter={e => e.currentTarget.style.opacity = '1'} onMouseLeave={e => e.currentTarget.style.opacity = '0.5'}>🗑</button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
                 </div>
               )}
