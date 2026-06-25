@@ -57,7 +57,6 @@ export default function ClientsPage({ onNavigate, refreshKey, icp, targetClientN
   const [restoringProjectId, setRestoringProjectId]   = useState(null);
   const [showArchivedClients, setShowArchivedClients] = useState(false);
   const [archivingClientId, setArchivingClientId]     = useState(null);
-  const [clientCardHovered, setClientCardHovered]     = useState(false);
 
   // New client
   const [showNewClient, setShowNewClient] = useState(false);
@@ -639,11 +638,7 @@ ${allContacts.map(c => `<div class="contact-row"><div><strong>${esc(c.name)}</st
         ) : detail ? (
           <>
             {/* Header */}
-            <div
-              style={{ padding: '20px 28px 0', flexShrink: 0, borderBottom: '1px solid var(--border)' }}
-              onMouseEnter={() => setClientCardHovered(true)}
-              onMouseLeave={() => setClientCardHovered(false)}
-            >
+            <div style={{ padding: '20px 28px 0', flexShrink: 0, borderBottom: '1px solid var(--border)' }}>
               <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, marginBottom: 14 }}>
                 <div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
@@ -661,13 +656,6 @@ ${allContacts.map(c => `<div class="contact-row"><div><strong>${esc(c.name)}</st
                     {detail.client.website && <a href={detail.client.website} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: 'var(--accent)', textDecoration: 'none' }}>🌐 {detail.client.website.replace(/^https?:\/\//, '')}</a>}
                     {detail.client.linkedin_url && <a href={detail.client.linkedin_url} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: '#0077b5', textDecoration: 'none' }}>in LinkedIn</a>}
                   </div>
-                  <button
-                    onClick={() => detail.client.archived_at ? handleRestoreClient(detail.client.id) : handleArchiveClient(detail.client.id)}
-                    disabled={archivingClientId === detail.client.id}
-                    style={{ marginTop: 10, fontSize: 11, color: '#9ca3af', background: 'none', border: 'none', cursor: 'pointer', padding: 0, opacity: clientCardHovered ? 1 : 0, transition: 'opacity 0.15s', pointerEvents: clientCardHovered ? 'auto' : 'none' }}
-                  >
-                    {archivingClientId === detail.client.id ? '…' : detail.client.archived_at ? '↩ Restore client' : 'Archive client'}
-                  </button>
                 </div>
                 <div style={{ display: 'flex', gap: 8, flexShrink: 0, flexWrap: 'wrap', alignItems: 'center' }}>
                   {intel?.scan_date && (
@@ -723,11 +711,22 @@ ${allContacts.map(c => `<div class="contact-row"><div><strong>${esc(c.name)}</st
 
               {/* ── Overview (Intelligence) ── */}
               {tab === 'overview' && (
-                <CompanyIntelPanel
-                  intel={intel}
-                  extraSources={detail.items}
-                  emptyMessage={`No intelligence data yet for ${detail.client.name}. This client doesn't have a matching entry in Watch List. Add them there first to enable deep scanning.`}
-                />
+                <>
+                  <CompanyIntelPanel
+                    intel={intel}
+                    extraSources={detail.items}
+                    emptyMessage={`No intelligence data yet for ${detail.client.name}. This client doesn't have a matching entry in Watch List. Add them there first to enable deep scanning.`}
+                  />
+                  <div style={{ padding: '12px 24px 20px', borderTop: '1px solid var(--border)' }}>
+                    <button
+                      onClick={() => detail.client.archived_at ? handleRestoreClient(detail.client.id) : handleArchiveClient(detail.client.id)}
+                      disabled={archivingClientId === detail.client.id}
+                      style={{ fontSize: 11, fontWeight: 600, padding: '5px 14px', borderRadius: 20, border: '1px solid var(--border)', background: 'none', color: 'var(--text-faint)', cursor: 'pointer' }}
+                    >
+                      {archivingClientId === detail.client.id ? '…' : detail.client.archived_at ? '↩ Restore client' : 'Archive client'}
+                    </button>
+                  </div>
+                </>
               )}
 
 
