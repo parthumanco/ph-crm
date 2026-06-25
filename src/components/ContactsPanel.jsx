@@ -1,12 +1,6 @@
 import { useState } from 'react';
-import { upsertClientContacts, deleteClientContact, updateClientContact, setPrimaryClientContact, enrichClientContact } from '../lib/clients';
+import { upsertClientContacts, deleteClientContact, updateClientContact, setPrimaryClientContact, enrichClientContact, upsertCompanyContacts, deleteCompanyContactFromContacts, updateCompanyContactInContacts, setPrimaryCompanyContact, enrichCompanyContact } from '../lib/clients';
 import ContactDossier from './ContactDossier';
-
-// Shared contacts UI for ClientsPage and ProjectsPage. Both pages now read and
-// write the SAME `clients.contacts` row (via `clientId`), so adding, editing,
-// deleting, or setting a primary contact in one place is immediately reflected
-// in the other — there's only one underlying array, not two copies to keep in
-// sync by hand.
 
 const SOURCE_COLORS = { thesis: '#8b5cf6', scan: '#3b82f6', manual: '#10b981' };
 const srcColorFor = s => SOURCE_COLORS[s] || '#94a3b8';
@@ -18,14 +12,23 @@ function fmtDate(d) {
 
 const BLANK_DRAFT = { name: '', title: '', email: '', linkedin: '' };
 
-/**
- * @param {string} clientId - clients.id; all mutations write to this row
- * @param {string} companyName - used for AI enrichment context
- * @param {array} contacts - clients.contacts (the canonical, editable list)
- * @param {array} discovered - candidate contacts (from scans/thesis/deal) not yet added
- * @param {(updated: array) => void} onContactsChange - called with the new contacts array after any mutation
- */
-export default function ContactsPanel({ clientId, companyName, contacts = [], discovered = [], onContactsChange }) {
+export default function ContactsPanel({ clientId, companyId, companyName, contacts = [], discovered = [], onContactsChange }) {
+  // Derive the right record ID and CRUD functions depending on whether we're
+  // backed by the clients table (clientId) or companies table (companyId).
+  const recordId = clientId || companyId;
+  const fn = clientId ? {
+    upsert:     (id, cs) => upsertClientContacts(id, cs),
+    delete:     (id, name) => deleteClientContact(id, name),
+    update:     (id, orig, patch) => updateClientContact(id, orig, patch),
+    setPrimary: (id, name) => setPrimaryClientContact(id, name),
+    enrich:     (id, c, co) => enrichClientContact(id, c, co),
+  } : {
+    upsert:     (id, cs) => upsertCompanyContacts(id, cs),
+    delete:     (id, name) => deleteCompanyContactFromContacts(id, name),
+    update:     (id, orig, patch) => updateCompanyContactInContacts(id, orig, patch),
+    setPrimary: (id, name) => setPrimaryCompanyContact(id, name),
+    enrich:     (id, c, co) => enrichCompanyContact(id, c, co),
+  };
   const [addingContact, setAddingContact]   = useState(false);
   const [contactDraft, setContactDraft]     = useState(BLANK_DRAFT);
   const [editingContact, setEditingContact] = useState(null); // original name of contact being edited
@@ -39,9 +42,9 @@ export default function ContactsPanel({ clientId, companyName, contacts = [], di
   const [promoting, setPromoting] = useState(null);
 
   const handleAddContact = async () => {
-    if (!contactDraft.name.trim() || !clientId) return;
+    if (!contactDraft.name.trim() || !recordId) return;
     const newContact = { ...contactDraft, id: crypto.randomUUID(), source: 'manual', created_at: new Date().toISOString() };
-    const updated = await upsertClientContacts(clientId, [newContact]);
+    const updated = await fn.upsert(recordId, [newContact]);
     onContactsChange(updated);
     setContactDraft(BLANK_DRAFT);
     setAddingContact(false);
@@ -54,17 +57,17 @@ export default function ContactsPanel({ clientId, companyName, contacts = [], di
   };
 
   const handleSaveEdit = async () => {
-    if (!editingContact || !editDraft.name.trim() || !clientId) return;
-    const updated = await updateClientContact(clientId, editingContact, editDraft);
+    if (!editingContact || !editDraft.name.trim() || !recordId) return;
+    const updated = await fn.update(recordId, editingContact, editDraft);
     onContactsChange(updated);
     setEditingContact(null);
   };
 
   const handleSetPrimary = async (c) => {
-    if (!clientId || settingPrimary) return;
+    if (!recordId || settingPrimary) return;
     setSettingPrimary(c.name);
     try {
-      const updated = await setPrimaryClientContact(clientId, c.name);
+      const updated = await fn.setPrimary(recordId, c.name);
       onContactsChange(updated);
     } finally {
       setSettingPrimary(null);
@@ -72,10 +75,10 @@ export default function ContactsPanel({ clientId, companyName, contacts = [], di
   };
 
   const handleDeleteContact = async (c) => {
-    if (!clientId || deletingContact) return;
+    if (!recordId || deletingContact) return;
     setDeletingContact(c.name);
     try {
-      const updated = await deleteClientContact(clientId, c.name);
+      const updated = await fn.delete(recordId, c.name);
       onContactsChange(updated);
       setConfirmDeleteContact(null);
       if (expandedContact === c.name) setExpandedContact(null);
@@ -87,10 +90,10 @@ export default function ContactsPanel({ clientId, companyName, contacts = [], di
   };
 
   const handleEnrichContact = async (c) => {
-    if (!clientId || enrichingContact) return;
+    if (!recordId || enrichingContact) return;
     setEnrichingContact(c.name);
     try {
-      const updated = await enrichClientContact(clientId, c, companyName || '');
+      const updated = await fn.enrich(recordId, c, companyName || '');
       onContactsChange(updated);
       setExpandedContact(c.name);
     } catch (e) {
@@ -101,11 +104,11 @@ export default function ContactsPanel({ clientId, companyName, contacts = [], di
   };
 
   const handlePromote = async (c) => {
-    if (!clientId || promoting) return;
+    if (!recordId || promoting) return;
     setPromoting(c.name);
     try {
       const isFirst = contacts.length === 0;
-      const updated = await upsertClientContacts(clientId, [{ ...c, is_primary: isFirst }]);
+      const updated = await fn.upsert(recordId, [{ ...c, is_primary: isFirst }]);
       onContactsChange(updated);
     } finally {
       setPromoting(null);

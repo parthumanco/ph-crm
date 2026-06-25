@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { saveProjectMeeting } from '../lib/projects';
-import { findOrCreateCompany, enrichCompanyContact, upsertCompanyContacts, runBuildThesis, findOrCreateClient, upsertClientContacts } from '../lib/clients';
+import { findOrCreateCompany, enrichCompanyContact, upsertCompanyContacts, runBuildThesis } from '../lib/clients';
 import { STAGES, upsertDeal } from '../lib/deals';
 import ContactDossier from '../components/ContactDossier';
 import ContactsPanel from '../components/ContactsPanel';
@@ -203,7 +203,6 @@ export default function OldGoldPage({ isActive = false, onNavigate, icp = {} }) 
   const [search, setSearch] = useState('');
   const [dossierContact, setDossierContact] = useState(null); // matching companies.contacts entry for active prospect
   const [buildingDossier, setBuildingDossier] = useState(false);
-  const [clientRecord, setClientRecord]     = useState(null); // clients row — shared contact list with project cards
 
   // Forms
   const [addingProspect, setAddingProspect] = useState(false);
@@ -274,6 +273,7 @@ export default function OldGoldPage({ isActive = false, onNavigate, icp = {} }) 
   const [restoringId,         setRestoringId]         = useState(null);
   const [connectedProspects,  setConnectedProspects]  = useState([]);
   const [showConnected,       setShowConnected]       = useState(false);
+  const [confirmInactiveId,   setConfirmInactiveId]   = useState(null);
 
   // Load error (shown at top of page body if prospects fail to load)
   const [loadError, setLoadError] = useState('');
@@ -590,7 +590,7 @@ export default function OldGoldPage({ isActive = false, onNavigate, icp = {} }) 
   const loadAllMeetings = useCallback(async () => {
     const { data } = await supabase
       .from('old_gold_meetings')
-      .select('*, old_gold_prospects(id, name, company, status)')
+      .select('*, old_gold_prospects(id, name, company, status, silo_resolution)')
       .order('meeting_date', { ascending: false })
       .order('created_at', { ascending: false });
     setAllMeetings(data || []);
@@ -631,25 +631,21 @@ export default function OldGoldPage({ isActive = false, onNavigate, icp = {} }) 
     setShowImport(false);
     setDossierContact(null);
     setCompanyPanel(null);
-    setClientRecord(null);
     loadDetail(p);
     loadDossierContact(p);
     loadCompanyPanel(p.company);
-    if (p.company?.trim()) {
-      findOrCreateClient(p.company.trim()).then(setClientRecord).catch(() => {});
-    }
   };
 
   const loadCompanyPanel = async (companyName) => {
     if (!companyName?.trim()) { setCompanyPanel(null); return; }
     setCompanyPanelLoading(true);
     try {
-      const [{ data: wlRows }, { data: dealRows }, { data: clientRows }] = await Promise.all([
-        supabase.from('companies').select('*').ilike('name', companyName.trim()).limit(1),
+      const [watchlist, { data: dealRows }, { data: clientRows }] = await Promise.all([
+        findOrCreateCompany(companyName.trim()),
         supabase.from('deals').select('id, company_name, stage, value').ilike('company_name', companyName.trim()).not('stage', 'eq', 'lost').order('created_at', { ascending: false }).limit(1),
         supabase.from('clients').select('id, name, projects(id, name, status, archived_at)').ilike('name', companyName.trim()).limit(1),
       ]);
-      setCompanyPanel({ watchlist: wlRows?.[0] || null, deal: dealRows?.[0] || null, client: clientRows?.[0] || null });
+      setCompanyPanel({ watchlist: watchlist || null, deal: dealRows?.[0] || null, client: clientRows?.[0] || null });
     } catch (e) {
       console.error('loadCompanyPanel:', e);
       setCompanyPanel(null);
@@ -666,7 +662,7 @@ export default function OldGoldPage({ isActive = false, onNavigate, icp = {} }) 
     const nameLower = p.name?.trim().toLowerCase();
     if (!nameLower) return;
     try {
-      // Primary source: clients.contacts (set when clientRecord loads, but may not be ready yet)
+      // Primary: clients.contacts (if this company is also a client with prior enrichment)
       const { data: clientRow } = await supabase
         .from('clients').select('contacts').ilike('name', p.company.trim()).limit(1).maybeSingle();
       const fromClient = (clientRow?.contacts || []).find(c => c.name?.trim().toLowerCase() === nameLower);
@@ -681,17 +677,20 @@ export default function OldGoldPage({ isActive = false, onNavigate, icp = {} }) 
   const handleBuildDossier = async () => {
     if (!active) return;
     if (!active.company?.trim()) { alert('Add a company for this contact first — the dossier is stored on the shared company record so it shows up everywhere this contact appears.'); return; }
+    if (!companyPanel?.watchlist?.id) { alert('Company panel not loaded yet — try again in a moment.'); return; }
     setBuildingDossier(true);
     try {
-      const company = await findOrCreateCompany(active.company.trim());
+      const company = companyPanel.watchlist;
       const baseContact = dossierContact || { name: active.name, title: active.title || '', email: active.email || '', linkedin: active.linkedin || '' };
       const merged = await enrichCompanyContact(company.id, baseContact, company.name);
       const updated = merged.find(c => c.name?.trim().toLowerCase() === active.name?.trim().toLowerCase());
       setDossierContact(updated || null);
-      // Also save to clients.contacts so it's visible in project cards and ClientsPage
-      if (updated && clientRecord?.id) {
-        const newContacts = await upsertClientContacts(clientRecord.id, [updated]);
-        setClientRecord(cr => cr ? { ...cr, contacts: newContacts } : cr);
+      // Sync enriched contact into companyPanel so the Contacts section updates live
+      if (merged?.length) {
+        setCompanyPanel(prev => prev?.watchlist
+          ? { ...prev, watchlist: { ...prev.watchlist, contacts: merged } }
+          : prev
+        );
       }
     } catch (e) {
       alert('Error building dossier: ' + e.message);
@@ -705,12 +704,12 @@ export default function OldGoldPage({ isActive = false, onNavigate, icp = {} }) 
     if (editingProspect && hasEdited.current && prospectDraft.name?.trim() && active) {
       await supabase.from('old_gold_prospects').update({ ...prospectDraft, updated_at: new Date().toISOString() }).eq('id', active.id);
     }
-    setActive(null); setMeetings([]); setTasks([]); setDossierContact(null); setCompanyPanel(null); setClientRecord(null);
+    setActive(null); setMeetings([]); setTasks([]); setDossierContact(null); setCompanyPanel(null);
     setEditingProspect(false); setAutoSaveStatus('idle'); setProspectDraft(BLANK_PROSPECT);
     hasEdited.current = false;
     setThesisBuilding(false); setThesisError(''); setThesisModal(null);
     setPipelineConfirm(null); setMovingToPipeline(false); setPipelineError('');
-    setDeleteConfirmId(null);
+    setDeleteConfirmId(null); setConfirmInactiveId(null);
   }, [editingProspect, active, prospectDraft]);
 
   const handleBuildThesis = async () => {
@@ -842,6 +841,25 @@ export default function OldGoldPage({ isActive = false, onNavigate, icp = {} }) 
     } finally {
       setRestoringId(null);
     }
+  };
+
+  const handleMoveToInactive = async () => {
+    if (!active) return;
+    const { error } = await supabase.from('old_gold_prospects')
+      .update({ silo_resolution: 'moved', archived_at: null })
+      .eq('id', active.id);
+    if (error) { alert('Could not move to inactive: ' + error.message); return; }
+    const updated = { ...active, silo_resolution: 'moved', archived_at: null };
+    setProspects(prev => prev.filter(p => p.id !== active.id));
+    setConnectedProspects(prev => prev.some(p => p.id === active.id) ? prev.map(p => p.id === active.id ? updated : p) : [updated, ...prev]);
+    // Update embedded prospect data in allMeetings so the conversation card
+    // disappears from the active grid immediately (render checks silo_resolution).
+    setAllMeetings(prev => prev.map(m =>
+      m.prospect_id === active.id
+        ? { ...m, old_gold_prospects: { ...m.old_gold_prospects, silo_resolution: 'moved' } }
+        : m
+    ));
+    await closeOverlay();
   };
 
   // ── CSV import (e.g. LinkedIn "My Connections" export) ─────────────────────
@@ -1280,6 +1298,7 @@ export default function OldGoldPage({ isActive = false, onNavigate, icp = {} }) 
             const linkedCo = p?.company ? allCompanies.find(c => c.name.toLowerCase() === p.company.toLowerCase()) : null;
             const groupKey = p?.id || latest.id;
             if (p?.id && convArchivedIds.has(p.id)) return null;
+            if (p?.silo_resolution === 'moved') return null;
             const expanded = expandedMtgIds.has(groupKey);
             // Combined action items across every conversation with this contact,
             // deduped by title (most recent conversation's version wins).
@@ -1382,13 +1401,13 @@ export default function OldGoldPage({ isActive = false, onNavigate, icp = {} }) 
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-            {prospects
+            {[...prospects, ...connectedProspects]
               .filter(p => {
                 const inMeetingList = allMeetings.some(m => m.prospect_id === p.id);
                 const isConvArchived = convArchivedIds.has(p.id);
                 const inActivePanel = quickSaved?.prospect?.id === p.id;
                 if (inActivePanel) return false;
-                if (inMeetingList && !isConvArchived) return false;
+                if (inMeetingList && !isConvArchived && !p.silo_resolution) return false;
                 if (!search.trim()) return true;
                 const q = search.trim().toLowerCase();
                 return [p.name, p.company, p.title, p.email].some(f => f?.toLowerCase().includes(q));
@@ -1398,18 +1417,19 @@ export default function OldGoldPage({ isActive = false, onNavigate, icp = {} }) 
                 const sm = statusMeta(p.status);
                 const isConvArchived = convArchivedIds.has(p.id);
                 const isExpanded = expandedArchivedIds.has(p.id);
+                const isInactive = !!p.silo_resolution;
                 const archivedConvs = isConvArchived ? allMeetings.filter(m => m.prospect_id === p.id) : [];
                 return (
                   <div key={p.id}>
                     <div
                       onClick={() => {
-                        if (isConvArchived) {
+                        if (isConvArchived && !isInactive) {
                           setExpandedArchivedIds(prev => { const s = new Set(prev); s.has(p.id) ? s.delete(p.id) : s.add(p.id); return s; });
                         } else {
                           openProspect(p);
                         }
                       }}
-                      style={{ display: 'flex', alignItems: 'center', padding: '9px 14px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: isExpanded ? '8px 8px 0 0' : 8, cursor: 'pointer', gap: 10, transition: 'border-color .15s' }}
+                      style={{ display: 'flex', alignItems: 'center', padding: '9px 14px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: isExpanded ? '8px 8px 0 0' : 8, cursor: 'pointer', gap: 10, transition: 'border-color .15s', opacity: isInactive ? 0.6 : 1 }}
                       onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--accent)'; }}
                       onMouseLeave={e => { e.currentTarget.style.borderColor = isExpanded ? 'var(--accent)' : 'var(--border)'; }}
                     >
@@ -1424,8 +1444,11 @@ export default function OldGoldPage({ isActive = false, onNavigate, icp = {} }) 
                         if (co.source === 'former_client') return <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 10, background: '#f3f4f6', color: '#6b7280', border: '1px solid #d1d5db', flexShrink: 0 }}>⭮ Former Client</span>;
                         return null;
                       })()}
-                      <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 20, background: sm.bg, color: sm.color, flexShrink: 0 }}>{sm.label}</span>
-                      <span style={{ fontSize: 11, color: 'var(--text-faint)', flexShrink: 0, minWidth: 10 }}>{isConvArchived ? (isExpanded ? '▲' : '▼') : '→'}</span>
+                      {isInactive
+                        ? <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 7px', borderRadius: 20, background: '#f3f4f6', color: '#9ca3af', border: '1px solid #e5e7eb', flexShrink: 0 }}>Inactive</span>
+                        : <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 20, background: sm.bg, color: sm.color, flexShrink: 0 }}>{sm.label}</span>
+                      }
+                      <span style={{ fontSize: 11, color: 'var(--text-faint)', flexShrink: 0, minWidth: 10 }}>→</span>
                     </div>
                     {isExpanded && archivedConvs.length > 0 && (
                       <div style={{ border: '1px solid var(--border)', borderTop: 'none', borderRadius: '0 0 8px 8px', background: 'var(--surface)', padding: '12px 14px' }}>
@@ -1694,6 +1717,61 @@ export default function OldGoldPage({ isActive = false, onNavigate, icp = {} }) 
             )}
           </div>
 
+      {/* ── Meeting Log — full width ── */}
+      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: 18, marginBottom: 14 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--text)' }}>
+            Meeting Log
+            {meetings.length > 0 && <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--text-faint)', marginLeft: 8 }}>{meetings.length} meeting{meetings.length !== 1 ? 's' : ''}</span>}
+          </div>
+          <button
+            onClick={() => { setShowImport(v => !v); setImportError(''); }}
+            style={{ fontSize: 11, fontWeight: 700, padding: '4px 12px', borderRadius: 6, border: showImport ? '1px solid var(--border)' : '1px solid var(--accent)', background: showImport ? 'none' : 'var(--accent)', color: showImport ? 'var(--text-muted)' : '#fff', cursor: 'pointer' }}
+          >{showImport ? '✕ Cancel' : '+ Import Transcript'}</button>
+        </div>
+
+        {/* Import form */}
+        {showImport && (
+          <div style={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 8, padding: 14, marginBottom: 16 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 8, marginBottom: 8 }}>
+              <div>
+                <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 3 }}>Meeting title</label>
+                <input type="text" value={importTitle} onChange={e => setImportTitle(e.target.value)} placeholder={`Meeting with ${active.name}…`} style={{ width: '100%', fontSize: 12 }} />
+              </div>
+              <div>
+                <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 3 }}>Date</label>
+                <input type="date" value={importDate} onChange={e => setImportDate(e.target.value)} style={{ fontSize: 12, padding: '5px 8px', width: 'auto' }} />
+              </div>
+            </div>
+            <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 3 }}>Granola transcript</label>
+            <textarea
+              rows={6}
+              value={importTranscript}
+              onChange={e => setImportTranscript(e.target.value)}
+              placeholder="Paste your Granola transcript here…"
+              style={{ width: '100%', fontSize: 12, lineHeight: 1.6, fontFamily: 'monospace', marginBottom: 10 }}
+            />
+            {importError && <div style={{ fontSize: 12, color: '#ef4444', marginBottom: 8 }}>{importError}</div>}
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button onClick={() => { setShowImport(false); setImportTranscript(''); setImportError(''); }} style={{ fontSize: 12, padding: '5px 14px', borderRadius: 6, border: '1px solid var(--border)', background: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}>Cancel</button>
+              <button onClick={handleImport} disabled={importing || !importTranscript.trim()} style={{ fontSize: 12, fontWeight: 700, padding: '5px 16px', borderRadius: 6, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer' }}>
+                {importing ? '⏳ Processing…' : '✨ Import & Extract Tasks'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Meeting list */}
+        {!detailLoading && meetings.length === 0 && !showImport && (
+          <div style={{ fontSize: 12, color: 'var(--text-faint)', fontStyle: 'italic' }}>No meetings yet. Import a Granola transcript to get started.</div>
+        )}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {meetings.map(m => (
+            <MeetingCard key={m.id} meeting={m} tasks={tasks} />
+          ))}
+        </div>
+      </div>
+
       {/* ── Company Panel ── */}
       {active.company && (() => {
         if (companyPanelLoading) return (
@@ -1841,75 +1919,23 @@ export default function OldGoldPage({ isActive = false, onNavigate, icp = {} }) 
         );
       })()}
 
-      {/* ── Meeting Log — full width ── */}
-      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: 18, marginBottom: 14 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
-          <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--text)' }}>
-            Meeting Log
-            {meetings.length > 0 && <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--text-faint)', marginLeft: 8 }}>{meetings.length} meeting{meetings.length !== 1 ? 's' : ''}</span>}
-          </div>
-          <button
-            onClick={() => { setShowImport(v => !v); setImportError(''); }}
-            style={{ fontSize: 11, fontWeight: 700, padding: '4px 12px', borderRadius: 6, border: showImport ? '1px solid var(--border)' : '1px solid var(--accent)', background: showImport ? 'none' : 'var(--accent)', color: showImport ? 'var(--text-muted)' : '#fff', cursor: 'pointer' }}
-          >{showImport ? '✕ Cancel' : '+ Import Transcript'}</button>
-        </div>
-
-        {/* Import form */}
-        {showImport && (
-          <div style={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 8, padding: 14, marginBottom: 16 }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 8, marginBottom: 8 }}>
-              <div>
-                <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 3 }}>Meeting title</label>
-                <input type="text" value={importTitle} onChange={e => setImportTitle(e.target.value)} placeholder={`Meeting with ${active.name}…`} style={{ width: '100%', fontSize: 12 }} />
-              </div>
-              <div>
-                <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 3 }}>Date</label>
-                <input type="date" value={importDate} onChange={e => setImportDate(e.target.value)} style={{ fontSize: 12, padding: '5px 8px', width: 'auto' }} />
-              </div>
-            </div>
-            <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 3 }}>Granola transcript</label>
-            <textarea
-              rows={6}
-              value={importTranscript}
-              onChange={e => setImportTranscript(e.target.value)}
-              placeholder="Paste your Granola transcript here…"
-              style={{ width: '100%', fontSize: 12, lineHeight: 1.6, fontFamily: 'monospace', marginBottom: 10 }}
-            />
-            {importError && <div style={{ fontSize: 12, color: '#ef4444', marginBottom: 8 }}>{importError}</div>}
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-              <button onClick={() => { setShowImport(false); setImportTranscript(''); setImportError(''); }} style={{ fontSize: 12, padding: '5px 14px', borderRadius: 6, border: '1px solid var(--border)', background: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}>Cancel</button>
-              <button onClick={handleImport} disabled={importing || !importTranscript.trim()} style={{ fontSize: 12, fontWeight: 700, padding: '5px 16px', borderRadius: 6, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer' }}>
-                {importing ? '⏳ Processing…' : '✨ Import & Extract Tasks'}
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Meeting list */}
-        {!detailLoading && meetings.length === 0 && !showImport && (
-          <div style={{ fontSize: 12, color: 'var(--text-faint)', fontStyle: 'italic' }}>No meetings yet. Import a Granola transcript to get started.</div>
-        )}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          {meetings.map(m => (
-            <MeetingCard key={m.id} meeting={m} tasks={tasks} />
-          ))}
-        </div>
-      </div>
-
-      {/* ── Contacts — shared with project cards & ClientsPage ── */}
-      {clientRecord && (
+      {/* ── Contacts — backed by companies.contacts so it's shared with Watch List ── */}
+      {companyPanel?.watchlist?.id && (
         <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: 18 }}>
           <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--text)', marginBottom: 12 }}>Contacts</div>
           <ContactsPanel
-            clientId={clientRecord.id}
+            companyId={companyPanel.watchlist.id}
             companyName={active.company || ''}
-            contacts={clientRecord.contacts || []}
+            contacts={companyPanel.watchlist.contacts || []}
             discovered={(() => {
-              const added = new Set((clientRecord.contacts || []).map(c => c.name?.trim().toLowerCase()));
+              const added = new Set((companyPanel.watchlist.contacts || []).map(c => c.name?.trim().toLowerCase()));
               const sources = dossierContact ? [dossierContact] : [];
               return sources.filter(c => c?.name && !added.has(c.name.trim().toLowerCase()));
             })()}
-            onContactsChange={updated => setClientRecord(cr => cr ? { ...cr, contacts: updated } : cr)}
+            onContactsChange={updated => setCompanyPanel(prev => prev?.watchlist
+              ? { ...prev, watchlist: { ...prev.watchlist, contacts: updated } }
+              : prev
+            )}
           />
         </div>
       )}
@@ -1922,7 +1948,7 @@ export default function OldGoldPage({ isActive = false, onNavigate, icp = {} }) 
             onClick={handleBuildDossier}
             disabled={buildingDossier}
             style={{ fontSize: 11, fontWeight: 700, padding: '4px 12px', borderRadius: 6, border: '1px solid var(--accent)', background: buildingDossier ? 'none' : 'var(--accent)', color: buildingDossier ? 'var(--text-muted)' : '#fff', cursor: 'pointer' }}
-          >{buildingDossier ? '⏳ Building…' : '✨ Build Dossier'}</button>
+          >{buildingDossier ? '⏳ Building…' : dossierContact ? '↻ Refresh Dossier' : '✨ Build Dossier'}</button>
         </div>
         {dossierContact ? (
           <ContactDossier contact={dossierContact} />
@@ -1974,11 +2000,19 @@ export default function OldGoldPage({ isActive = false, onNavigate, icp = {} }) 
       )}
 
           {/* ── Bottom footer ── */}
-          <div style={{ marginTop: 20, paddingTop: 14, borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'flex-start' }}>
-            <button
-              onClick={handleArchiveProspect}
-              style={{ fontSize: 11, fontWeight: 600, padding: '4px 14px', borderRadius: 20, border: '1px solid #fca5a5', background: 'transparent', color: '#b91c1c', cursor: 'pointer' }}
-            >Archive contact</button>
+          <div style={{ marginTop: 20, paddingTop: 14, borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'flex-start', alignItems: 'center', gap: 8 }}>
+            {confirmInactiveId === active?.id ? (
+              <>
+                <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Move {active.name} to inactive?</span>
+                <button onClick={handleMoveToInactive} style={{ fontSize: 11, fontWeight: 600, padding: '4px 14px', borderRadius: 20, border: '1px solid #fca5a5', background: 'transparent', color: '#b91c1c', cursor: 'pointer' }}>Yes, move</button>
+                <button onClick={() => setConfirmInactiveId(null)} style={{ fontSize: 11, padding: '4px 10px', borderRadius: 20, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer' }}>Cancel</button>
+              </>
+            ) : (
+              <button
+                onClick={() => setConfirmInactiveId(active?.id)}
+                style={{ fontSize: 11, fontWeight: 600, padding: '4px 14px', borderRadius: 20, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer' }}
+              >Move to inactive</button>
+            )}
           </div>
               </div>
             </div>

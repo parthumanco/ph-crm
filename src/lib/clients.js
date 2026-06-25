@@ -48,6 +48,17 @@ export async function fetchClients() {
   return data || [];
 }
 
+export async function findClient(name) {
+  if (!name?.trim()) return null;
+  const { data } = await supabase
+    .from('clients')
+    .select('*')
+    .ilike('name', name.trim())
+    .limit(1)
+    .maybeSingle();
+  return data || null;
+}
+
 export async function findOrCreateClient(name) {
   if (!name?.trim()) return null;
   const clean = name.trim();
