@@ -57,6 +57,7 @@ export default function ClientsPage({ onNavigate, refreshKey, icp, targetClientN
   const [restoringProjectId, setRestoringProjectId]   = useState(null);
   const [showArchivedClients, setShowArchivedClients] = useState(false);
   const [archivingClientId, setArchivingClientId]     = useState(null);
+  const [clientCardHovered, setClientCardHovered]     = useState(false);
 
   // New client
   const [showNewClient, setShowNewClient] = useState(false);
@@ -592,26 +593,19 @@ ${allContacts.map(c => `<div class="contact-row"><div><strong>${esc(c.name)}</st
               const activeCount = (c.projects || []).filter(p => !p.archived_at && p.status === 'active').length;
               const isSelected = selected === c.id;
               return (
-                <div key={c.id} style={{ display: 'flex', alignItems: 'center', background: isSelected ? 'var(--accent)' : 'none' }}>
-                  <button
-                    onClick={() => setSelected(c.id)}
-                    style={{ flex: 1, minWidth: 0, textAlign: 'left', background: 'none', border: 'none', padding: '8px 8px 8px 14px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}
-                  >
-                    <span style={{ fontSize: 13, fontWeight: 600, color: isSelected ? '#fff' : 'var(--text)', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{c.name}</span>
-                    {!showArchivedClients && activeCount > 0 && (
-                      <span style={{ fontSize: 10, fontWeight: 700, background: isSelected ? 'rgba(255,255,255,0.25)' : '#dcfce7', color: isSelected ? '#fff' : '#059669', borderRadius: 10, padding: '1px 6px', flexShrink: 0 }}>{activeCount}</span>
-                    )}
-                    {showArchivedClients && (
-                      <span style={{ fontSize: 9, fontWeight: 700, background: isSelected ? 'rgba(255,255,255,0.2)' : '#f3f4f6', color: isSelected ? '#fff' : '#6b7280', borderRadius: 8, padding: '1px 5px', flexShrink: 0 }}>ARCHIVED</span>
-                    )}
-                  </button>
-                  <button
-                    onClick={(e) => { e.stopPropagation(); showArchivedClients ? handleRestoreClient(c.id) : handleArchiveClient(c.id); }}
-                    disabled={archivingClientId === c.id}
-                    title={showArchivedClients ? 'Restore client' : 'Archive client'}
-                    style={{ flexShrink: 0, padding: '4px 8px', background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, opacity: archivingClientId === c.id ? 0.4 : 0.45, color: isSelected ? '#fff' : 'var(--text-muted)' }}
-                  >{showArchivedClients ? '↩' : '⊘'}</button>
-                </div>
+                <button
+                  key={c.id}
+                  onClick={() => setSelected(c.id)}
+                  style={{ width: '100%', textAlign: 'left', background: isSelected ? 'var(--accent)' : 'none', border: 'none', padding: '8px 14px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}
+                >
+                  <span style={{ fontSize: 13, fontWeight: 600, color: isSelected ? '#fff' : 'var(--text)', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis', flex: 1 }}>{c.name}</span>
+                  {!showArchivedClients && activeCount > 0 && (
+                    <span style={{ fontSize: 10, fontWeight: 700, background: isSelected ? 'rgba(255,255,255,0.25)' : '#dcfce7', color: isSelected ? '#fff' : '#059669', borderRadius: 10, padding: '1px 6px', flexShrink: 0 }}>{activeCount}</span>
+                  )}
+                  {showArchivedClients && (
+                    <span style={{ fontSize: 9, fontWeight: 700, background: isSelected ? 'rgba(255,255,255,0.2)' : '#f3f4f6', color: isSelected ? '#fff' : '#6b7280', borderRadius: 8, padding: '1px 5px', flexShrink: 0 }}>ARCHIVED</span>
+                  )}
+                </button>
               );
             })
           )}
@@ -645,7 +639,11 @@ ${allContacts.map(c => `<div class="contact-row"><div><strong>${esc(c.name)}</st
         ) : detail ? (
           <>
             {/* Header */}
-            <div style={{ padding: '20px 28px 0', flexShrink: 0, borderBottom: '1px solid var(--border)' }}>
+            <div
+              style={{ padding: '20px 28px 0', flexShrink: 0, borderBottom: '1px solid var(--border)' }}
+              onMouseEnter={() => setClientCardHovered(true)}
+              onMouseLeave={() => setClientCardHovered(false)}
+            >
               <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, marginBottom: 14 }}>
                 <div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
@@ -663,6 +661,13 @@ ${allContacts.map(c => `<div class="contact-row"><div><strong>${esc(c.name)}</st
                     {detail.client.website && <a href={detail.client.website} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: 'var(--accent)', textDecoration: 'none' }}>🌐 {detail.client.website.replace(/^https?:\/\//, '')}</a>}
                     {detail.client.linkedin_url && <a href={detail.client.linkedin_url} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: '#0077b5', textDecoration: 'none' }}>in LinkedIn</a>}
                   </div>
+                  <button
+                    onClick={() => detail.client.archived_at ? handleRestoreClient(detail.client.id) : handleArchiveClient(detail.client.id)}
+                    disabled={archivingClientId === detail.client.id}
+                    style={{ marginTop: 10, fontSize: 11, color: '#9ca3af', background: 'none', border: 'none', cursor: 'pointer', padding: 0, opacity: clientCardHovered ? 1 : 0, transition: 'opacity 0.15s', pointerEvents: clientCardHovered ? 'auto' : 'none' }}
+                  >
+                    {archivingClientId === detail.client.id ? '…' : detail.client.archived_at ? '↩ Restore client' : 'Archive client'}
+                  </button>
                 </div>
                 <div style={{ display: 'flex', gap: 8, flexShrink: 0, flexWrap: 'wrap', alignItems: 'center' }}>
                   {intel?.scan_date && (
