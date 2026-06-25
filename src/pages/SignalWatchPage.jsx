@@ -291,7 +291,7 @@ export default function SignalWatchPage({ onNavigate, icp, refreshKey = 0, isAct
     setResolvingInFlight(true);
     try {
       const update = { silo_resolution: resolution };
-      if (resolution === 'moved') update.archived_at = new Date().toISOString();
+      if (resolution === 'moved') update.archived_at = null; // keep in Old Gold inactive section, not fully archived
       await supabase.from('old_gold_prospects').update(update).eq('id', alert.prospect.id);
       setSiloAlerts(prev => prev.filter(a => a.prospect.id !== alert.prospect.id));
       setResolvingAlertId(null);
@@ -1581,8 +1581,8 @@ export default function SignalWatchPage({ onNavigate, icp, refreshKey = 0, isAct
                         },
                         {
                           key: 'moved',
-                          label: `Archive from Old Gold — conversations stay with ${a.type === 'pipeline' ? 'the deal' : 'the client'}`,
-                          sub: `Removes from Old Gold list. All conversations retained and linked.`,
+                          label: `Move to inactive in Old Gold — stay connected to ${a.type === 'pipeline' ? 'the deal' : 'the client'}`,
+                          sub: `Stays in Old Gold below the fold. All conversations accessible from both Old Gold and the ${a.type === 'pipeline' ? 'deal' : 'client'} card.`,
                           color: '#1e40af', bg: '#eff6ff', border: '#bfdbfe',
                         },
                         {

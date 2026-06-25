@@ -268,10 +268,12 @@ export default function OldGoldPage({ isActive = false, onNavigate, icp = {} }) 
 
   // Archived contacts (soft-delete) — "Delete contact" archives rather than
   // permanently deletes, and can be restored from this section.
-  const [archivedProspects, setArchivedProspects] = useState([]);
-  const [loadingArchived,   setLoadingArchived]   = useState(false);
-  const [showArchived,      setShowArchived]      = useState(false);
-  const [restoringId,       setRestoringId]       = useState(null);
+  const [archivedProspects,   setArchivedProspects]   = useState([]);
+  const [loadingArchived,     setLoadingArchived]     = useState(false);
+  const [showArchived,        setShowArchived]        = useState(false);
+  const [restoringId,         setRestoringId]         = useState(null);
+  const [connectedProspects,  setConnectedProspects]  = useState([]);
+  const [showConnected,       setShowConnected]       = useState(false);
 
   // Load error (shown at top of page body if prospects fail to load)
   const [loadError, setLoadError] = useState('');
@@ -501,6 +503,7 @@ export default function OldGoldPage({ isActive = false, onNavigate, icp = {} }) 
       .from('old_gold_prospects')
       .select('*')
       .is('archived_at', null)
+      .is('silo_resolution', null)
       .order('created_at', { ascending: false });
     if (error) { setLoadError('Failed to load contacts: ' + error.message); setLoading(false); return; }
     setProspects(data || []);
@@ -513,10 +516,20 @@ export default function OldGoldPage({ isActive = false, onNavigate, icp = {} }) 
       .from('old_gold_prospects')
       .select('*')
       .not('archived_at', 'is', null)
+      .is('silo_resolution', null)
       .order('archived_at', { ascending: false });
     if (error) { setLoadError('Failed to load contacts: ' + error.message); setLoadingArchived(false); return; }
     setArchivedProspects(data || []);
     setLoadingArchived(false);
+  }, []);
+
+  const loadConnectedProspects = useCallback(async () => {
+    const { data } = await supabase
+      .from('old_gold_prospects')
+      .select('*')
+      .not('silo_resolution', 'is', null)
+      .order('created_at', { ascending: false });
+    setConnectedProspects(data || []);
   }, []);
 
   const loadDetail = useCallback(async (prospect) => {
@@ -571,7 +584,7 @@ export default function OldGoldPage({ isActive = false, onNavigate, icp = {} }) 
     setDetailLoading(false);
   }, []);
 
-  useEffect(() => { loadProspects(); }, [loadProspects]);
+  useEffect(() => { loadProspects(); loadConnectedProspects(); }, [loadProspects, loadConnectedProspects]);
 
   // Load all meetings newest → oldest for the home page list
   const loadAllMeetings = useCallback(async () => {
@@ -815,6 +828,17 @@ export default function OldGoldPage({ isActive = false, onNavigate, icp = {} }) 
       await supabase.from('old_gold_prospects').update({ archived_at: null }).eq('id', prospect.id);
       setArchivedProspects(prev => prev.filter(p => p.id !== prospect.id));
       setProspects(prev => [{ ...prospect, archived_at: null }, ...prev]);
+    } finally {
+      setRestoringId(null);
+    }
+  };
+
+  const handleRestoreConnected = async (prospect) => {
+    setRestoringId(prospect.id);
+    try {
+      await supabase.from('old_gold_prospects').update({ silo_resolution: null, archived_at: null }).eq('id', prospect.id);
+      setConnectedProspects(prev => prev.filter(p => p.id !== prospect.id));
+      setProspects(prev => [{ ...prospect, silo_resolution: null, archived_at: null }, ...prev]);
     } finally {
       setRestoringId(null);
     }
@@ -1451,6 +1475,47 @@ export default function OldGoldPage({ isActive = false, onNavigate, icp = {} }) 
                   </div>
                 );
               })}
+          </div>
+        )}
+
+        {/* ── Connected to CRM (silo-resolved, inactive) ── */}
+        {connectedProspects.length > 0 && (
+          <div style={{ marginTop: 20, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
+            <button
+              onClick={() => setShowConnected(v => !v)}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 700, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 6, padding: 0 }}
+            >
+              🔗 Connected to CRM ({connectedProspects.length}) {showConnected ? '▲' : '▼'}
+            </button>
+            <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 3 }}>Contacts linked to a deal or client — inactive in Old Gold, conversations still accessible.</div>
+            {showConnected && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 12 }}>
+                {connectedProspects.map(p => {
+                  const co = p.company ? allCompanies.find(c => c.name.toLowerCase() === p.company.toLowerCase()) : null;
+                  const resLabel = p.silo_resolution === 'linked' ? 'Linked' : p.silo_resolution === 'separate' ? 'Separate' : 'Inactive';
+                  return (
+                    <div key={p.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '10px 14px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, cursor: 'pointer' }}
+                      onClick={() => openProspect(p)}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>{p.name}</span>
+                          <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 8, background: '#f3f4f6', color: '#6b7280', border: '1px solid #e5e7eb' }}>{resLabel}</span>
+                          {co && co.source === 'pipeline' && <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 8, background: '#fffbeb', color: '#92400e', border: '1px solid #fbbf24' }}>⚡ Pipeline</span>}
+                          {co && co.source === 'client' && <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 8, background: '#f0fdf4', color: '#065f46', border: '1px solid #bbf7d0' }}>✓ Client</span>}
+                          {co && co.source === 'former_client' && <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 8, background: '#f3f4f6', color: '#6b7280', border: '1px solid #d1d5db' }}>⭮ Former Client</span>}
+                        </div>
+                        {p.company && <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 2 }}>{p.company}</div>}
+                      </div>
+                      <button
+                        onClick={e => { e.stopPropagation(); handleRestoreConnected(p); }}
+                        disabled={restoringId === p.id}
+                        style={{ fontSize: 11, fontWeight: 600, padding: '4px 12px', borderRadius: 20, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text-muted)', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}
+                      >{restoringId === p.id ? '…' : 'Move to active'}</button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         )}
 
