@@ -487,7 +487,8 @@ export async function updateClientContact(clientId, originalName, patch) {
   const { data: row } = await supabase.from('clients').select('contacts').eq('id', clientId).single();
   const existing = row?.contacts || [];
   const key = originalName?.trim().toLowerCase();
-  const updated = existing.map(c => c.name?.trim().toLowerCase() === key ? { ...c, ...patch } : c);
+  const cleanPatch = Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== '' && v !== null && v !== undefined));
+  const updated = existing.map(c => c.name?.trim().toLowerCase() === key ? { ...c, ...cleanPatch } : c);
   const { error } = await supabase.from('clients').update({ contacts: updated, updated_at: new Date().toISOString() }).eq('id', clientId);
   if (error) throw new Error(error.message);
   return updated;

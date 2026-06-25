@@ -110,6 +110,8 @@ export default function ContactsPanel({ clientId, companyId, companyName, contac
       const isFirst = contacts.length === 0;
       const updated = await fn.upsert(recordId, [{ ...c, is_primary: isFirst }]);
       onContactsChange(updated);
+    } catch (e) {
+      alert('Could not add contact: ' + e.message);
     } finally {
       setPromoting(null);
     }

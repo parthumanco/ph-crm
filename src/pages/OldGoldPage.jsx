@@ -1402,7 +1402,7 @@ export default function OldGoldPage({ isActive = false, onNavigate, icp = {} }) 
                 const isConvArchived = convArchivedIds.has(p.id);
                 const inActivePanel = quickSaved?.prospect?.id === p.id;
                 if (inActivePanel) return false;
-                if (inMeetingList && !isConvArchived && !p.silo_resolution) return false;
+                if (inMeetingList && !isConvArchived && p.silo_resolution !== 'moved') return false;
                 if (!search.trim()) return true;
                 const q = search.trim().toLowerCase();
                 return [p.name, p.company, p.title, p.email].some(f => f?.toLowerCase().includes(q));
