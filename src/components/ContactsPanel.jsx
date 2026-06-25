@@ -170,9 +170,22 @@ export default function ContactsPanel({ clientId, companyName, contacts = [], di
                     <input key={k} autoFocus={k === 'name'} value={editDraft[k]} onChange={e => setEditDraft(d => ({ ...d, [k]: e.target.value }))} placeholder={lbl} style={{ fontSize: 12, padding: '6px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)' }} />
                   ))}
                 </div>
-                <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-                  <button onClick={() => setEditingContact(null)} style={{ fontSize: 11, padding: '4px 12px', borderRadius: 6, border: '1px solid var(--border)', background: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}>Cancel</button>
-                  <button onClick={handleSaveEdit} disabled={!editDraft.name.trim()} style={{ fontSize: 11, fontWeight: 700, padding: '4px 14px', borderRadius: 6, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer' }}>Save</button>
+                <div style={{ display: 'flex', gap: 8, justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div>
+                    {confirmDeleteContact === c.name ? (
+                      <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Delete {c.name}?</span>
+                        <button onClick={() => handleDeleteContact(c)} disabled={deletingContact === c.name} style={{ fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 6, border: 'none', background: '#ef4444', color: '#fff', cursor: 'pointer' }}>{deletingContact === c.name ? '…' : 'Yes, delete'}</button>
+                        <button onClick={() => setConfirmDeleteContact(null)} style={{ fontSize: 11, padding: '4px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}>Cancel</button>
+                      </div>
+                    ) : (
+                      <button onClick={() => setConfirmDeleteContact(c.name)} style={{ fontSize: 11, padding: '4px 10px', borderRadius: 6, border: '1px solid #fca5a5', background: 'none', cursor: 'pointer', color: '#dc2626' }}>Delete contact</button>
+                    )}
+                  </div>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button onClick={() => setEditingContact(null)} style={{ fontSize: 11, padding: '4px 12px', borderRadius: 6, border: '1px solid var(--border)', background: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}>Cancel</button>
+                    <button onClick={handleSaveEdit} disabled={!editDraft.name.trim()} style={{ fontSize: 11, fontWeight: 700, padding: '4px 14px', borderRadius: 6, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer' }}>Save</button>
+                  </div>
                 </div>
               </div>
             ) : (
