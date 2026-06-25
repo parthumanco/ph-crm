@@ -266,21 +266,20 @@ export default function ContactsPanel({ clientId, companyId, companyName, contac
         </div>
       )}
 
-      {/* ── 3/4 Dossier overlay ── */}
+      {/* ── Dossier overlay ── */}
       {overlayLive && (
         <>
           {/* Backdrop */}
           <div
             onClick={() => { setOverlayContact(null); setConfirmDeleteContact(null); }}
-            style={{ position: 'fixed', inset: 0, zIndex: 1200, background: 'rgba(0,0,0,0.4)' }}
-          />
+            style={{ position: 'fixed', inset: 0, zIndex: 1200, background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}
+          >
           {/* Panel */}
-          <div style={{
-            position: 'fixed', top: 0, right: 0, bottom: 0, zIndex: 1201,
-            width: '75%', maxWidth: 860,
-            background: 'var(--bg)', borderLeft: '1px solid var(--border)',
+          <div onClick={e => e.stopPropagation()} style={{
+            background: 'var(--bg)', border: '1px solid var(--border)',
+            borderRadius: 14, width: '100%', maxWidth: 860, maxHeight: '90vh',
             display: 'flex', flexDirection: 'column',
-            boxShadow: '-8px 0 40px rgba(0,0,0,0.18)',
+            boxShadow: '0 20px 60px rgba(0,0,0,0.35)',
           }}>
             {/* Overlay header */}
             <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', padding: '20px 24px 16px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
@@ -357,6 +356,7 @@ export default function ContactsPanel({ clientId, companyId, companyName, contac
                 )}
               </div>
             </div>
+          </div>
           </div>
         </>
       )}
