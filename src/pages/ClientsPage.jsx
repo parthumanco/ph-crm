@@ -160,7 +160,7 @@ export default function ClientsPage({ onNavigate, refreshKey, icp, targetClientN
     fetchClients()
       .then(data => {
         setClients(data);
-        if (data.length > 0 && !selected) setSelected(data[0].id);
+        if (data.length > 0 && !selected) setSelected((data.find(c => !c.archived_at) || data[0]).id);
       })
       .catch(console.error)
       .finally(() => setLoadingList(false));
