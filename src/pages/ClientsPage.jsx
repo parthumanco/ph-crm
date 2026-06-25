@@ -57,6 +57,7 @@ export default function ClientsPage({ onNavigate, refreshKey, icp, targetClientN
   const [restoringProjectId, setRestoringProjectId]   = useState(null);
   const [showArchivedClients, setShowArchivedClients] = useState(false);
   const [archivingClientId, setArchivingClientId]     = useState(null);
+  const [confirmArchiveId, setConfirmArchiveId]       = useState(null);
 
   // New client
   const [showNewClient, setShowNewClient] = useState(false);
@@ -182,6 +183,7 @@ export default function ClientsPage({ onNavigate, refreshKey, icp, targetClientN
     setIntel(null);
     setAiMessages([]);
     setTab('overview');
+    setConfirmArchiveId(null);
 
     fetchClientDetail(selected).then(d => {
       if (cancelled) return;
@@ -717,14 +719,29 @@ ${allContacts.map(c => `<div class="contact-row"><div><strong>${esc(c.name)}</st
                     extraSources={detail.items}
                     emptyMessage={`No intelligence data yet for ${detail.client.name}. This client doesn't have a matching entry in Watch List. Add them there first to enable deep scanning.`}
                   />
-                  <div style={{ padding: '12px 24px 20px', borderTop: '1px solid var(--border)' }}>
-                    <button
-                      onClick={() => detail.client.archived_at ? handleRestoreClient(detail.client.id) : handleArchiveClient(detail.client.id)}
-                      disabled={archivingClientId === detail.client.id}
-                      style={{ fontSize: 11, fontWeight: 600, padding: '5px 14px', borderRadius: 20, border: '1px solid var(--border)', background: 'none', color: 'var(--text-faint)', cursor: 'pointer' }}
-                    >
-                      {archivingClientId === detail.client.id ? '…' : detail.client.archived_at ? '↩ Restore client' : 'Archive client'}
-                    </button>
+                  <div style={{ padding: '12px 24px 20px', borderTop: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 8 }}>
+                    {confirmArchiveId === detail.client.id ? (
+                      <>
+                        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Archive {detail.client.name}?</span>
+                        <button
+                          onClick={() => { setConfirmArchiveId(null); handleArchiveClient(detail.client.id); }}
+                          disabled={archivingClientId === detail.client.id}
+                          style={{ fontSize: 11, fontWeight: 700, padding: '5px 14px', borderRadius: 20, border: '1px solid #fca5a5', background: '#fef2f2', color: '#dc2626', cursor: 'pointer' }}
+                        >Yes, archive</button>
+                        <button
+                          onClick={() => setConfirmArchiveId(null)}
+                          style={{ fontSize: 11, padding: '5px 12px', borderRadius: 20, border: '1px solid var(--border)', background: 'none', color: 'var(--text-faint)', cursor: 'pointer' }}
+                        >Cancel</button>
+                      </>
+                    ) : (
+                      <button
+                        onClick={() => detail.client.archived_at ? handleRestoreClient(detail.client.id) : setConfirmArchiveId(detail.client.id)}
+                        disabled={archivingClientId === detail.client.id}
+                        style={{ fontSize: 11, fontWeight: 600, padding: '5px 14px', borderRadius: 20, border: '1px solid var(--border)', background: 'none', color: 'var(--text-faint)', cursor: 'pointer' }}
+                      >
+                        {archivingClientId === detail.client.id ? '…' : detail.client.archived_at ? '↩ Restore client' : 'Archive client'}
+                      </button>
+                    )}
                   </div>
                 </>
               )}
