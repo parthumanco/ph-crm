@@ -2958,11 +2958,13 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                     setDragOverMsId(null);
                     handleMoveTaskToMilestone(draggedTaskId, ms.id);
                   }}
+                  onMouseEnter={e => { if (!isDropTargetMs) { e.currentTarget.style.borderColor = 'var(--accent)'; e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,0.07)'; } }}
+                  onMouseLeave={e => { if (!isDropTargetMs) { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.boxShadow = 'none'; } }}
                   style={{
                     border: `1px solid ${isDropTargetMs ? 'var(--accent)' : 'var(--border)'}`,
                     borderRadius: 10, overflow: 'hidden', background: 'var(--surface)',
                     boxShadow: isDropTargetMs ? '0 0 0 3px rgba(249, 115, 22, 0.15)' : 'none',
-                    transition: 'border-color .1s, box-shadow .1s',
+                    transition: 'border-color .15s, box-shadow .15s',
                   }}
                 >
 
