@@ -224,12 +224,24 @@ export async function updateCompanyContactInContacts(companyId, originalName, pa
 
 // Mark one companies.contacts entry as primary (by name), clearing the flag on the rest.
 export async function setPrimaryCompanyContact(companyId, contactName) {
-  const { data: row } = await supabase.from('companies').select('contacts').eq('id', companyId).single();
+  const { data: row } = await supabase.from('companies').select('contacts, name').eq('id', companyId).single();
   const existing = row?.contacts || [];
   const key = contactName?.trim().toLowerCase();
   const updated = existing.map(c => ({ ...c, is_primary: c.name?.trim().toLowerCase() === key }));
   const { error } = await supabase.from('companies').update({ contacts: updated }).eq('id', companyId);
   if (error) throw new Error(error.message);
+  // Sync to clients table so Clients/Projects pages reflect the same primary.
+  // Only sync if the named contact actually exists there — avoids silently clearing the existing primary.
+  if (row?.name) {
+    supabase.from('clients').select('id, contacts').ilike('name', row.name).maybeSingle()
+      .then(({ data: cl }) => {
+        if (!cl?.id) return;
+        const clContacts = cl.contacts || [];
+        if (!clContacts.some(c => c.name?.trim().toLowerCase() === key)) return;
+        const clUpdated = clContacts.map(c => ({ ...c, is_primary: c.name?.trim().toLowerCase() === key }));
+        supabase.from('clients').update({ contacts: clUpdated, updated_at: new Date().toISOString() }).eq('id', cl.id).then(() => {});
+      });
+  }
   return updated;
 }
 
@@ -495,13 +507,26 @@ export async function updateClientContact(clientId, originalName, patch) {
 }
 
 // Mark one contact as primary (by name), clearing the flag on every other contact for this client.
+// Also syncs is_primary to companies.contacts so Pipeline stays consistent.
 export async function setPrimaryClientContact(clientId, contactName) {
-  const { data: row } = await supabase.from('clients').select('contacts').eq('id', clientId).single();
+  const { data: row } = await supabase.from('clients').select('contacts, name').eq('id', clientId).single();
   const existing = row?.contacts || [];
   const key = contactName?.trim().toLowerCase();
   const updated = existing.map(c => ({ ...c, is_primary: c.name?.trim().toLowerCase() === key }));
   const { error } = await supabase.from('clients').update({ contacts: updated, updated_at: new Date().toISOString() }).eq('id', clientId);
   if (error) throw new Error(error.message);
+  // Sync to companies table so Pipeline view reflects the same primary.
+  // Only sync if the named contact actually exists there — avoids silently clearing the existing primary.
+  if (row?.name) {
+    supabase.from('companies').select('id, contacts').ilike('name', row.name).maybeSingle()
+      .then(({ data: co }) => {
+        if (!co?.id) return;
+        const coContacts = co.contacts || [];
+        if (!coContacts.some(c => c.name?.trim().toLowerCase() === key)) return;
+        const coUpdated = coContacts.map(c => ({ ...c, is_primary: c.name?.trim().toLowerCase() === key }));
+        supabase.from('companies').update({ contacts: coUpdated, updated_at: new Date().toISOString() }).eq('id', co.id).then(() => {});
+      });
+  }
   return updated;
 }
 

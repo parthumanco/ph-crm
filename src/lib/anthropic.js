@@ -1468,6 +1468,36 @@ export async function generateProjectSummary(proposalText) {
   return text.trim();
 }
 
+export async function generateSummaryFromActivity({ projectName, milestones, tasks, meetings, files }) {
+  const msLines = milestones.map(m => `  Milestone: ${m.title} [${m.status}]${m.description ? ' — ' + m.description : ''}`).join('\n');
+  const taskLines = tasks.slice(0, 60).map(t => `  Task: ${t.title} [${t.completed ? 'done' : 'open'}]${t.assigned_to ? ', assigned: ' + t.assigned_to : ''}`).join('\n');
+  const meetingLines = meetings.slice(0, 20).map(m => `  Meeting ${m.meeting_date || m.date || ''}: ${m.summary || m.notes || ''}`.trim()).join('\n');
+  const fileLines = files.slice(0, 20).map(f => `  File: ${f.name}`).join('\n');
+
+  const context = [
+    `Project: ${projectName}`,
+    msLines   ? `Milestones:\n${msLines}` : '',
+    taskLines ? `Tasks:\n${taskLines}` : '',
+    meetingLines ? `Meetings:\n${meetingLines}` : '',
+    fileLines ? `Files:\n${fileLines}` : '',
+  ].filter(Boolean).join('\n\n');
+
+  const data = await withTimeout(
+    callClaude({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 350,
+      messages: [{
+        role: 'user',
+        content: `Based on the following project activity, write a concise 3–4 sentence status summary capturing: what the project is about, where it stands now, key progress, and any notable items. Plain prose only — no bullet points, no headers.\n\n${context}`,
+      }],
+    }),
+    30000
+  );
+
+  const text = (data.content || []).find(b => b.type === 'text')?.text || '';
+  return text.trim();
+}
+
 export async function generateQuickNextStep(companyName, noteText, dealNotes = '') {
   const context = [
     noteText?.trim() ? `LATEST NOTE:\n${noteText.trim()}` : '',

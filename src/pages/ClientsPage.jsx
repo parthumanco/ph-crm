@@ -110,10 +110,14 @@ export default function ClientsPage({ onNavigate, refreshKey, icp, targetClientN
   const [ogHistoryLoading, setOgHistoryLoading] = useState(false);
 
   // Documents + files tab
-  const [clientDocs,    setClientDocs]    = useState([]);
-  const [clientFiles,   setClientFiles]   = useState([]);
-  const [docsLoading,   setDocsLoading]   = useState(false);
-  const [openDoc,       setOpenDoc]       = useState(null); // doc open in editor
+  const [clientDocs,        setClientDocs]        = useState([]);
+  const [clientFiles,       setClientFiles]        = useState([]);
+  const [docsLoading,       setDocsLoading]        = useState(false);
+  const [openDoc,           setOpenDoc]            = useState(null); // doc open in editor
+  const [researchDragOver,  setResearchDragOver]   = useState(false);
+  const [researchUploading, setResearchUploading]  = useState(false);
+  const [researchLinkInput, setResearchLinkInput]  = useState('');
+  const [researchLinkSaving,setResearchLinkSaving] = useState(false);
 
   // Background thesis auto-refresh — fires after any add (item/contact/etc.)
   // so the AI thesis stays current without a manual "Build Thesis" click.
@@ -549,6 +553,47 @@ ${allContacts.map(c => `<div class="contact-row"><div><strong>${esc(c.name)}</st
   })() : [];
 
 
+  const handleResearchFileDrop = async (e) => {
+    e.preventDefault();
+    setResearchDragOver(false);
+    const file = e.dataTransfer?.files?.[0];
+    if (!file || !detail?.client?.name) return;
+    setResearchUploading(true);
+    try {
+      const slug = detail.client.name.toLowerCase().replace(/[^a-z0-9]/g, '-');
+      const storagePath = `company-files/${slug}/research-${Date.now()}-${file.name}`;
+      const { error: upErr } = await supabase.storage.from('project-files').upload(storagePath, file, { contentType: file.type, upsert: false });
+      if (upErr) throw new Error(upErr.message);
+      const { data: urlData } = supabase.storage.from('project-files').getPublicUrl(storagePath);
+      const { data: row, error: dbErr } = await supabase.from('company_files').insert({
+        company_name: detail.client.name, name: file.name, size: file.size,
+        mime_type: file.type, storage_path: storagePath, url: urlData?.publicUrl || '',
+        source: 'research', created_at: new Date().toISOString(),
+      }).select().single();
+      if (dbErr) throw new Error(dbErr.message);
+      setClientFiles(prev => [...prev, row]);
+    } catch (e) { alert('Upload failed: ' + e.message); }
+    finally { setResearchUploading(false); }
+  };
+
+  const handleResearchLinkSave = async () => {
+    const url = researchLinkInput.trim();
+    if (!url || !detail?.client?.name) return;
+    setResearchLinkSaving(true);
+    try {
+      const label = (() => { try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return url; } })();
+      const { data: row, error } = await supabase.from('company_files').insert({
+        company_name: detail.client.name, name: label, size: null,
+        mime_type: 'text/uri-list', storage_path: null, url,
+        source: 'research', created_at: new Date().toISOString(),
+      }).select().single();
+      if (error) throw new Error(error.message);
+      setClientFiles(prev => [...prev, row]);
+      setResearchLinkInput('');
+    } catch (e) { alert('Could not save link: ' + e.message); }
+    finally { setResearchLinkSaving(false); }
+  };
+
   const handleDeleteClientFile = async (file) => {
     if (deletingClientFile) return;
     setDeletingClientFile(file.id);
@@ -640,7 +685,7 @@ ${allContacts.map(c => `<div class="contact-row"><div><strong>${esc(c.name)}</st
         ) : detail ? (
           <>
             {/* Header */}
-            <div style={{ padding: '20px 28px 0', flexShrink: 0, borderBottom: '1px solid var(--border)' }}>
+            <div style={{ padding: '20px 28px 0', flexShrink: 0 }}>
               <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, marginBottom: 14 }}>
                 <div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
@@ -692,18 +737,16 @@ ${allContacts.map(c => `<div class="contact-row"><div><strong>${esc(c.name)}</st
               </div>
 
               {/* Tab bar */}
-              <div style={{ display: 'flex' }}>
+              <div className="tab-bar" style={{ marginTop: 14 }}>
                 {[
-                  { id: 'overview',  label: `Overview${intel?.scan_date ? ' ✓' : ''}` },
+                  { id: 'overview',  label: 'Company Overview' },
                   { id: 'projects',  label: `Projects${detail.projects.length > 0 ? ` (${detail.projects.length})` : ''}` },
                   { id: 'contacts',  label: 'Contacts' },
-                  { id: 'history',   label: `History${historyItems.length > 0 ? ` (${historyItems.length})` : ''}` },
-                  { id: 'oldgold',   label: `🪙 Old Gold${ogHistory?.length ? ` (${ogHistory.length})` : ''}` },
-                  { id: 'research',  label: `Research${detail.items.length > 0 ? ` (${detail.items.length})` : ''}` },
-                  { id: 'documents', label: `📄 Documents${clientDocs.length + clientFiles.length > 0 ? ` (${clientDocs.length + clientFiles.length})` : ''}` },
+                  { id: 'documents', label: `Documents${clientDocs.length + clientFiles.length > 0 ? ` (${clientDocs.length + clientFiles.length})` : ''}` },
+                  { id: 'oldgold',   label: `Old Gold${ogHistory?.length ? ` (${ogHistory.length})` : ''}` },
                   { id: 'ai',        label: '✦ Ask AI' },
                 ].map(t => (
-                  <button key={t.id} onClick={() => setTab(t.id)} style={{ fontSize: 12, fontWeight: 600, padding: '8px 14px', border: 'none', background: 'none', cursor: 'pointer', color: tab === t.id ? 'var(--accent)' : 'var(--text-muted)', borderBottom: tab === t.id ? '2px solid var(--accent)' : '2px solid transparent', marginBottom: -1, whiteSpace: 'nowrap' }}>{t.label}</button>
+                  <button key={t.id} className={`tab-btn${tab === t.id ? ' active' : ''}`} onClick={() => setTab(t.id)}>{t.label}</button>
                 ))}
               </div>
             </div>
@@ -1152,8 +1195,8 @@ ${allContacts.map(c => `<div class="contact-row"><div><strong>${esc(c.name)}</st
                         </div>
                       )}
 
-                      {clientDocs.length === 0 && clientFiles.length === 0 && (
-                        <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--text-faint)' }}>
+                      {clientDocs.length === 0 && clientFiles.filter(f => f.source !== 'research').length === 0 && (
+                        <div style={{ textAlign: 'center', padding: '40px 0 24px', color: 'var(--text-faint)' }}>
                           <div style={{ fontSize: 28, marginBottom: 8 }}>📄</div>
                           <div style={{ fontSize: 13, marginBottom: 8 }}>No documents yet for {detail.client.name}.</div>
                           <p style={{ fontSize: 12, maxWidth: 280, margin: '0 auto', lineHeight: 1.5 }}>
@@ -1161,6 +1204,53 @@ ${allContacts.map(c => `<div class="contact-row"><div><strong>${esc(c.name)}</st
                           </p>
                         </div>
                       )}
+
+                      {/* ── Research files & links ── */}
+                      <div style={{ marginTop: 24, borderTop: '1px solid var(--border-light)', paddingTop: 20 }}>
+                        <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.06em', color: 'var(--text-faint)', marginBottom: 12 }}>Research</div>
+
+                        {/* Existing research items */}
+                        {clientFiles.filter(f => f.source === 'research').length > 0 && (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 14 }}>
+                            {clientFiles.filter(f => f.source === 'research').map(f => (
+                              <div key={f.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', background: 'var(--surface)', border: '1px solid var(--border-light)', borderRadius: 8 }}>
+                                <span style={{ fontSize: 14, flexShrink: 0 }}>{f.mime_type === 'text/uri-list' ? '🔗' : '📎'}</span>
+                                <a href={f.url} target="_blank" rel="noopener noreferrer" style={{ flex: 1, fontSize: 12, fontWeight: 600, color: 'var(--accent)', textDecoration: 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</a>
+                                <button onClick={() => { if (window.confirm(`Delete "${f.name}"?`)) handleDeleteClientFile(f); }} style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 12, padding: '2px 4px', flexShrink: 0 }}>✕</button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Drop zone */}
+                        <div
+                          onDragOver={e => { e.preventDefault(); setResearchDragOver(true); }}
+                          onDragLeave={() => setResearchDragOver(false)}
+                          onDrop={handleResearchFileDrop}
+                          style={{ border: `2px dashed ${researchDragOver ? 'var(--accent)' : 'var(--border)'}`, borderRadius: 10, padding: '20px 16px', textAlign: 'center', background: researchDragOver ? 'var(--accent-light, #fff7ed)' : 'var(--surface)', transition: 'all .15s', marginBottom: 10 }}
+                        >
+                          <div style={{ fontSize: 12, color: researchDragOver ? 'var(--accent)' : 'var(--text-faint)' }}>
+                            {researchUploading ? 'Uploading…' : 'Drop a file here to attach to research'}
+                          </div>
+                        </div>
+
+                        {/* Link input */}
+                        <div style={{ display: 'flex', gap: 8 }}>
+                          <input
+                            type="url"
+                            value={researchLinkInput}
+                            onChange={e => setResearchLinkInput(e.target.value)}
+                            onKeyDown={e => e.key === 'Enter' && handleResearchLinkSave()}
+                            placeholder="Paste a link (Dropbox, Google Docs, article…)"
+                            style={{ flex: 1, fontSize: 12, padding: '8px 10px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)' }}
+                          />
+                          <button
+                            onClick={handleResearchLinkSave}
+                            disabled={!researchLinkInput.trim() || researchLinkSaving}
+                            style={{ padding: '8px 14px', borderRadius: 7, border: 'none', background: 'var(--accent)', color: '#fff', fontSize: 12, fontWeight: 700, cursor: 'pointer', flexShrink: 0 }}
+                          >{researchLinkSaving ? 'Saving…' : 'Add Link'}</button>
+                        </div>
+                      </div>
                     </>
                   )}
                 </div>

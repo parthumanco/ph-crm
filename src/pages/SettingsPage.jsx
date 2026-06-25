@@ -187,6 +187,12 @@ export default function SettingsPage({ icp, onIcpSaved, teamMembers = [], onTeam
   const [granolaTestResult, setGranolaTestResult] = useState(null); // { ok, message } | null
   const [showGranolaKey, setShowGranolaKey] = useState(false);
 
+  // Forecast PIN
+  const [forecastPin, setForecastPin]         = useState('');
+  const [forecastPinDraft, setForecastPinDraft] = useState('');
+  const [forecastPinSaving, setForecastPinSaving] = useState(false);
+  const [forecastPinSaved, setForecastPinSaved]   = useState(false);
+
   // Reference documents (uploaded files + external links)
   const [refDocs, setRefDocs]         = useState([]);
   const [uploading, setUploading]     = useState(false);
@@ -211,6 +217,10 @@ export default function SettingsPage({ icp, onIcpSaved, teamMembers = [], onTeam
   useEffect(() => { loadRefDocs().then(setRefDocs); }, []);
   useEffect(() => {
     loadGranolaApiKey().then(k => { setGranolaKey(k); setGranolaKeyDraft(k); });
+  }, []);
+  useEffect(() => {
+    supabase.from('app_settings').select('value').eq('key', 'forecast_pin').single()
+      .then(({ data }) => { const p = data?.value || ''; setForecastPin(p); setForecastPinDraft(p); });
   }, []);
 
   // ── Brand Brain handlers ─────────────────────────────────────────────────────
@@ -943,6 +953,42 @@ export default function SettingsPage({ icp, onIcpSaved, teamMembers = [], onTeam
             <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: '#10b981', flexShrink: 0 }} />
             API key saved. Open any deal → Meetings tab to sync Granola notes for that company.
           </div>
+        )}
+      </div>
+
+      <SectionDivider />
+      <SectionHeader
+        title="🔒 Forecast PIN"
+        description="Protect the Forecast tab with a PIN. Leave blank to disable protection."
+      >
+        <button className="btn btn-primary" disabled={forecastPinSaving} onClick={async () => {
+          setForecastPinSaving(true);
+          try {
+            await supabase.from('app_settings').upsert({ key: 'forecast_pin', value: forecastPinDraft.trim() }, { onConflict: 'key' });
+            setForecastPin(forecastPinDraft.trim());
+            setForecastPinSaved(true);
+            setTimeout(() => setForecastPinSaved(false), 2500);
+          } catch (e) { alert('Save failed: ' + e.message); }
+          finally { setForecastPinSaving(false); }
+        }}>
+          {forecastPinSaving ? <><span className="spinner" /> Saving…</> : forecastPinSaved ? '✅ Saved!' : '💾 Save PIN'}
+        </button>
+      </SectionHeader>
+
+      <div className="card" style={{ padding: '20px 24px', display: 'flex', alignItems: 'center', gap: 12 }}>
+        <input
+          type="password"
+          value={forecastPinDraft}
+          onChange={e => setForecastPinDraft(e.target.value)}
+          placeholder="Enter a PIN (e.g. 1234)"
+          style={{ fontSize: 14, padding: '8px 12px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', width: 200 }}
+        />
+        {forecastPin && (
+          <button className="btn btn-ghost btn-sm" style={{ color: '#dc2626', borderColor: '#fca5a5' }} onClick={async () => {
+            if (!window.confirm('Remove forecast PIN?')) return;
+            await supabase.from('app_settings').upsert({ key: 'forecast_pin', value: '' }, { onConflict: 'key' });
+            setForecastPin(''); setForecastPinDraft('');
+          }}>Remove PIN</button>
         )}
       </div>
 

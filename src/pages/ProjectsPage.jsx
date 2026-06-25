@@ -1,13 +1,13 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
-import { generateProjectSummary, generateRejectionResponse } from '../lib/anthropic';
+import { generateProjectSummary, generateSummaryFromActivity, generateRejectionResponse } from '../lib/anthropic';
 import {
   fetchProjects, fetchArchivedProjects, upsertProject, archiveProject, restoreProject, deleteProject,
   fetchMilestones, fetchArchivedMilestones, upsertMilestone, archiveMilestone, restoreMilestone, deleteMilestone,
   fetchProjectTasks, upsertProjectTask, toggleTask, deleteProjectTask, rejectTask, approveTask, saveRejectionResponse, addToReviewChain, clearRejectionFields,
   fetchProjectFiles, fetchArchivedProjectFiles, uploadProjectFile, deleteProjectFile, archiveProjectFile, restoreProjectFile, addExternalLink,
   restoreProjectTask, fetchAllTasksByOwner, saveTaskPortalContact,
-  bulkInsertMilestones, bulkInsertTasks, parseProposalWithAI,
+  bulkInsertMilestones, bulkInsertTasks, parseProposalWithAI, extractPdfTextAndPages,
   fetchProjectMeetings, deleteProjectMeeting,
   PROJECT_STATUSES, MILESTONE_STATUSES, OWNERS,
   projColor, projLabel, msColor, msLabel,
@@ -484,6 +484,12 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
   const [addingContact, setAddingContact]         = useState(false);
   const [newContactDraft, setNewContactDraft]     = useState({ name: '', title: '', email: '' });
   const [summaryGenerating, setSummaryGenerating] = useState(false);
+  const [summaryOpen, setSummaryOpen]             = useState(false);
+  const [summaryHovered, setSummaryHovered]       = useState(false);
+  const [summaryDragOver, setSummaryDragOver]     = useState(false);
+  const [summaryClearConfirm, setSummaryClearConfirm] = useState(false);
+  const summaryTextareaRef                        = useRef(null);
+  const generateFromActivityRef                   = useRef(null);
   const [expandedRejections, setExpandedRejections] = useState(new Set());
   const [expandedCoC, setExpandedCoC]               = useState(new Set()); // manual expand after approval
   const [expandedTranscripts, setExpandedTranscripts] = useState(new Set()); // meeting ids with full transcript open in mentions panel
@@ -532,6 +538,12 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
   const [editNoteText, setEditNoteText]           = useState('');
   const [showTranscriptImporter, setShowTranscriptImporter] = useState(false);
   const [transcriptDefaultMs, setTranscriptDefaultMs]       = useState(null); // ms id for per-milestone entry
+  const [meetingsInitialTranscript, setMeetingsInitialTranscript] = useState('');
+  const [dragOverMeetingsTab, setDragOverMeetingsTab]        = useState(false);
+  const [forecastPin, setForecastPin]       = useState('');
+  const [forecastUnlocked, setForecastUnlocked] = useState(false);
+  const [forecastPinInput, setForecastPinInput] = useState('');
+  const [forecastPinError, setForecastPinError] = useState(false);
   const [summaryError, setSummaryError]           = useState(null);
   const [shareToken, setShareToken]               = useState('');
   const [sharePassword, setSharePassword]         = useState('');
@@ -539,6 +551,8 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
   const [shareSaving, setShareSaving]             = useState(false);
   const [shareSaved, setShareSaved]               = useState(false);
   const [shareCopied, setShareCopied]             = useState(false);
+  const [portalEmailDraft, setPortalEmailDraft]   = useState(null); // { to, subject, body, htmlBody, gmailUrl }
+  const [portalShareLog, setPortalShareLog]       = useState([]);   // [{ email, sharedAt }]
   const [editingTask, setEditingTask]             = useState(null); // task id
   const [editTaskDraft, setEditTaskDraft]         = useState({});   // { title, due_date, assigned_to, estimated_hours }
   const editTaskDraftRef                          = useRef({});     // always-current mirror of editTaskDraft (avoids stale closures)
@@ -569,6 +583,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
   const [dragOverTask, setDragOverTask]         = useState(null); // taskId being hovered over
   const [draggedTaskId, setDraggedTaskId]       = useState(null); // task currently being dragged between milestones
   const [dragOverMsId, setDragOverMsId]         = useState(null); // milestone id (or '__unassigned__') being dragged over
+  const [dragOverFilesZone, setDragOverFilesZone] = useState(false);
   const fileInputRef                             = useRef(null);
   const pendingUpload                            = useRef({ projectId: null, milestoneId: null });
 
@@ -610,6 +625,10 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
   }, [refreshKey]);
 
   useEffect(() => { loadAll(); }, [loadAll]);
+  useEffect(() => {
+    supabase.from('app_settings').select('value').eq('key', 'forecast_pin').single()
+      .then(({ data }) => setForecastPin(data?.value || ''));
+  }, []);
 
   // Auto-expand chain of custody for any task with an open rejection
   useEffect(() => {
@@ -670,6 +689,11 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
     setConfirmDeleteTask(null);
     setNewTaskMs(null);
     setNewTaskTitle('');
+    setSummaryOpen(false);
+    setSummaryHovered(false);
+    setForecastUnlocked(false);
+    setForecastPinInput('');
+    setForecastPinError(false);
     setProjectOwnerFilter('');
     setProposalPanel(null);
     setDeletedTasks({});
@@ -925,6 +949,115 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
     }
   };
 
+  const handleGenerateSummaryFromActivity = async () => {
+    setSummaryGenerating(true);
+    setSummaryError(null);
+    try {
+      const summary = await generateSummaryFromActivity({
+        projectName: activeProject.name || 'this project',
+        milestones,
+        tasks,
+        meetings,
+        files: projectFiles,
+      });
+      const proj = { ...activeProject, description: summary };
+      setActiveProject(proj);
+      setProjects(prev => prev.map(p => p.id === proj.id ? proj : p));
+      await upsertProject(proj);
+    } catch (e) {
+      setSummaryError(e.message || 'Failed to generate summary');
+    } finally {
+      setSummaryGenerating(false);
+    }
+  };
+
+  const handleDropProposalOnSummary = async (e) => {
+    e.preventDefault();
+    setSummaryDragOver(false);
+    const file = e.dataTransfer.files[0];
+    if (!file) return;
+    setSummaryGenerating(true);
+    setSummaryError(null);
+    try {
+      let proposalText = '';
+      if (file.type === 'application/pdf') {
+        const b64 = await new Promise((res, rej) => {
+          const reader = new FileReader();
+          reader.onload = ev => res(ev.target.result.split(',')[1]);
+          reader.onerror = rej;
+          reader.readAsDataURL(file);
+        });
+        const { text } = await extractPdfTextAndPages(b64);
+        proposalText = text || '';
+      } else {
+        proposalText = await new Promise((res, rej) => {
+          const reader = new FileReader();
+          reader.onload = ev => res(ev.target.result);
+          reader.onerror = rej;
+          reader.readAsText(file);
+        });
+      }
+      if (!proposalText.trim()) throw new Error('Could not extract text from file');
+      const withProposal = { ...activeProject, proposal_text: proposalText };
+      setActiveProject(withProposal);
+      await upsertProject(withProposal);
+      const summary = await generateProjectSummary(proposalText);
+      const final = { ...withProposal, description: summary };
+      setActiveProject(final);
+      setProjects(prev => prev.map(p => p.id === final.id ? final : p));
+      await upsertProject(final);
+    } catch (e) {
+      setSummaryError(e.message || 'Failed to process proposal');
+    } finally {
+      setSummaryGenerating(false);
+    }
+  };
+
+  // Keep ref current so midnight timer always calls latest version
+  generateFromActivityRef.current = handleGenerateSummaryFromActivity;
+
+  // ── Midnight auto-refresh of project summary ──────────────────────────────
+  useEffect(() => {
+    if (view !== 'detail' || !activeProject?.id) return;
+    const now = new Date();
+    const midnight = new Date(now);
+    midnight.setHours(24, 0, 0, 0);
+    const t = setTimeout(() => generateFromActivityRef.current?.(), midnight - now);
+    return () => clearTimeout(t);
+  }, [activeProject?.id, view]);
+
+  // ── Auto-size summary textarea ────────────────────────────────────────────
+  useEffect(() => {
+    if (!summaryTextareaRef.current || !summaryOpen) return;
+    const el = summaryTextareaRef.current;
+    el.style.height = 'auto';
+    el.style.height = el.scrollHeight + 'px';
+  }, [activeProject?.description, summaryOpen]);
+
+  // Auto-open note input when switching to Meetings tab
+  useEffect(() => {
+    if (projectTab === 'activity') {
+      setAddingNote(true);
+      setNewNoteText('');
+    }
+  }, [projectTab]);
+
+  // ── Pre-fill portal email from primary contact when modal opens ──────────
+  useEffect(() => {
+    if (!showShareModal) return;
+    if (shareClientEmail) return; // already set (saved value)
+    const primary = (clientRecord?.contacts || []).find(c => c.is_primary) || (clientRecord?.contacts || [])[0];
+    if (primary?.email) setShareClientEmail(primary.email);
+  }, [showShareModal, clientRecord]);
+
+  // ── Load portal share log when modal opens ────────────────────────────────
+  useEffect(() => {
+    if (!showShareModal || !activeProject?.id) return;
+    supabase.from('app_settings').select('value').eq('key', `portal_shares_${activeProject.id}`).single()
+      .then(({ data }) => setPortalShareLog(data?.value ? JSON.parse(data.value) : []))
+      .catch(() => setPortalShareLog([]));
+  }, [showShareModal, activeProject?.id]);
+
   // ── Save share / portal settings ─────────────────────────────────────────
   const handleSaveShare = async () => {
     setShareSaving(true);
@@ -937,6 +1070,32 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
       setProjects(prev => prev.map(p => p.id === updated.id ? updated : p));
       setShareSaved(true);
       setTimeout(() => setShareSaved(false), 2500);
+
+      if (shareClientEmail) {
+        const newEntry = { email: shareClientEmail, sharedAt: new Date().toISOString() };
+        const updatedLog = [...portalShareLog, newEntry];
+        setPortalShareLog(updatedLog);
+        supabase.from('app_settings').upsert({ key: `portal_shares_${updated.id}`, value: JSON.stringify(updatedLog) }, { onConflict: 'key' }).catch(() => {});
+      }
+
+      if (shareClientEmail) {
+        const portalUrl = `${window.location.origin}/portal/${token}`;
+        const contactName = (clientRecord?.contacts || []).find(c => c.email === shareClientEmail)?.name || '';
+        const firstName = contactName ? contactName.split(' ')[0] : 'there';
+        const companyLabel = updated.client_name || updated.name;
+        const subject = `Your project portal — ${updated.name}`;
+        const passwordLine = sharePassword ? `\nUse the password "${sharePassword}" to access your portal.` : '';
+        const body = `Hi ${firstName},\n\nYour client portal for ${updated.name} is ready. You can view your project timeline, milestones, tasks, and files at the link below.${passwordLine}\n\nBest,\nPart Human`;
+        const htmlBody = [
+          `<p style="font-family:sans-serif;font-size:14px;">Hi ${firstName},</p>`,
+          `<p style="font-family:sans-serif;font-size:14px;">Your client portal for <strong>${updated.name}</strong> is ready. You can view your project timeline, milestones, tasks, and files at the link below.</p>`,
+          `<p><a href="${portalUrl}" style="display:inline-flex;align-items:center;gap:6px;background:#fbbf24;color:#111;font-weight:800;font-size:12px;padding:5px 12px;border-radius:20px;text-decoration:none;"><span style="font-weight:900;font-size:13px;">PH</span><span>×</span><span>${companyLabel}</span></a></p>`,
+          sharePassword ? `<p style="font-family:sans-serif;font-size:14px;">Use the password <strong>${sharePassword}</strong> to access your portal.</p>` : '',
+          `<p style="font-family:sans-serif;font-size:14px;">Best,<br/>Part Human</p>`,
+        ].join('');
+        const gmailUrl = `https://mail.google.com/mail/?view=cm&to=${encodeURIComponent(shareClientEmail)}&su=${encodeURIComponent(subject)}`;
+        setPortalEmailDraft({ to: shareClientEmail, contactName, subject, body, htmlBody, gmailUrl });
+      }
     } catch (e) { alert('Save failed: ' + e.message); }
     finally { setShareSaving(false); }
   };
@@ -1684,6 +1843,29 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
     }
   };
 
+  // ── Meetings tab drag-and-drop ────────────────────────────────────────────
+  const handleDropOnMeetingsTab = async (e) => {
+    e.preventDefault();
+    setDragOverMeetingsTab(false);
+    const file = e.dataTransfer?.files?.[0];
+    let text = '';
+    if (file) {
+      if (file.type !== 'application/pdf') {
+        text = await new Promise((resolve) => {
+          const reader = new FileReader();
+          reader.onload = ev => resolve(ev.target.result || '');
+          reader.onerror = () => resolve('');
+          reader.readAsText(file);
+        });
+      }
+    } else {
+      text = e.dataTransfer?.getData('text/plain') || e.dataTransfer?.getData('text') || '';
+    }
+    setMeetingsInitialTranscript(text);
+    setTranscriptDefaultMs(null);
+    setShowTranscriptImporter(true);
+  };
+
   // ── File uploads ──────────────────────────────────────────────────────────
   const triggerFileUpload = (projectId, milestoneId = null, e = null, taskId = null) => {
     if (e) e.stopPropagation();
@@ -1730,6 +1912,27 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
     try {
       const saved = await Promise.all(
         files.map(f => uploadProjectFile(activeProject.id, f, task.milestone_id || null, task.id))
+      );
+      setProjectFiles(prev => [...saved, ...prev]);
+      setCardFiles(prev => ({ ...prev, [activeProject.id]: [...saved, ...(prev[activeProject.id] || [])] }));
+      triggerProjectThesisRefresh({ files: [...saved, ...projectFiles] });
+    } catch (err) {
+      console.error('Drop upload failed:', err.message);
+      alert(`Upload failed: ${err.message}`);
+    } finally {
+      setUploadingFor(null);
+    }
+  };
+
+  const handleDropOnFilesZone = async (e) => {
+    e.preventDefault();
+    setDragOverFilesZone(false);
+    const files = Array.from(e.dataTransfer.files);
+    if (!files.length) return;
+    setUploadingFor('__files_zone__');
+    try {
+      const saved = await Promise.all(
+        files.map(f => uploadProjectFile(activeProject.id, f, null, null))
       );
       setProjectFiles(prev => [...saved, ...prev]);
       setCardFiles(prev => ({ ...prev, [activeProject.id]: [...saved, ...(prev[activeProject.id] || [])] }));
@@ -2003,7 +2206,6 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                             {task.estimated_hours}h
                           </span>
                         )}
-                        <button onClick={() => startEditTask(task)} title="Edit" style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 13, padding: '2px 4px', flexShrink: 0 }}>✏️</button>
                         <button
                           onClick={e => { e.stopPropagation(); triggerFileUpload(task.project_id, null, null, task.id); }}
                           disabled={uploadingFor === task.id}
@@ -2016,20 +2218,10 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                           style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 13, padding: '2px 4px', flexShrink: 0 }}
                         >🔗</button>
                         <button
-                          onClick={() => {
-                            if (pendingDelete) { handleDeleteAssignedTask(task.id); setConfirmDeleteTask(null); }
-                            else setConfirmDeleteTask(task.id);
-                          }}
-                          style={{
-                            background: pendingDelete ? '#fef2f2' : 'none',
-                            border: pendingDelete ? '1px solid #fecaca' : 'none',
-                            color: pendingDelete ? '#ef4444' : 'var(--text-faint)',
-                            cursor: 'pointer', fontSize: pendingDelete ? 11 : 13,
-                            padding: pendingDelete ? '2px 7px' : '2px 4px',
-                            borderRadius: 4, fontWeight: pendingDelete ? 700 : 400,
-                            flexShrink: 0, whiteSpace: 'nowrap', transition: 'all .15s',
-                          }}
-                        >{pendingDelete ? 'Delete?' : '✕'}</button>
+                          onClick={() => { if (window.confirm('Delete this task?')) handleDeleteAssignedTask(task.id); }}
+                          title="Delete task"
+                          style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 13, padding: '2px 4px', flexShrink: 0 }}
+                        >✕</button>
                       </div>
                     )}
                     {task.rejected_at && (
@@ -2071,7 +2263,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                             style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '3px 8px', borderRadius: 4, background: 'var(--bg)', border: '1px solid var(--border-light)', fontSize: 11, color: 'var(--accent)', textDecoration: 'none' }}>
                             <span>{fileIcon(f.mime_type)}</span>
                             <span style={{ maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</span>
-                            <button onClick={e => { e.preventDefault(); e.stopPropagation(); handleDeleteFile(f); }} style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: '0 0 0 2px', fontSize: 11 }}>✕</button>
+                            <button onClick={e => { e.preventDefault(); e.stopPropagation(); if (window.confirm(`Delete "${f.name}"?`)) handleDeleteFile(f); }} style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: '0 0 0 2px', fontSize: 11 }}>✕</button>
                           </a>
                         ))}
                       </div>
@@ -2442,9 +2634,6 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
             >Mentions</button>
             {/* Action buttons */}
             <div className="task-actions" style={{ display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 }}>
-              <button onClick={() => startEditTask(task)} title="Edit task" style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: '4px 5px', borderRadius: 4, display: 'flex', alignItems: 'center', flexShrink: 0 }}>
-                <svg width="15" height="15" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M9.5 2.5l2 2-7 7H2.5v-2l7-7z"/></svg>
-              </button>
               {milestones.length > 0 && (
                 <select
                   defaultValue=""
@@ -2470,11 +2659,11 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                 <svg width="15" height="15" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M5.5 8.5l3-3"/><path d="M8.5 5.5L10 4a2.12 2.12 0 013 3l-1.5 1.5"/><path d="M5.5 8.5L4 10a2.12 2.12 0 01-3-3l1.5-1.5"/></svg>
               </button>
               <button
-                onClick={() => { if (pendingDelete) { handleDeleteTask(task.id); setConfirmDeleteTask(null); } else { setConfirmDeleteTask(task.id); } }}
+                onClick={() => { if (window.confirm('Delete this task?')) handleDeleteTask(task.id); }}
                 title="Delete task"
-                style={{ background: pendingDelete ? '#fef2f2' : 'none', border: pendingDelete ? '1px solid #fecaca' : 'none', color: pendingDelete ? '#ef4444' : 'var(--text-faint)', cursor: 'pointer', fontSize: 10, fontWeight: 700, padding: pendingDelete ? '2px 6px' : '4px 5px', borderRadius: 4, display: 'flex', alignItems: 'center', flexShrink: 0, whiteSpace: 'nowrap', transition: 'all .15s' }}
+                style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: '4px 5px', borderRadius: 4, display: 'flex', alignItems: 'center', flexShrink: 0 }}
               >
-                {pendingDelete ? '✕ Delete?' : <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 3 11 3"/><path d="M5 3V2h4v1"/><rect x="3" y="4" width="8" height="9" rx="1"/><line x1="6" y1="7" x2="6" y2="10"/><line x1="8" y1="7" x2="8" y2="10"/></svg>}
+                <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 3 11 3"/><path d="M5 3V2h4v1"/><rect x="3" y="4" width="8" height="9" rx="1"/><line x1="6" y1="7" x2="6" y2="10"/><line x1="8" y1="7" x2="8" y2="10"/></svg>
               </button>
             </div>
           </div>
@@ -2494,7 +2683,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                 <span>{fileIcon(f.mime_type)}</span>
                 <span style={{ maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</span>
                 <button
-                  onClick={e => { e.preventDefault(); e.stopPropagation(); handleDeleteFile(f); }}
+                  onClick={e => { e.preventDefault(); e.stopPropagation(); if (window.confirm(`Delete "${f.name}"?`)) handleDeleteFile(f); }}
                   style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: '0 0 0 2px', fontSize: 11, lineHeight: 1 }}
                 >✕</button>
               </a>
@@ -2619,8 +2808,6 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
           {/* Row 1 – content actions */}
           <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
             {[
-              { label: 'Upload File', action: () => triggerFileUpload(activeProject.id) },
-              { label: 'Insert Link', action: () => openLinkModal(activeProject.id) },
               { label: '+ Proposal', action: () => setShowImporter(true) },
               { label: '+ Transcript', action: () => { setTranscriptDefaultMs(null); setShowTranscriptImporter(true); } },
               { label: 'Client Portal', action: () => setShowShareModal(true) },
@@ -2640,201 +2827,199 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
       <div className="page-body">
 
         {/* Project meta bar */}
-        <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: '16px 20px', marginBottom: 24, display: 'flex', gap: 20, flexWrap: 'wrap', alignItems: 'center' }}>
-          <div style={{ flex: 1, minWidth: 200 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
-              <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)' }}>Progress</span>
-              <span style={{ fontSize: 12, fontWeight: 800, color: pColor }}>{pct}%</span>
+        <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: '16px 20px', marginBottom: 24 }}>
+          <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', alignItems: 'center', marginBottom: activeProject.start_date && activeProject.end_date && milestones.length ? 16 : 0 }}>
+            <div style={{ flex: 1, minWidth: 200 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)' }}>Progress</span>
+                <span style={{ fontSize: 12, fontWeight: 800, color: pColor }}>{pct}%</span>
+              </div>
+              <ProgressBar pct={pct} color={pColor} height={8} />
+              <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 4 }}>
+                {tasks.filter(t => t.completed).length} / {tasks.length} tasks complete
+              </div>
             </div>
-            <ProgressBar pct={pct} color={pColor} height={8} />
-            <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 4 }}>
-              {tasks.filter(t => t.completed).length} / {tasks.length} tasks complete
+
+            <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'center' }}>
+              <div>
+                <Lbl>Status</Lbl>
+                <select
+                  value={activeProject.status}
+                  onChange={e => { const u = { ...activeProject, status: e.target.value }; setActiveProject(u); upsertProject(u); }}
+                  style={{ fontSize: 12, padding: '4px 8px', width: 'auto', color: pColor, fontWeight: 700 }}
+                >
+                  {PROJECT_STATUSES.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
+                </select>
+              </div>
+              <div>
+                <Lbl>View by</Lbl>
+                <select
+                  value={projectOwnerFilter}
+                  onChange={e => setProjectOwnerFilter(e.target.value)}
+                  style={{ fontSize: 12, padding: '4px 8px', width: 'auto', fontWeight: projectOwnerFilter ? 700 : 400, color: projectOwnerFilter ? 'var(--accent)' : 'var(--text)' }}
+                >
+                  <option value="">All Team</option>
+                  {owners.map(o => <option key={o} value={o}>{o}</option>)}
+                  <option value="__unassigned__">Unassigned</option>
+                </select>
+              </div>
             </div>
           </div>
 
-          <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'center' }}>
-            <div>
-              <Lbl>Status</Lbl>
-              <select
-                value={activeProject.status}
-                onChange={e => { const u = { ...activeProject, status: e.target.value }; setActiveProject(u); upsertProject(u); }}
-                style={{ fontSize: 12, padding: '4px 8px', width: 'auto', color: pColor, fontWeight: 700 }}
-              >
-                {PROJECT_STATUSES.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
-              </select>
-            </div>
-            <div>
-              <Lbl>Start</Lbl>
-              <input type="date" value={activeProject.start_date || ''} onChange={e => setActiveProject(p => ({ ...p, start_date: e.target.value }))} onBlur={handleSaveProject} style={{ fontSize: 12, padding: '4px 8px', width: 'auto' }} />
-            </div>
-            <div>
-              <Lbl>End</Lbl>
-              <input type="date" value={activeProject.end_date || ''} onChange={e => setActiveProject(p => ({ ...p, end_date: e.target.value }))} onBlur={handleSaveProject} style={{ fontSize: 12, padding: '4px 8px', width: 'auto' }} />
-            </div>
-            <div>
-              <Lbl>Client</Lbl>
-              <input type="text" value={activeProject.client_name || ''} onChange={e => setActiveProject(p => ({ ...p, client_name: e.target.value }))} onBlur={handleSaveProject} placeholder="Client name" style={{ fontSize: 12, padding: '4px 8px', width: 140 }} />
-            </div>
-            <div>
-              <Lbl>View by</Lbl>
-              <select
-                value={projectOwnerFilter}
-                onChange={e => setProjectOwnerFilter(e.target.value)}
-                style={{ fontSize: 12, padding: '4px 8px', width: 'auto', fontWeight: projectOwnerFilter ? 700 : 400, color: projectOwnerFilter ? 'var(--accent)' : 'var(--text)' }}
-              >
-                <option value="">All Team</option>
-                {owners.map(o => <option key={o} value={o}>{o}</option>)}
-                <option value="__unassigned__">Unassigned</option>
-              </select>
-            </div>
-
-          </div>
+          {activeProject.start_date && activeProject.end_date && (
+            <GanttChart
+              milestones={milestones}
+              projectStart={activeProject.start_date}
+              projectEnd={activeProject.end_date}
+              onMilestoneClick={id => {
+                setExpanded(prev => ({ ...prev, [id]: true }));
+                setTimeout(() => {
+                  document.getElementById(`ms-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }, 50);
+              }}
+            />
+          )}
         </div>
 
-        {/* ── Contacts + Summary row ─────────────────────────────────── */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 12, marginBottom: 16 }}>
-
-          {/* Project Contacts */}
-          <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: '12px 14px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-              <div style={{ fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--text-faint)' }}>👤 Contacts</div>
-              {!addingContact && (
-                <button onClick={() => { setAddingContact(true); setNewContactDraft({ name: '', title: '', email: '' }); }} style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 5, border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff', cursor: 'pointer' }}>+ New</button>
-              )}
-            </div>
-
-            {/* Selected contacts — reads from clientRecord.contacts, same source as Contacts tab */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 8, maxHeight: 220, overflowY: 'auto', paddingRight: 2 }}>
-              {(clientRecord?.contacts || []).length === 0 && !addingContact && (
-                <div style={{ fontSize: 12, color: 'var(--text-faint)', fontStyle: 'italic' }}>{clientRecord ? 'No contacts yet' : 'Loading…'}</div>
-              )}
-              {(clientRecord?.contacts || []).map((c, i) => (
-                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 8px', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 6 }}>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)', display: 'flex', alignItems: 'center', gap: 5 }}>
-                      {c.name}
-                      {c.is_primary && <span style={{ fontSize: 9, fontWeight: 700, background: 'var(--accent)', color: '#fff', borderRadius: 10, padding: '1px 6px', letterSpacing: '.04em' }}>PRIMARY</span>}
-                      {c.title ? <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}> · {c.title}</span> : ''}
-                    </div>
-                    {c.email && (
-                      <a
-                        href="#"
-                        onClick={e => { e.preventDefault(); window.open(`https://mail.google.com/mail/?view=cm&to=${encodeURIComponent(c.email)}&su=${encodeURIComponent('Project Update')}`, '_blank'); }}
-                        style={{ fontSize: 11, color: 'var(--accent)', textDecoration: 'none' }}
-                      >{c.email}</a>
+        {/* ── Summary ─────────────────────────────────── */}
+        <div
+          onMouseEnter={() => setSummaryHovered(true)}
+          onMouseLeave={() => setSummaryHovered(false)}
+          style={{ background: 'var(--surface)', border: `1px solid ${summaryHovered || summaryOpen ? 'var(--accent-border)' : 'var(--border)'}`, borderRadius: 10, marginBottom: 16, overflow: 'hidden', transition: 'border-color .15s' }}
+        >
+          {/* Header + 2-line preview — click toggles open/closed */}
+          <div
+            onClick={() => { setSummaryOpen(v => !v); setSummaryClearConfirm(false); }}
+            style={{ padding: '10px 14px', cursor: 'pointer' }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: activeProject.description && !summaryOpen ? 6 : 0 }}>
+              <div style={{ fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.05em', color: summaryHovered || summaryOpen ? 'var(--accent)' : 'var(--text-faint)', transition: 'color .15s' }}>Project Summary</div>
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }} onClick={e => e.stopPropagation()}>
+                {summaryOpen && activeProject.description && (
+                  <>
+                    {activeProject.proposal_text && (
+                      <button onClick={handleGenerateSummary} disabled={summaryGenerating} style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 5, border: '1px solid var(--border)', background: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}>↺ from proposal</button>
                     )}
-                  </div>
-                </div>
-              ))}
+                    <button onClick={handleGenerateSummaryFromActivity} disabled={summaryGenerating} style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 5, border: '1px solid var(--border)', background: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}>↺ Refresh</button>
+                  </>
+                )}
+                {!summaryOpen && !activeProject.description && (
+                  <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>
+                    {activeProject.proposal_text ? 'proposal ready — click to generate' : 'click to add'}
+                  </span>
+                )}
+                <span style={{ fontSize: 11, color: 'var(--text-faint)', transition: 'transform .15s', display: 'inline-block', transform: summaryOpen ? 'rotate(180deg)' : 'none' }}>▾</span>
+              </div>
             </div>
 
-            {/* Dropdown — contacts from company card + deal research, merged */}
-            {!addingContact && (() => {
-              // Build merged pool: company card contacts + deal research contact_angles
-              const pool = new Map();
-              (projectCompany?.contacts || []).forEach(c => {
-                if (c.name?.trim()) pool.set(c.name.trim().toLowerCase(), { name: c.name.trim(), title: c.title || '', email: c.email || '' });
-              });
-              (dealCompanyIntel?.contact_angles || []).forEach(c => {
-                if (!c.name?.trim()) return;
-                const key = c.name.trim().toLowerCase();
-                const existing = pool.get(key) || {};
-                pool.set(key, { name: c.name.trim(), title: c.title || existing.title || '', email: c.email || existing.email || '' });
-              });
-              // Remove already-added contacts
-              const added = new Set((clientRecord?.contacts || []).map(c => c.name?.trim().toLowerCase()));
-              const available = Array.from(pool.values()).filter(c => !added.has(c.name.toLowerCase()));
-              const sourceName = projectCompany?.name || activeProject.client_name;
-              if (!sourceName && available.length === 0) {
-                return <div style={{ fontSize: 11, color: 'var(--text-faint)', fontStyle: 'italic' }}>Set a client name to load contacts</div>;
-              }
-              return (
-                <select onChange={handleSelectContact} value="" style={{ fontSize: 12, padding: '4px 8px', width: '100%', color: 'var(--text-muted)' }}>
-                  <option value="" disabled>Add contact{sourceName ? ` from ${sourceName}` : ''}…</option>
-                  {available.map((c, i) => (
-                    <option key={i} value={JSON.stringify(c)}>{c.name}{c.title ? ` — ${c.title}` : ''}</option>
-                  ))}
-                </select>
-              );
-            })()}
-
-            {/* Add new contact form */}
-            {addingContact && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 5, padding: 8, background: 'var(--bg)', border: '1px solid var(--accent)', borderRadius: 7 }}>
-                <input autoFocus placeholder="Name *" value={newContactDraft.name} onChange={e => setNewContactDraft(p => ({ ...p, name: e.target.value }))} style={{ fontSize: 12, padding: '4px 7px' }} />
-                <input placeholder="Title / Role" value={newContactDraft.title} onChange={e => setNewContactDraft(p => ({ ...p, title: e.target.value }))} style={{ fontSize: 12, padding: '4px 7px' }} />
-                <input placeholder="Email" value={newContactDraft.email} onChange={e => setNewContactDraft(p => ({ ...p, email: e.target.value }))} onKeyDown={e => e.key === 'Enter' && handleAddNewContact()} style={{ fontSize: 12, padding: '4px 7px' }} />
-                {!projectCompany && <div style={{ fontSize: 11, color: '#f59e0b' }}>⚠ No company card matched — contact won't be saved to company</div>}
-                <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-                  <button onClick={() => setAddingContact(false)} style={{ fontSize: 11, padding: '3px 10px', borderRadius: 5, border: '1px solid var(--border)', background: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}>Cancel</button>
-                  <button onClick={handleAddNewContact} disabled={!newContactDraft.name.trim()} style={{ fontSize: 11, padding: '3px 10px', borderRadius: 5, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer', fontWeight: 700 }}>Add</button>
-                </div>
+            {/* 2-line preview — shown when collapsed */}
+            {!summaryOpen && activeProject.description && (
+              <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.55, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                {activeProject.description}
               </div>
             )}
           </div>
 
-          {/* Project Summary */}
-          <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: '12px 14px', display: 'flex', flexDirection: 'column' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-              <div style={{ fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--text-faint)' }}>📝 Project Summary</div>
-              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                {activeProject.proposal_text ? (
-                  <button
-                    onClick={handleGenerateSummary}
-                    disabled={summaryGenerating}
-                    style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 5, border: '1px solid var(--border)', background: 'none', color: summaryGenerating ? 'var(--text-faint)' : 'var(--text-muted)', cursor: summaryGenerating ? 'default' : 'pointer' }}
-                  >{summaryGenerating ? '⏳ Generating…' : activeProject.description ? '↺ Regenerate' : '✦ Generate from proposal'}</button>
-                ) : (
-                  <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>Import a proposal to auto-generate</span>
-                )}
-                {/* Clear button — shown whenever there's a saved summary */}
-                {activeProject.description && (
-                  <button
-                    onClick={async () => {
-                      const updated = { ...activeProject, description: null };
-                      setActiveProject(updated);
-                      await upsertProject(updated);
+          {/* Expanded body */}
+          {summaryOpen && (
+            <div style={{ padding: '0 14px 14px', borderTop: '1px solid var(--border-light)' }}>
+              {summaryError && <div style={{ fontSize: 12, color: '#ef4444', marginBottom: 6, paddingTop: 8 }}>{summaryError}</div>}
+
+              {/* Two-path generate UI when no summary yet */}
+              {!activeProject.description && !summaryGenerating && (
+                <div style={{ display: 'flex', gap: 10, marginTop: 12, marginBottom: 10 }}>
+                  <div
+                    onDragOver={e => { e.preventDefault(); setSummaryDragOver(true); }}
+                    onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget)) setSummaryDragOver(false); }}
+                    onDrop={handleDropProposalOnSummary}
+                    style={{ flex: 1, border: `2px dashed ${summaryDragOver ? 'var(--accent)' : 'var(--border)'}`, borderRadius: 8, padding: '18px 12px', textAlign: 'center', background: summaryDragOver ? 'var(--accent-light)' : 'var(--bg)', transition: 'all .15s' }}
+                  >
+                    <div style={{ fontSize: 18, marginBottom: 4 }}>📄</div>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: summaryDragOver ? 'var(--accent)' : 'var(--text-muted)' }}>Drop proposal here</div>
+                    <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 2 }}>PDF or text file</div>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', color: 'var(--text-faint)', fontSize: 11, fontWeight: 600 }}>or</div>
+                  <div
+                    onClick={handleGenerateSummaryFromActivity}
+                    style={{ flex: 1, border: '2px dashed var(--border)', borderRadius: 8, padding: '18px 12px', textAlign: 'center', background: 'var(--bg)', cursor: 'pointer', transition: 'all .15s' }}
+                    onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--accent)'; e.currentTarget.style.background = 'var(--accent-light)'; }}
+                    onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.background = 'var(--bg)'; }}
+                  >
+                    <div style={{ fontSize: 18, marginBottom: 4 }}>✦</div>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)' }}>Generate from activity</div>
+                    <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 2 }}>Tasks, meetings & files</div>
+                  </div>
+                </div>
+              )}
+
+              {summaryGenerating && (
+                <div style={{ padding: '20px 0', textAlign: 'center', fontSize: 13, color: 'var(--text-muted)' }}>✦ Generating summary…</div>
+              )}
+
+              {activeProject.description && (
+                <>
+                  <textarea
+                    ref={summaryTextareaRef}
+                    autoFocus
+                    value={activeProject.description}
+                    onChange={e => {
+                      setActiveProject(p => ({ ...p, description: e.target.value }));
+                      if (summaryTextareaRef.current) {
+                        summaryTextareaRef.current.style.height = 'auto';
+                        summaryTextareaRef.current.style.height = summaryTextareaRef.current.scrollHeight + 'px';
+                      }
                     }}
-                    style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 5, border: '1px solid var(--border)', background: 'none', color: '#ef4444', cursor: 'pointer' }}
-                    title="Clear summary"
-                  >✕ Clear</button>
-                )}
-              </div>
+                    onBlur={handleSaveProject}
+                    style={{ width: '100%', marginTop: 10, fontSize: 12, padding: '7px 10px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', resize: 'none', overflow: 'hidden', lineHeight: 1.55, fontFamily: 'inherit', minHeight: 80 }}
+                  />
+
+                  {/* Clear — hidden until hover, with inline confirmation */}
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 6 }}>
+                    {summaryClearConfirm ? (
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Clear this summary?</span>
+                        <button
+                          onClick={async () => { const u = { ...activeProject, description: null }; setActiveProject(u); await upsertProject(u); setSummaryClearConfirm(false); setSummaryOpen(false); }}
+                          style={{ fontSize: 11, fontWeight: 700, padding: '2px 10px', borderRadius: 5, border: 'none', background: '#ef4444', color: '#fff', cursor: 'pointer' }}
+                        >Yes, clear</button>
+                        <button onClick={() => setSummaryClearConfirm(false)} style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 5, border: '1px solid var(--border)', background: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}>Cancel</button>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => setSummaryClearConfirm(true)}
+                        style={{ fontSize: 11, padding: '2px 8px', borderRadius: 5, border: 'none', background: 'none', color: 'transparent', cursor: 'pointer', transition: 'color .15s' }}
+                        onMouseEnter={e => { e.currentTarget.style.color = '#ef4444'; }}
+                        onMouseLeave={e => { e.currentTarget.style.color = 'transparent'; }}
+                      >Clear summary</button>
+                    )}
+                  </div>
+                </>
+              )}
             </div>
-            {summaryError && <div style={{ fontSize: 12, color: '#ef4444', marginBottom: 6 }}>{summaryError}</div>}
-            <textarea
-              value={activeProject.description || ''}
-              onChange={e => setActiveProject(p => ({ ...p, description: e.target.value }))}
-              onBlur={handleSaveProject}
-              placeholder={activeProject.proposal_text ? 'Click "Generate from proposal" or type a summary…' : 'Add a project summary…'}
-              rows={4}
-              style={{ fontSize: 12, padding: '7px 10px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', resize: 'vertical', lineHeight: 1.55, fontFamily: 'inherit', flex: 1 }}
-            />
-          </div>
+          )}
         </div>
 
         {/* ── Project tabs ── */}
-        <div style={{ position: 'sticky', top: 91, zIndex: 80, background: 'var(--bg)', display: 'flex', gap: 0, borderBottom: '2px solid var(--border)', marginBottom: 20 }}>
+        <div className="tab-bar" style={{ position: 'sticky', top: 91, zIndex: 80, background: 'var(--bg)', marginBottom: 20 }}>
           {[
             { id: 'timeline', label: 'Tasks' },
             { id: 'activity', label: meetings.length > 0 ? `Meetings (${meetings.length})` : 'Meetings' },
             { id: 'files', label: projectFiles.length > 0 ? `Files (${projectFiles.length})` : 'Files' },
             { id: 'contacts', label: 'Contacts' },
-            { id: 'research', label: 'Research' },
           ].map(t => (
             <button
               key={t.id}
+              className={`tab-btn${projectTab === t.id ? ' active' : ''}`}
               onClick={() => setProjectTab(t.id)}
-              style={{
-                padding: '8px 16px', fontSize: 12, fontWeight: 700,
-                background: 'none', border: 'none',
-                borderBottom: projectTab === t.id ? '2px solid var(--accent)' : '2px solid transparent',
-                marginBottom: -2, cursor: 'pointer',
-                color: projectTab === t.id ? 'var(--accent)' : 'var(--text-muted)',
-                whiteSpace: 'nowrap',
-              }}
             >{t.label}</button>
           ))}
+          <button
+            className={`tab-btn${projectTab === 'forecast' ? ' active' : ''}`}
+            onClick={() => setProjectTab('forecast')}
+            style={{ marginLeft: 'auto', opacity: projectTab === 'forecast' ? 1 : 0, transition: 'opacity .15s' }}
+            onMouseEnter={e => { if (projectTab !== 'forecast') e.currentTarget.style.opacity = '1'; }}
+            onMouseLeave={e => { if (projectTab !== 'forecast') e.currentTarget.style.opacity = '0'; }}
+          >Forecast</button>
         </div>
 
         {projectTab === 'timeline' && (<>
@@ -2916,25 +3101,6 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
             </div>
           </>
         ) : (<>
-
-          {/* ── Gantt ─────────────────────────────────────────────────── */}
-          {activeProject.start_date && activeProject.end_date && (
-            <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: '18px 20px', marginBottom: 24 }}>
-              <div style={{ fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--text-faint)', marginBottom: 14 }}>Timeline</div>
-              <GanttChart
-                milestones={milestones}
-                projectStart={activeProject.start_date}
-                projectEnd={activeProject.end_date}
-                onMilestoneClick={id => {
-                  // Expand the milestone and scroll to it
-                  setExpanded(prev => ({ ...prev, [id]: true }));
-                  setTimeout(() => {
-                    document.getElementById(`ms-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                  }, 50);
-                }}
-              />
-            </div>
-          )}
 
           {/* ── Milestones & Tasks ─────────────────────────────────── */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -3094,7 +3260,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                           <span style={{ fontSize: 16, flexShrink: 0 }}>{fileIcon(f.mime_type)}</span>
                           <a href={f.url} target="_blank" rel="noopener noreferrer" style={{ flex: 1, fontSize: 12, fontWeight: 600, color: 'var(--accent)', textDecoration: 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</a>
                           <span style={{ fontSize: 10, color: 'var(--text-faint)', whiteSpace: 'nowrap', flexShrink: 0 }}>{fmtFileSize(f.size)}</span>
-                          <button onClick={() => handleDeleteFile(f)} style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 12, padding: '2px 4px', flexShrink: 0 }}>✕</button>
+                          <button onClick={() => { if (window.confirm(`Delete "${f.name}"?`)) handleDeleteFile(f); }} style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 12, padding: '2px 4px', flexShrink: 0 }}>✕</button>
                         </div>
                       ))}
 
@@ -3104,10 +3270,9 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                             <div style={{ flex: 1, fontSize: 9, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.06em' }}>Task</div>
                           <div style={{ width: 110, fontSize: 9, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.06em', flexShrink: 0 }}>Assigned To</div>
                           <div style={{ width: 52, fontSize: 9, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.06em', flexShrink: 0 }}>Hrs</div>
-                          <div style={{ width: 86, fontSize: 9, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.06em', flexShrink: 0 }}>Due Date</div>
+                          <div style={{ width: 110, fontSize: 9, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.06em', flexShrink: 0 }}>Due Date</div>
                           <div style={{ width: 120, fontSize: 9, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.06em', flexShrink: 0 }}>Recipient</div>
                           <div style={{ width: 70, fontSize: 9, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.06em', flexShrink: 0 }}>Mentions</div>
-                          <div style={{ width: 130, fontSize: 9, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.06em', flexShrink: 0 }}>Milestone</div>
                           <div style={{ width: 96, fontSize: 9, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.06em', flexShrink: 0 }}>Actions</div>
                         </div>
                       )}
@@ -3233,13 +3398,14 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                             ) : (
                               /* ── Normal view mode ────────────────────────── */
                               <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 16px 9px 48px' }}>
-                                <input
-                                  type="checkbox"
-                                  checked={task.completed}
-                                  onChange={() => handleToggleTask(task)}
-                                  style={{ width: 15, height: 15, accentColor: hasOpenRejection ? '#f59e0b' : color, cursor: 'pointer', flexShrink: 0 }}
-                                />
-                                <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ flex: 1, minWidth: 0, overflow: 'hidden', display: 'flex', alignItems: 'center', gap: 8 }}>
+                                  <input
+                                    type="checkbox"
+                                    checked={task.completed}
+                                    onChange={() => handleToggleTask(task)}
+                                    style={{ width: 15, height: 15, accentColor: hasOpenRejection ? '#f59e0b' : color, cursor: 'pointer', flexShrink: 0 }}
+                                  />
+                                  <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
                                   <span
                                     style={{
                                       fontSize: 13,
@@ -3248,9 +3414,13 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                                       textDecoration: task.approved_at ? 'line-through' : 'none',
                                       textDecorationColor: '#ef4444',
                                       cursor: 'text',
+                                      display: 'block',
+                                      whiteSpace: 'nowrap',
+                                      overflow: 'hidden',
+                                      textOverflow: 'ellipsis',
                                     }}
                                     onDoubleClick={() => startEditTask(task)}
-                                    title="Double-click to edit"
+                                    title={task.title}
                                   >
                                     {task.title}
                                   </span>
@@ -3284,6 +3454,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                                       </div>
                                     );
                                   })()}
+                                  </div>
                                 </div>
                                 {/* Inline assign + hours */}
                                 <select
@@ -3332,7 +3503,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                                     await upsertProjectTask(updated);
                                     await syncMilestoneDates(updated);
                                   }}
-                                  style={{ fontSize: 11, padding: '2px 4px', border: '1px solid var(--border)', borderRadius: 4, background: 'var(--surface)', color: task.due_date ? 'var(--text-muted)' : 'var(--text-faint)', flexShrink: 0, width: 86 }}
+                                  style={{ border: '1px solid var(--border)', borderRadius: 4, background: task.due_date ? 'var(--accent-light, #fff7ed)' : 'var(--surface)', flexShrink: 0, width: 110, fontSize: 11, padding: '2px 4px', color: task.due_date ? 'var(--text-muted)' : 'var(--text-faint)' }}
                                 />
                                 {/* Portal recipient — task contact > milestone contact > primary contact */}
                                 {(() => {
@@ -3369,37 +3540,14 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                                   }}
                                   title="View meeting mentions"
                                 >Mentions</button>
-                                {/* Milestone selector — move task between milestones or unassign */}
-                                <select
-                                  value={task.milestone_id || ''}
-                                  onChange={async e => {
-                                    const newMsId = e.target.value || null;
-                                    const updated = { ...task, milestone_id: newMsId };
-                                    await upsertProjectTask(updated);
-                                    const patch = t => t.id === task.id ? updated : t;
-                                    setTasks(prev => prev.map(patch));
-                                    setAllTasks(prev => ({ ...prev, [activeProject.id]: (prev[activeProject.id] || []).map(patch) }));
-                                  }}
-                                  style={{ fontSize: 10, padding: '2px 4px', border: '1px solid var(--border)', borderRadius: 4, background: 'var(--surface)', color: 'var(--text-muted)', flexShrink: 0, width: 130 }}
-                                  title="Move to milestone"
-                                >
-                                  <option value="">— Unassigned —</option>
-                                  {milestones.map(m => <option key={m.id} value={m.id}>{m.title}</option>)}
-                                </select>
                                 {/* ── Task action buttons ── */}
                                 <div className="task-actions" style={{ display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 }}>
-                                  {/* Edit / Assign */}
-                                  <button onClick={() => startEditTask(task)} title="Edit / assign task" style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: '4px 5px', borderRadius: 4, display: 'flex', alignItems: 'center', flexShrink: 0 }}>
-                                    <svg width="15" height="15" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M9.5 2.5l2 2-7 7H2.5v-2l7-7z"/></svg>
-                                  </button>
                                   {/* Proposal */}
                                   {(activeProject.proposal_text || activeProject.proposal_pdf_url) && (
                                     <button onClick={() => setProposalPanel({ task })} title="See in proposal" style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: '4px 5px', borderRadius: 4, display: 'flex', alignItems: 'center', flexShrink: 0 }}>
                                       <svg width="15" height="15" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="1" width="8" height="11" rx="1"/><path d="M5 1v3h5"/><path d="M4 7h4M4 9.5h3"/></svg>
                                     </button>
                                   )}
-                                  {/* Attach file */}
-                                  {/* Meeting mentions — now a pill above; keep icon as fallback if needed */}
                                   {/* Attach file */}
                                   <button onClick={e => { e.stopPropagation(); triggerFileUpload(activeProject.id, null, null, task.id); }} disabled={uploadingFor === task.id} title="Attach file" style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: '4px 5px', borderRadius: 4, display: 'flex', alignItems: 'center', flexShrink: 0 }}>
                                     {uploadingFor === task.id
@@ -3413,11 +3561,11 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                                   </button>
                                   {/* Delete */}
                                   <button
-                                    onClick={() => { if (pendingDelete) { handleDeleteTask(task.id); setConfirmDeleteTask(null); } else { setConfirmDeleteTask(task.id); } }}
+                                    onClick={() => { if (window.confirm('Delete this task?')) handleDeleteTask(task.id); }}
                                     title="Delete task"
-                                    style={{ background: pendingDelete ? '#fef2f2' : 'none', border: pendingDelete ? '1px solid #fecaca' : 'none', color: pendingDelete ? '#ef4444' : 'var(--text-faint)', cursor: 'pointer', fontSize: 10, fontWeight: 700, padding: pendingDelete ? '2px 6px' : '4px 5px', borderRadius: 4, display: 'flex', alignItems: 'center', flexShrink: 0, whiteSpace: 'nowrap', transition: 'all .15s' }}
+                                    style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: '4px 5px', borderRadius: 4, display: 'flex', alignItems: 'center', flexShrink: 0 }}
                                   >
-                                    {pendingDelete ? 'Delete?' : <svg width="15" height="15" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"><path d="M2 3.5h10M5 3.5V2.5a.5.5 0 01.5-.5h3a.5.5 0 01.5.5v1M5.5 6v4M8.5 6v4M3 3.5l.7 7.5a1 1 0 001 .9h4.6a1 1 0 001-.9l.7-7.5"/></svg>}
+                                    <svg width="15" height="15" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"><path d="M2 3.5h10M5 3.5V2.5a.5.5 0 01.5-.5h3a.5.5 0 01.5.5v1M5.5 6v4M8.5 6v4M3 3.5l.7 7.5a1 1 0 001 .9h4.6a1 1 0 001-.9l.7-7.5"/></svg>
                                   </button>
                                 </div>
                               </div>
@@ -3542,7 +3690,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                                     <span>{fileIcon(f.mime_type)}</span>
                                     <span style={{ maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</span>
                                     <button
-                                      onClick={e => { e.preventDefault(); e.stopPropagation(); handleDeleteFile(f); }}
+                                      onClick={e => { e.preventDefault(); e.stopPropagation(); if (window.confirm(`Delete "${f.name}"?`)) handleDeleteFile(f); }}
                                       style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: '0 0 0 2px', fontSize: 11, lineHeight: 1 }}
                                     >✕</button>
                                   </a>
@@ -3569,32 +3717,32 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                           <button onClick={() => { setNewTaskMs(null); setNewTaskTitle(''); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-faint)' }}>✕</button>
                         </div>
                       ) : (
-                        <div style={{ display: 'flex', alignItems: 'center' }}>
-                          <button
-                            onClick={() => { setNewTaskMs(ms.id); setNewTaskTitle(''); setEditingTask(null); setConfirmDeleteTask(null); }}
-                            style={{ flex: 1, padding: '8px 16px 8px 48px', background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, color: 'var(--text-faint)', textAlign: 'left' }}
-                          >
-                            + Add task
-                          </button>
-                          <button
-                            onClick={() => { setTranscriptDefaultMs(ms.id); setShowTranscriptImporter(true); }}
-                            style={{ padding: '8px 16px 8px 8px', background: 'none', border: 'none', cursor: 'pointer', fontSize: 11, color: 'var(--text-faint)', whiteSpace: 'nowrap', flexShrink: 0 }}
-                            title="Add tasks from a meeting transcript"
-                          >
-                            📝 From transcript
-                          </button>
-                        </div>
+                        <button
+                          onClick={() => { setNewTaskMs(ms.id); setNewTaskTitle(''); setEditingTask(null); setConfirmDeleteTask(null); }}
+                          style={{ width: '100%', padding: '8px 16px 8px 48px', background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, color: 'var(--text-faint)', textAlign: 'left' }}
+                        >
+                          + Add task
+                        </button>
                       )}
 
-                      {/* Attach file to milestone */}
+                      {/* From transcript / Attach file / Add link */}
+                      <button
+                        onClick={() => { setTranscriptDefaultMs(ms.id); setShowTranscriptImporter(true); }}
+                        style={{ width: '100%', padding: '7px 16px 7px 48px', background: 'none', border: 'none', borderTop: '1px solid var(--border-light)', cursor: 'pointer', fontSize: 12, color: 'var(--text-faint)', textAlign: 'left', transition: 'color .15s' }}
+                        onMouseEnter={e => e.currentTarget.style.color = 'var(--accent)'}
+                        onMouseLeave={e => e.currentTarget.style.color = 'var(--text-faint)'}
+                        title="Add tasks from a meeting transcript"
+                      >
+                        Add transcript to milestone
+                      </button>
                       <button
                         onClick={() => triggerFileUpload(activeProject.id, ms.id)}
                         disabled={uploadingFor === ms.id}
-                        style={{ width: '100%', padding: '7px 16px 7px 48px', background: 'none', border: 'none', borderTop: '1px solid var(--border-light)', cursor: uploadingFor === ms.id ? 'default' : 'pointer', fontSize: 12, color: 'var(--text-faint)', textAlign: 'left', transition: 'color .15s' }}
+                        style={{ width: '100%', padding: '7px 16px 7px 48px', background: 'none', border: 'none', cursor: uploadingFor === ms.id ? 'default' : 'pointer', fontSize: 12, color: 'var(--text-faint)', textAlign: 'left', transition: 'color .15s' }}
                         onMouseEnter={e => e.currentTarget.style.color = 'var(--accent)'}
                         onMouseLeave={e => e.currentTarget.style.color = 'var(--text-faint)'}
                       >
-                        {uploadingFor === ms.id ? '⏳ Uploading…' : '📎 Attach file to milestone'}
+                        {uploadingFor === ms.id ? 'Uploading…' : 'Attach file to milestone'}
                       </button>
                       <button
                         onClick={() => openLinkModal(activeProject.id, ms.id)}
@@ -3602,7 +3750,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                         onMouseEnter={e => e.currentTarget.style.color = 'var(--accent)'}
                         onMouseLeave={e => e.currentTarget.style.color = 'var(--text-faint)'}
                       >
-                        🔗 Add link to milestone
+                        Add link to milestone
                       </button>
 
                       {/* Archived tasks toggle */}
@@ -3774,100 +3922,6 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
               </div>
             )}
 
-            {/* ── Meetings log ──────────────────────────────────────── */}
-            <div style={{ border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
-                {/* Header */}
-                <button
-                  onClick={() => setMeetingsExpanded(v => !v)}
-                  style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '14px 18px', background: 'var(--surface)', border: 'none', cursor: 'pointer', textAlign: 'left' }}
-                >
-                  <span style={{ fontSize: 14, fontWeight: 800, color: 'var(--text)', flex: 1 }}>
-                    Meeting Log {meetings.length > 0 && <span style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-faint)', marginLeft: 6 }}>{meetings.length} meeting{meetings.length !== 1 ? 's' : ''}</span>}
-                  </span>
-                  <button
-                    onClick={e => { e.stopPropagation(); setTranscriptDefaultMs(null); setShowTranscriptImporter(true); }}
-                    style={{ fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 6, border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}
-                  >+ Add meeting</button>
-                  <span style={{ fontSize: 12, color: 'var(--text-faint)' }}>{meetingsExpanded ? '▲' : '▼'}</span>
-                </button>
-
-                {meetingsExpanded && (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
-                    {meetings.length === 0 && (
-                      <div style={{ padding: '20px 18px', textAlign: 'center', color: 'var(--text-faint)', fontSize: 12 }}>
-                        No meetings logged yet.
-                        <div style={{ marginTop: 8 }}>
-                          <button
-                            onClick={() => { setTranscriptDefaultMs(null); setShowTranscriptImporter(true); }}
-                            className="btn btn-secondary btn-sm"
-                          >📝 Add first meeting</button>
-                        </div>
-                      </div>
-                    )}
-                    {meetings.map((mtg) => (
-                      <div key={mtg.id} style={{ padding: '16px 18px', borderTop: '1px solid var(--border-light)', background: 'var(--bg)' }}>
-                        {editingMeeting === mtg.id ? (
-                          /* ── Inline edit form ── */
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                            <input
-                              type="text"
-                              value={editMeetingDraft.title || ''}
-                              onChange={e => setEditMeetingDraft(d => ({ ...d, title: e.target.value }))}
-                              placeholder="Meeting title"
-                              style={{ fontSize: 13, fontWeight: 700, padding: '5px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)' }}
-                            />
-                            <div style={{ display: 'flex', gap: 8 }}>
-                              <input
-                                type="date"
-                                value={editMeetingDraft.meeting_date || ''}
-                                onChange={e => setEditMeetingDraft(d => ({ ...d, meeting_date: e.target.value }))}
-                                style={{ fontSize: 12, padding: '4px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', width: 160 }}
-                              />
-                              <input
-                                type="text"
-                                value={editMeetingDraft.meeting_time || ''}
-                                onChange={e => setEditMeetingDraft(d => ({ ...d, meeting_time: e.target.value }))}
-                                placeholder="Time (e.g. 10:00 AM)"
-                                style={{ fontSize: 12, padding: '4px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', width: 140 }}
-                              />
-                            </div>
-                            <input
-                              type="text"
-                              value={Array.isArray(editMeetingDraft.attendees) ? editMeetingDraft.attendees.join(', ') : (editMeetingDraft.attendees || '')}
-                              onChange={e => setEditMeetingDraft(d => ({ ...d, attendees: e.target.value.split(',').map(s => s.trim()).filter(Boolean) }))}
-                              placeholder="Attendees (comma-separated)"
-                              style={{ fontSize: 12, padding: '4px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)' }}
-                            />
-                            <textarea
-                              value={editMeetingDraft.summary || ''}
-                              onChange={e => setEditMeetingDraft(d => ({ ...d, summary: e.target.value }))}
-                              placeholder="Summary / notes…"
-                              rows={3}
-                              style={{ fontSize: 12, padding: '6px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', lineHeight: 1.6, resize: 'vertical' }}
-                            />
-                            <div style={{ display: 'flex', gap: 6 }}>
-                              <button className="btn btn-primary btn-sm" onClick={handleSaveMeeting} disabled={savingMeeting} style={{ borderRadius: 20 }}>{savingMeeting ? 'Saving…' : 'Save'}</button>
-                              <button className="btn btn-secondary btn-sm" onClick={() => setEditingMeeting(null)} style={{ borderRadius: 20 }}>Cancel</button>
-                            </div>
-                          </div>
-                        ) : (
-                          <MeetingCard
-                            mtg={mtg}
-                            tasks={tasks}
-                            isExpanded={expandedMeetings.has(mtg.id)}
-                            onToggleExpanded={() => setExpandedMeetings(prev => { const next = new Set(prev); next.has(mtg.id) ? next.delete(mtg.id) : next.add(mtg.id); return next; })}
-                            onEdit={() => { setEditingMeeting(mtg.id); setEditMeetingDraft({ title: mtg.title, meeting_date: mtg.meeting_date || '', meeting_time: mtg.meeting_time || '', attendees: mtg.attendees || [], summary: mtg.summary || '' }); }}
-                            onDelete={async () => { if (!window.confirm('Delete this meeting?')) return; await deleteProjectMeeting(mtg.id); setMeetings(prev => prev.filter(m => m.id !== mtg.id)); }}
-                            onActionItemClick={ai => { const base = mtg.meeting_date ? new Date(mtg.meeting_date + 'T12:00:00') : new Date(); base.setDate(base.getDate() + 7); setActionItemDraft({ title: ai.title || '', assigned_to: ai.owner || '', estimated_hours: ai.estimated_hours || '', milestone_id: milestones[0]?.id || null, due_date: base.toISOString().slice(0,10) }); }}
-                            innerBg="var(--surface)"
-                          />
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
             {/* Add milestone footer */}
             <button
               onClick={handleAddMilestone}
@@ -3878,55 +3932,46 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
               + Add Milestone
             </button>
 
-            {/* ── Project Forecast — always at the bottom ──────────────────────────────────────── */}
-            {tasks.length > 0 && (
-              <ProjectForecast
-                tasks={tasks}
-                milestones={milestones}
-                teamMembers={teamMembers}
-                activeProject={activeProject}
-                onBudgetChange={val => { setActiveProject(p => ({ ...p, budget: val })); }}
-                onBudgetBlur={handleSaveProject}
-                open={showEstimate}
-                onToggle={() => setShowEstimate(o => !o)}
-              />
-            )}
           </div>
         </>)}
         </>)}
 
         {/* ── Activity tab ── */}
         {projectTab === 'activity' && (
-          <div>
+          <div
+            onDragOver={e => { e.preventDefault(); setDragOverMeetingsTab(true); }}
+            onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget)) setDragOverMeetingsTab(false); }}
+            onDrop={handleDropOnMeetingsTab}
+            style={{ position: 'relative', ...(dragOverMeetingsTab ? { outline: '2px dashed var(--accent)', outlineOffset: 6, borderRadius: 10 } : {}) }}
+          >
+            {dragOverMeetingsTab && (
+              <div style={{ pointerEvents: 'none', position: 'absolute', inset: 0, zIndex: 5, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(var(--accent-rgb, 249,115,22), 0.06)', borderRadius: 10 }}>
+                <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--accent)' }}>Drop transcript or meeting doc to import</div>
+              </div>
+            )}
             {/* ── Project Notes ── */}
             <div style={{ marginBottom: 24 }}>
-              <div style={{ display: 'flex', alignItems: 'center', marginBottom: 10 }}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', flex: 1 }}>Project Notes</div>
-                <button onClick={() => { setAddingNote(true); setNewNoteText(''); }} style={{ fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 20, border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff', cursor: 'pointer' }}>+ Add Note</button>
+              <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 10 }}>Project Notes</div>
+
+              {/* Note input — always visible on this tab */}
+              <div style={{ marginBottom: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <textarea
+                  autoFocus
+                  value={newNoteText}
+                  onChange={e => setNewNoteText(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleAddNote(); }}
+                  placeholder="Type a note…"
+                  rows={3}
+                  style={{ width: '100%', fontSize: 13, lineHeight: 1.65, resize: 'vertical' }}
+                />
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <button className="btn btn-primary btn-sm" onClick={handleAddNote} disabled={!newNoteText.trim()} style={{ borderRadius: 20 }}>Save Note</button>
+                  <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>or drop a transcript anywhere on this tab to import &amp; analyze</span>
+                </div>
               </div>
 
-              {/* New note input */}
-              {addingNote && (
-                <div style={{ marginBottom: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  <textarea
-                    autoFocus
-                    value={newNoteText}
-                    onChange={e => setNewNoteText(e.target.value)}
-                    placeholder="Type a note…"
-                    rows={3}
-                    style={{ width: '100%', fontSize: 13, lineHeight: 1.65, resize: 'vertical' }}
-                  />
-                  <div style={{ display: 'flex', gap: 6 }}>
-                    <button className="btn btn-primary btn-sm" onClick={handleAddNote} style={{ borderRadius: 20 }}>Save Note</button>
-                    <button className="btn btn-secondary btn-sm" onClick={() => setAddingNote(false)} style={{ borderRadius: 20 }}>Cancel</button>
-                  </div>
-                </div>
-              )}
-
               {/* Notes list */}
-              {projectNotes.length === 0 && !addingNote ? (
-                <div style={{ fontSize: 12, color: 'var(--text-faint)', padding: '12px 0' }}>No notes yet. Click + Add Note to start.</div>
-              ) : (
+              {projectNotes.length > 0 && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                   {projectNotes.map(note => (
                     <div key={note.id} style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: '10px 12px' }}>
@@ -4119,24 +4164,58 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
         {projectTab === 'files' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
 
-            {/* Upload / Link CTAs */}
-            <div style={{ display: 'flex', gap: 8 }}>
-              <button
-                onClick={() => triggerFileUpload(activeProject.id)}
-                style={{ fontSize: 12, fontWeight: 700, padding: '7px 16px', borderRadius: 8, border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff', cursor: 'pointer' }}
-              >📎 Upload File</button>
-              <button
-                onClick={() => openLinkModal(activeProject.id)}
-                style={{ fontSize: 12, fontWeight: 700, padding: '7px 16px', borderRadius: 8, border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff', cursor: 'pointer' }}
-              >🔗 Add Link</button>
+            {/* Drop zone */}
+            <div
+              onClick={() => triggerFileUpload(activeProject.id)}
+              onDragOver={e => { e.preventDefault(); setDragOverFilesZone(true); }}
+              onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget)) setDragOverFilesZone(false); }}
+              onDrop={handleDropOnFilesZone}
+              style={{
+                padding: '28px 20px',
+                textAlign: 'center',
+                border: `2px dashed ${dragOverFilesZone ? 'var(--accent)' : 'var(--border)'}`,
+                borderRadius: 10,
+                background: dragOverFilesZone ? 'var(--accent-light)' : 'var(--surface)',
+                cursor: uploadingFor === '__files_zone__' ? 'default' : 'pointer',
+                transition: 'border-color .15s, background .15s',
+              }}
+            >
+              {uploadingFor === '__files_zone__' ? (
+                <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>⏳ Uploading…</div>
+              ) : (
+                <>
+                  <div style={{ fontSize: 22, marginBottom: 6 }}>📁</div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: dragOverFilesZone ? 'var(--accent)' : 'var(--text-muted)' }}>
+                    Drop files here or click to browse
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 4 }}>Any file type supported</div>
+                </>
+              )}
             </div>
 
+            {/* Insert Link */}
+            <button
+              onClick={() => openLinkModal(activeProject.id)}
+              style={{
+                width: '100%',
+                padding: '10px 16px',
+                border: '2px dashed var(--border)',
+                borderRadius: 10,
+                background: 'var(--surface)',
+                cursor: 'pointer',
+                fontSize: 13,
+                fontWeight: 600,
+                color: 'var(--text-muted)',
+                transition: 'border-color .15s, color .15s',
+              }}
+              onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--accent)'; e.currentTarget.style.color = 'var(--accent)'; }}
+              onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.color = 'var(--text-muted)'; }}
+            >
+              🔗 Insert Link
+            </button>
+
             {/* Active files */}
-            {projectFiles.length === 0 ? (
-              <div style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-faint)', fontSize: 13, border: '1px dashed var(--border)', borderRadius: 10 }}>
-                No files yet. Upload a file or add a link above.
-              </div>
-            ) : (() => {
+            {projectFiles.length > 0 && (() => {
               const projectLevel = projectFiles.filter(f => !f.milestone_id && !f.task_id);
               const milestoneLevel = projectFiles.filter(f => f.milestone_id && !f.task_id);
               const taskLevel = projectFiles.filter(f => f.task_id);
@@ -4255,7 +4334,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                         <span style={{ fontSize: 16, flexShrink: 0 }}>{fileIcon(f.mime_type)}</span>
                         <span style={{ flex: 1, fontSize: 12, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</span>
                         <button onClick={() => handleRestoreFile(f)} style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-muted)', cursor: 'pointer', flexShrink: 0 }}>Restore</button>
-                        <button onClick={() => handleDeleteFile(f)} style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 13, padding: '2px 4px', flexShrink: 0 }}>✕</button>
+                        <button onClick={() => { if (window.confirm(`Permanently delete "${f.name}"?`)) handleDeleteFile(f); }} style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 13, padding: '2px 4px', flexShrink: 0 }}>✕</button>
                       </div>
                     ))}
                   </div>
@@ -4265,12 +4344,8 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
 
             {/* ── Proposals ── */}
             <div style={{ borderTop: '1px solid var(--border)', paddingTop: 20 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+              <div style={{ marginBottom: 12 }}>
                 <div style={{ fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--text-faint)' }}>📋 Proposals</div>
-                <button
-                  onClick={() => setShowImporter(true)}
-                  style={{ fontSize: 11, fontWeight: 700, padding: '4px 12px', borderRadius: 20, border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff', cursor: 'pointer' }}
-                >+ Import Proposal</button>
               </div>
               {(activeProject.proposals || []).length === 0 && !activeProject.proposal_text && !activeProject.proposal_pdf_url ? (
                 <div style={{ fontSize: 12, color: 'var(--text-faint)', fontStyle: 'italic' }}>No proposals imported yet.</div>
@@ -4392,6 +4467,51 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
             intel={dealCompanyIntel}
             emptyMessage={`No research found for ${activeProject.client_name || 'this client'}.`}
           />
+        )}
+
+        {/* ── Forecast tab ── */}
+        {projectTab === 'forecast' && (
+          forecastPin && !forecastUnlocked ? (
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '60px 20px', gap: 16 }}>
+              <div style={{ fontSize: 32 }}>🔒</div>
+              <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text)' }}>Forecast is protected</div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input
+                  autoFocus
+                  type="password"
+                  value={forecastPinInput}
+                  onChange={e => { setForecastPinInput(e.target.value); setForecastPinError(false); }}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') {
+                      if (forecastPinInput === forecastPin) { setForecastUnlocked(true); setForecastPinInput(''); }
+                      else { setForecastPinError(true); setForecastPinInput(''); }
+                    }
+                  }}
+                  placeholder="Enter PIN"
+                  style={{ fontSize: 14, padding: '8px 12px', borderRadius: 8, border: `1px solid ${forecastPinError ? '#ef4444' : 'var(--border)'}`, background: 'var(--bg)', color: 'var(--text)', width: 160, textAlign: 'center', letterSpacing: 4 }}
+                />
+                <button
+                  className="btn btn-primary"
+                  onClick={() => {
+                    if (forecastPinInput === forecastPin) { setForecastUnlocked(true); setForecastPinInput(''); }
+                    else { setForecastPinError(true); setForecastPinInput(''); }
+                  }}
+                >Unlock</button>
+              </div>
+              {forecastPinError && <div style={{ fontSize: 12, color: '#ef4444' }}>Incorrect PIN</div>}
+            </div>
+          ) : (
+            <ProjectForecast
+              tasks={tasks}
+              milestones={milestones}
+              teamMembers={teamMembers}
+              activeProject={activeProject}
+              onBudgetChange={val => { setActiveProject(p => ({ ...p, budget: val })); }}
+              onBudgetBlur={handleSaveProject}
+              open={showEstimate}
+              onToggle={() => setShowEstimate(o => !o)}
+            />
+          )
         )}
 
         {/* ── Archive pill — bottom right ── */}
@@ -5414,20 +5534,66 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
           owners={owners}
           existingTasks={tasks}
           defaultMsId={transcriptDefaultMs}
+          initialTranscript={meetingsInitialTranscript}
           onImported={handleTranscriptImported}
-          onClose={() => { setShowTranscriptImporter(false); setTranscriptDefaultMs(null); }}
+          onClose={() => { setShowTranscriptImporter(false); setTranscriptDefaultMs(null); setMeetingsInitialTranscript(''); }}
         />
       )}
 
       {/* Client Portal share modal */}
       {showShareModal && activeProject && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 900, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.35)' }} onClick={() => setShowShareModal(false)} />
+          <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.35)' }} onClick={() => { setShowShareModal(false); setPortalEmailDraft(null); }} />
           <div style={{ position: 'relative', zIndex: 1, background: 'var(--bg)', borderRadius: 14, padding: 28, width: 500, maxWidth: '95vw', boxShadow: '0 16px 48px rgba(0,0,0,0.18)' }}>
             <button
-              onClick={() => setShowShareModal(false)}
+              onClick={() => { setShowShareModal(false); setPortalEmailDraft(null); }}
               style={{ position: 'absolute', top: 16, right: 16, background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: 'var(--text-muted)', lineHeight: 1, padding: '2px 6px' }}
             >✕</button>
+
+            {/* ── Email compose view (after saving) ── */}
+            {portalEmailDraft ? (
+              <>
+                <h3 style={{ fontSize: 16, fontWeight: 800, marginBottom: 6 }}>📬 Share portal with client</h3>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 16 }}>
+                  <div>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 4 }}>To</div>
+                    <div style={{ fontSize: 13, padding: '8px 12px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 7, color: 'var(--text-muted)' }}>
+                      {portalEmailDraft.contactName ? `${portalEmailDraft.contactName} <${portalEmailDraft.to}>` : portalEmailDraft.to}
+                    </div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 4 }}>Subject</div>
+                    <div style={{ fontSize: 13, padding: '8px 12px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 7, color: 'var(--text-muted)' }}>{portalEmailDraft.subject}</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 4 }}>Message</div>
+                    <div style={{ fontSize: 12, padding: '10px 12px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 7, color: 'var(--text-muted)', lineHeight: 1.65 }}
+                      dangerouslySetInnerHTML={{ __html: portalEmailDraft.htmlBody }} />
+                  </div>
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 10, textAlign: 'right' }}>💡 Once Gmail opens, paste to drop in the styled message</div>
+                <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 14 }}>
+                  <button onClick={() => setPortalEmailDraft(null)} style={{ padding: '9px 16px', borderRadius: 8, border: '1px solid var(--border)', background: 'transparent', cursor: 'pointer', fontSize: 13 }}>← Back</button>
+                  <button
+                    onClick={async () => {
+                      try { await navigator.clipboard.write([new ClipboardItem({ 'text/html': new Blob([portalEmailDraft.htmlBody], { type: 'text/html' }), 'text/plain': new Blob([portalEmailDraft.body], { type: 'text/plain' }) })]); }
+                      catch { navigator.clipboard.writeText(portalEmailDraft.body); }
+                    }}
+                    style={{ padding: '9px 16px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}
+                  >Copy</button>
+                  <button
+                    onClick={async () => {
+                      try { await navigator.clipboard.write([new ClipboardItem({ 'text/html': new Blob([portalEmailDraft.htmlBody], { type: 'text/html' }), 'text/plain': new Blob([portalEmailDraft.body], { type: 'text/plain' }) })]); }
+                      catch { navigator.clipboard.writeText(portalEmailDraft.body); }
+                      window.open(portalEmailDraft.gmailUrl, '_blank');
+                      setPortalEmailDraft(null);
+                      setShowShareModal(false);
+                    }}
+                    style={{ padding: '9px 20px', borderRadius: 8, border: 'none', background: 'var(--accent)', color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
+                  >Open in Gmail ↗</button>
+                </div>
+              </>
+            ) : (<>
 
             <h3 style={{ fontSize: 16, fontWeight: 800, marginBottom: 6 }}>🔗 Client Portal</h3>
             <p style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 20, lineHeight: 1.5 }}>
@@ -5484,13 +5650,34 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
             {/* Client email */}
             <div style={{ marginBottom: 24 }}>
               <Lbl>Client email</Lbl>
-              <input
-                type="email"
-                value={shareClientEmail}
-                onChange={e => setShareClientEmail(e.target.value)}
-                placeholder="client@company.com"
-                style={{ width: '100%' }}
-              />
+              {(() => {
+                const portalContacts = (clientRecord?.contacts || []).slice().sort((a, b) => (b.is_primary ? 1 : 0) - (a.is_primary ? 1 : 0));
+                if (portalContacts.length > 0) {
+                  return (
+                    <select
+                      value={shareClientEmail}
+                      onChange={e => setShareClientEmail(e.target.value)}
+                      style={{ width: '100%', fontSize: 13, padding: '8px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)' }}
+                    >
+                      <option value="">— Select a contact —</option>
+                      {portalContacts.map(c => (
+                        <option key={c.email || c.name} value={c.email || ''}>
+                          {c.name}{c.is_primary ? ' (Primary)' : ''}{c.email ? ` — ${c.email}` : ' — no email'}
+                        </option>
+                      ))}
+                    </select>
+                  );
+                }
+                return (
+                  <input
+                    type="email"
+                    value={shareClientEmail}
+                    onChange={e => setShareClientEmail(e.target.value)}
+                    placeholder="client@company.com"
+                    style={{ width: '100%' }}
+                  />
+                );
+              })()}
             </div>
 
             {/* Actions */}
@@ -5515,9 +5702,20 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                 disabled={shareSaving}
                 style={{ minWidth: 90 }}
               >
-                {shareSaving ? 'Saving…' : shareSaved ? '✓ Saved!' : 'Save'}
+                {shareSaving ? 'Sharing…' : shareSaved ? '✓ Shared!' : 'Share Portal'}
               </button>
             </div>
+
+            {portalShareLog.length > 0 && (
+              <div style={{ marginTop: 20, paddingTop: 16, borderTop: '1px solid var(--border-light)' }}>
+                {[...portalShareLog].reverse().map((entry, i) => (
+                  <div key={i} style={{ fontSize: 11, color: 'var(--text-faint)', padding: '2px 0' }}>
+                    Shared with {entry.email} on {new Date(entry.sharedAt).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: '2-digit' })}
+                  </div>
+                ))}
+              </div>
+            )}
+          </>)}
           </div>
         </div>
       )}
@@ -5638,13 +5836,8 @@ function ProjectForecast({ tasks, milestones = [], teamMembers, activeProject, o
       onClick={() => !disabled && setActiveTab(id)}
       disabled={disabled}
       title={disabled ? 'Set billing & cost rates in Settings → Team & Billing Rates to enable' : undefined}
-      style={{
-        padding: '7px 14px', fontSize: 12, fontWeight: 700, borderRadius: '6px 6px 0 0',
-        border: '1px solid var(--border-light)', borderBottom: activeTab === id ? '1px solid var(--surface)' : '1px solid var(--border-light)',
-        background: activeTab === id ? 'var(--surface)' : 'var(--bg)',
-        color: disabled ? 'var(--text-faint)' : activeTab === id ? 'var(--accent)' : 'var(--text-muted)',
-        cursor: disabled ? 'default' : 'pointer', marginBottom: -1,
-      }}
+      className={`tab-btn${activeTab === id ? ' active' : ''}${disabled ? ' disabled' : ''}`}
+      style={{ opacity: disabled ? 0.45 : 1, cursor: disabled ? 'default' : 'pointer' }}
     >{label}</button>
   );
 
@@ -5734,7 +5927,7 @@ function ProjectForecast({ tasks, milestones = [], teamMembers, activeProject, o
           ) : (
             <>
               {/* ── Tabs ── */}
-              <div style={{ display: 'flex', gap: 4, padding: '12px 18px 0', borderBottom: '1px solid var(--border-light)' }}>
+              <div className="tab-bar tab-bar-surface" style={{ padding: '12px 18px 0' }}>
                 <Tab id="estimate"      label="Estimate" />
                 <Tab id="phase"         label="By Phase" />
                 <Tab id="profitability" label="Profitability" disabled={!hasProfit} />

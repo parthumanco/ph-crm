@@ -1393,7 +1393,7 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
                 </div>
               )}
 
-              <div style={{ position: 'sticky', top: -20, zIndex: 10, display: 'flex', gap: 0, borderBottom: '2px solid var(--border)', overflowX: 'auto', background: 'var(--bg)', margin: '0 -24px 16px', padding: '0 24px' }}>
+              <div className="tab-bar" style={{ position: 'sticky', top: -20, zIndex: 10, overflowX: 'auto', background: 'var(--bg)', margin: '0 -24px 16px', padding: '0 24px' }}>
                 {[
                   { id: 'nextsteps',  label: openTasks.length > 0 ? `Next Steps (${openTasks.length})` : 'Next Steps' },
                   { id: 'research',   label: 'Company Overview' },
@@ -1404,17 +1404,9 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
                 ].map(t => (
                   <button
                     key={t.id}
+                    className={`tab-btn${tab === t.id ? ' active' : ''}`}
                     onClick={() => setTab(t.id)}
-                    style={{
-                      padding: '8px 14px', fontSize: 12, fontWeight: 700,
-                      background: 'none', border: 'none',
-                      borderBottom: tab === t.id ? '2px solid var(--accent)' : '2px solid transparent',
-                      marginBottom: -2, cursor: 'pointer',
-                      color: tab === t.id ? 'var(--accent)' : 'var(--text-muted)',
-                    }}
-                  >
-                    {t.label}
-                  </button>
+                  >{t.label}</button>
                 ))}
               </div>
 

@@ -160,11 +160,19 @@ export default function ContactsPanel({ clientId, companyId, companyName, contac
       )}
 
       {/* Contact cards — clickable tiles */}
-      {contacts.map((c, i) => {
+      {(() => {
+        const sorted = [...contacts].sort((a, b) => {
+          if (a.is_primary && !b.is_primary) return -1;
+          if (!a.is_primary && b.is_primary) return 1;
+          return (a.name || '').localeCompare(b.name || '');
+        });
+        const firstPrimaryIdx = sorted.findIndex(c => c.is_primary);
+        return sorted.map((c, i) => {
         const isEditing  = editingContact === c.name;
         const isEnriched = isEnrichedContact(c);
-        const initials   = c.name.split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase();
+        const initials   = (c.name || '?').split(' ').map(w => w[0]).filter(Boolean).slice(0, 2).join('').toUpperCase() || '?';
         const srcColor   = srcColorFor(c.source);
+        const showPrimaryBadge = i === firstPrimaryIdx;
 
         return (
           <div
@@ -211,7 +219,14 @@ export default function ContactsPanel({ clientId, companyId, companyName, contac
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                     <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>{c.name}</span>
-                    {c.is_primary && <span style={{ fontSize: 9, fontWeight: 800, padding: '2px 6px', borderRadius: 8, background: '#fef9c3', color: '#a16207', border: '1px solid #fde68a' }}>PRIMARY</span>}
+                    {showPrimaryBadge && <span style={{ fontSize: 9, fontWeight: 800, padding: '2px 6px', borderRadius: 8, background: '#fef9c3', color: '#a16207', border: '1px solid #fde68a' }}>PRIMARY</span>}
+                    {!showPrimaryBadge && (
+                      <button
+                        onClick={e => { e.stopPropagation(); handleSetPrimary(c); }}
+                        disabled={settingPrimary === c.name}
+                        style={{ fontSize: 9, fontWeight: 700, padding: '2px 7px', borderRadius: 8, border: '1px solid var(--border)', background: 'none', color: 'var(--text-faint)', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                      >{settingPrimary === c.name ? '…' : 'Set as Primary'}</button>
+                    )}
                     {c.source && <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 8, background: srcColor + '18', color: srcColor }}>{c.source}</span>}
                     {isEnriched && <span style={{ fontSize: 9, fontWeight: 700, color: '#10b981' }}>✓ enriched</span>}
                   </div>
@@ -229,14 +244,12 @@ export default function ContactsPanel({ clientId, companyId, companyName, contac
                     </p>
                   )}
                 </div>
-                <div style={{ display: 'flex', gap: 6, flexShrink: 0, alignItems: 'center' }} onClick={e => e.stopPropagation()}>
-                  <button onClick={() => startEdit(c)} title="Edit contact" style={{ background: 'none', border: '1px solid var(--border)', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 12, padding: '4px 7px', borderRadius: 6 }}>✏️</button>
-                </div>
               </div>
             )}
           </div>
         );
-      })}
+      });
+      })()}
 
       {/* Discovered from research */}
       {discovered.length > 0 && (
