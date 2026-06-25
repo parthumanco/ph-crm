@@ -1652,11 +1652,12 @@ export default function OldGoldPage({ isActive = false, onNavigate, icp = {} }) 
       </div>
 
       {/* ── Next Steps — full width ── */}
-      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: 18, marginBottom: 14 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: '12px 18px', marginBottom: 14 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: (addingTask || tasks.length > 0) ? 14 : 0 }}>
           <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--text)' }}>
             Next Steps
             {openTaskCount > 0 && <span style={{ fontSize: 11, fontWeight: 600, color: '#f59e0b', marginLeft: 8 }}>{openTaskCount} open</span>}
+            {tasks.length === 0 && !addingTask && <span style={{ fontSize: 12, fontWeight: 400, color: 'var(--text-faint)', marginLeft: 10 }}>— no tasks yet</span>}
           </div>
           <button onClick={() => setAddingTask(v => !v)} style={{ fontSize: 11, fontWeight: 700, padding: '4px 12px', borderRadius: 6, border: addingTask ? '1px solid var(--border)' : '1px solid var(--accent)', background: addingTask ? 'none' : 'var(--accent)', color: addingTask ? 'var(--text-muted)' : '#fff', cursor: 'pointer' }}>
             {addingTask ? '✕ Cancel' : '+ Add Task'}
@@ -1685,9 +1686,7 @@ export default function OldGoldPage({ isActive = false, onNavigate, icp = {} }) 
 
             {detailLoading ? (
               <div style={{ textAlign: 'center', padding: '20px 0' }}><div className="spinner" /></div>
-            ) : tasks.length === 0 ? (
-              <div style={{ fontSize: 12, color: 'var(--text-faint)', fontStyle: 'italic' }}>No tasks yet — import a transcript to auto-generate next steps, or add one manually.</div>
-            ) : (
+            ) : tasks.length === 0 ? null : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                 {/* Open tasks first */}
                 {tasks.filter(t => !t.completed).map(t => (
@@ -1714,11 +1713,12 @@ export default function OldGoldPage({ isActive = false, onNavigate, icp = {} }) 
           </div>
 
       {/* ── Meeting Log — full width ── */}
-      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: 18, marginBottom: 14 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: '12px 18px', marginBottom: 14 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: (showImport || meetings.length > 0) ? 14 : 0 }}>
           <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--text)' }}>
             Meeting Log
             {meetings.length > 0 && <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--text-faint)', marginLeft: 8 }}>{meetings.length} meeting{meetings.length !== 1 ? 's' : ''}</span>}
+            {meetings.length === 0 && !showImport && <span style={{ fontSize: 12, fontWeight: 400, color: 'var(--text-faint)', marginLeft: 10 }}>— no meetings yet</span>}
           </div>
           <button
             onClick={() => { setShowImport(v => !v); setImportError(''); }}
@@ -1757,8 +1757,8 @@ export default function OldGoldPage({ isActive = false, onNavigate, icp = {} }) 
           </div>
         )}
 
-        {/* Meeting list */}
-        {!detailLoading && meetings.length === 0 && !showImport && (
+        {/* Meeting list — empty state only shown when import form is open */}
+        {!detailLoading && meetings.length === 0 && showImport && (
           <div style={{ fontSize: 12, color: 'var(--text-faint)', fontStyle: 'italic' }}>No meetings yet. Import a Granola transcript to get started.</div>
         )}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -1935,25 +1935,6 @@ export default function OldGoldPage({ isActive = false, onNavigate, icp = {} }) 
           />
         </div>
       )}
-
-      {/* ── Dossier — full width ── */}
-      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: 18 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
-          <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--text)' }}>Dossier</div>
-          <button
-            onClick={handleBuildDossier}
-            disabled={buildingDossier}
-            style={{ fontSize: 11, fontWeight: 700, padding: '4px 12px', borderRadius: 6, border: '1px solid var(--accent)', background: buildingDossier ? 'none' : 'var(--accent)', color: buildingDossier ? 'var(--text-muted)' : '#fff', cursor: 'pointer' }}
-          >{buildingDossier ? '⏳ Building…' : dossierContact ? '↻ Refresh Dossier' : '✨ Build Dossier'}</button>
-        </div>
-        {dossierContact ? (
-          <ContactDossier contact={dossierContact} />
-        ) : (
-          <div style={{ fontSize: 12, color: 'var(--text-faint)', fontStyle: 'italic' }}>
-            No dossier yet.{active.company ? ' Click Build Dossier to run a deep search on this person.' : ' Add a company for this contact first.'}
-          </div>
-        )}
-      </div>
 
       {/* ── Archived Tasks ── */}
       {tasks.filter(t => t.completed).length > 0 && (
