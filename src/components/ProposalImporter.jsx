@@ -446,7 +446,7 @@ export default function ProposalImporter({ projectId, projectStart, onImported, 
                         style={{ fontSize: 12, padding: '3px 6px', width: '100%' }}
                       >
                         <option value="">Unassigned</option>
-                        {OWNERS.map(o => <option key={o} value={o}>{o}</option>)}
+                        {owners.map(o => <option key={o} value={o}>{o}</option>)}
                       </select>
                     </div>
                     <button
@@ -492,7 +492,7 @@ export default function ProposalImporter({ projectId, projectStart, onImported, 
                             style={{ fontSize: 11, padding: '2px 6px', width: '100%' }}
                           >
                             <option value="">Unassigned</option>
-                            {OWNERS.map(o => <option key={o} value={o}>{o}</option>)}
+                            {owners.map(o => <option key={o} value={o}>{o}</option>)}
                           </select>
                           <button
                             onClick={() => removeTask(mi, ti)}
