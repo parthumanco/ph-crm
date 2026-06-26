@@ -481,6 +481,11 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
   const [showShareModal, setShowShareModal]       = useState(false);
   const [projectCompany, setProjectCompany]       = useState(null);
   const [clientRecord, setClientRecord]           = useState(null); // clients row — canonical contacts list, shared with ClientsPage
+  // Client contacts available in task assignment dropdowns (deduped against internal team)
+  const clientTaskContacts = (clientRecord?.contacts || [])
+    .filter(c => c.name?.trim() && !owners.some(o => o.toLowerCase() === c.name.trim().toLowerCase()))
+    .map(c => c.name.trim())
+    .filter((n, i, arr) => arr.indexOf(n) === i);
   const [addingContact, setAddingContact]         = useState(false);
   const [newContactDraft, setNewContactDraft]     = useState({ name: '', title: '', email: '' });
   const [summaryGenerating, setSummaryGenerating] = useState(false);
@@ -2156,7 +2161,8 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                             setEditDraft(d => ({ ...d, assigned_to: e.target.value }));
                           }} style={{ fontSize: 12, padding: '4px 8px', width: 'auto' }}>
                             <option value="">—</option>
-                            {owners.map(o => <option key={o} value={o}>{o}</option>)}
+                            <optgroup label="Team">{owners.map(o => <option key={o} value={o}>{o}</option>)}</optgroup>
+                            {clientTaskContacts.length > 0 && <optgroup label="Client">{clientTaskContacts.map(n => <option key={n} value={n}>{n}</option>)}</optgroup>}
                           </select>
                         </div>
                       </div>
@@ -2534,7 +2540,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
           >
             <input type="text" autoFocus value={editTaskDraft.title} onChange={e => setEditDraft(d => ({ ...d, title: e.target.value }))} onKeyDown={e => { if (e.key === 'Enter') { handleSaveTaskEdit(task); setEditingTask(null); } if (e.key === 'Escape') setEditingTask(null); }} style={{ flex: '1 1 180px', fontSize: 13, padding: '5px 10px', fontWeight: 600 }} placeholder="Task title" />
             <div><Lbl>Due date</Lbl><input type="date" value={editTaskDraft.due_date} onChange={e => setEditDraft(d => ({ ...d, due_date: e.target.value }))} style={{ fontSize: 12, padding: '4px 8px', width: 'auto' }} /></div>
-            <div><Lbl>Assigned to</Lbl><select value={editTaskDraft.assigned_to} onChange={e => setEditDraft(d => ({ ...d, assigned_to: e.target.value }))} style={{ fontSize: 12, padding: '4px 8px', width: 'auto' }}><option value="">—</option>{owners.map(o => <option key={o} value={o}>{o}</option>)}</select></div>
+            <div><Lbl>Assigned to</Lbl><select value={editTaskDraft.assigned_to} onChange={e => setEditDraft(d => ({ ...d, assigned_to: e.target.value }))} style={{ fontSize: 12, padding: '4px 8px', width: 'auto' }}><option value="">—</option><optgroup label="Team">{owners.map(o => <option key={o} value={o}>{o}</option>)}</optgroup>{clientTaskContacts.length > 0 && <optgroup label="Client">{clientTaskContacts.map(n => <option key={n} value={n}>{n}</option>)}</optgroup>}</select></div>
             <div><Lbl>Est. hrs</Lbl><input type="number" min="0" step="0.5" value={editTaskDraft.estimated_hours} onChange={e => setEditDraft(d => ({ ...d, estimated_hours: e.target.value }))} placeholder="—" style={{ fontSize: 12, padding: '4px 8px', width: 70 }} /></div>
             <div style={{ display: 'flex', gap: 6, marginLeft: 'auto' }}>
               <button
@@ -2602,7 +2608,8 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
               style={{ fontSize: 11, padding: '2px 4px', border: '1px solid var(--border)', borderRadius: 4, background: 'var(--surface)', color: task.assigned_to ? 'var(--text)' : 'var(--text-faint)', flexShrink: 0, maxWidth: 110 }}
             >
               <option value="">Unassigned</option>
-              {owners.map(o => <option key={o} value={o}>{o}</option>)}
+              <optgroup label="Team">{owners.map(o => <option key={o} value={o}>{o}</option>)}</optgroup>
+              {clientTaskContacts.length > 0 && <optgroup label="Client">{clientTaskContacts.map(n => <option key={n} value={n}>{n}</option>)}</optgroup>}
             </select>
             {/* Inline hours */}
             <input
@@ -3371,7 +3378,8 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                                     style={{ fontSize: 12, padding: '4px 8px', width: 'auto' }}
                                   >
                                     <option value="">—</option>
-                                    {owners.map(o => <option key={o} value={o}>{o}</option>)}
+                                    <optgroup label="Team">{owners.map(o => <option key={o} value={o}>{o}</option>)}</optgroup>
+                                    {clientTaskContacts.length > 0 && <optgroup label="Client">{clientTaskContacts.map(n => <option key={n} value={n}>{n}</option>)}</optgroup>}
                                   </select>
                                 </div>
                                 <div>
@@ -3469,7 +3477,8 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                                   style={{ fontSize: 11, padding: '2px 4px', border: '1px solid var(--border)', borderRadius: 4, background: 'var(--surface)', color: task.assigned_to ? 'var(--text)' : 'var(--text-faint)', flexShrink: 0, width: 110 }}
                                 >
                                   <option value="">Unassigned</option>
-                                  {owners.map(o => <option key={o} value={o}>{o}</option>)}
+                                  <optgroup label="Team">{owners.map(o => <option key={o} value={o}>{o}</option>)}</optgroup>
+                                  {clientTaskContacts.length > 0 && <optgroup label="Client">{clientTaskContacts.map(n => <option key={n} value={n}>{n}</option>)}</optgroup>}
                                 </select>
                                 <input
                                   type="number"
@@ -5215,7 +5224,8 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                   style={{ width: '100%', fontSize: 13, padding: '7px 10px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)' }}
                 >
                   <option value="">Unassigned</option>
-                  {owners.map(o => <option key={o} value={o}>{o}</option>)}
+                  <optgroup label="Team">{owners.map(o => <option key={o} value={o}>{o}</option>)}</optgroup>
+                  {clientTaskContacts.length > 0 && <optgroup label="Client">{clientTaskContacts.map(n => <option key={n} value={n}>{n}</option>)}</optgroup>}
                 </select>
               </div>
               {/* Estimated hours */}

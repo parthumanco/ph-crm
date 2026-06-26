@@ -701,6 +701,12 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
     return Array.from(map.values());
   })();
 
+  // Client contacts available for task assignment (deduped against internal team)
+  const clientTaskContacts = mergedContacts
+    .filter(c => c.name?.trim() && !OWNERS.some(o => o.toLowerCase() === c.name.trim().toLowerCase()))
+    .map(c => c.name.trim())
+    .filter((n, i, arr) => arr.indexOf(n) === i);
+
   const handleDraftEmail = async () => {
     if (draftingEmail) return;
     setDraftingEmail(true);
@@ -1459,7 +1465,14 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
                         <input type="date" value={taskForm.due_date} onChange={e => setTaskForm(f => ({ ...f, due_date: e.target.value }))} style={{ fontSize: 12 }} />
                         <select value={taskForm.assigned_to} onChange={e => setTaskForm(f => ({ ...f, assigned_to: e.target.value }))} style={{ fontSize: 12 }}>
-                          {OWNERS.map(o => <option key={o} value={o}>{o}</option>)}
+                          <optgroup label="Team">
+                            {OWNERS.map(o => <option key={o} value={o}>{o}</option>)}
+                          </optgroup>
+                          {clientTaskContacts.length > 0 && (
+                            <optgroup label="Client">
+                              {clientTaskContacts.map(n => <option key={n} value={n}>{n}</option>)}
+                            </optgroup>
+                          )}
                         </select>
                       </div>
                       <div style={{ display: 'flex', gap: 6 }}>
@@ -1535,7 +1548,14 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
                                     style={{ fontSize: 12, padding: '4px 8px' }}
                                   >
                                     <option value="">—</option>
-                                    {OWNERS.map(o => <option key={o} value={o}>{o}</option>)}
+                                    <optgroup label="Team">
+                                      {OWNERS.map(o => <option key={o} value={o}>{o}</option>)}
+                                    </optgroup>
+                                    {clientTaskContacts.length > 0 && (
+                                      <optgroup label="Client">
+                                        {clientTaskContacts.map(n => <option key={n} value={n}>{n}</option>)}
+                                      </optgroup>
+                                    )}
                                   </select>
                                 </div>
                                 <button
