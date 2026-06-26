@@ -2109,7 +2109,7 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
                             )}
                             {confirmDeleteMtgId === mtg.id ? (
                               <>
-                                <button onClick={async () => { await deleteProjectMeeting(mtg.id); setMeetings(prev => prev.filter(m => m.id !== mtg.id)); setConfirmDeleteMtgId(null); }} style={{ fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 5, border: '1px solid #fca5a5', background: '#fef2f2', color: '#dc2626', cursor: 'pointer' }}>Delete</button>
+                                <button onClick={async () => { try { await deleteProjectMeeting(mtg.id); setMeetings(prev => prev.filter(m => m.id !== mtg.id)); } catch (e) { alert('Could not delete meeting: ' + e.message); } finally { setConfirmDeleteMtgId(null); } }} style={{ fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 5, border: '1px solid #fca5a5', background: '#fef2f2', color: '#dc2626', cursor: 'pointer' }}>Delete</button>
                                 <button onClick={() => setConfirmDeleteMtgId(null)} style={{ fontSize: 10, padding: '2px 6px', borderRadius: 5, border: '1px solid var(--border)', background: 'none', color: 'var(--text-faint)', cursor: 'pointer' }}>Cancel</button>
                               </>
                             ) : (

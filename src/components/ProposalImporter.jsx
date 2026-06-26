@@ -334,7 +334,7 @@ export default function ProposalImporter({ projectId, projectStart, onImported, 
                     style={{ width: '100%', minHeight: 240, fontSize: 13, resize: 'vertical' }}
                   />
                 </div>
-              ) : (
+              ) : inputMode === 'pdf' ? (
                 <div>
                   <label style={{ fontSize: 11, fontWeight: 800, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.05em', display: 'block', marginBottom: 6 }}>
                     PDF file
@@ -374,7 +374,7 @@ export default function ProposalImporter({ projectId, projectStart, onImported, 
                     )}
                   </div>
                 </div>
-              )}
+              ) : null}
 
               {inputMode === 'gdoc' && (
                 <div>

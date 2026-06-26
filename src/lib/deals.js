@@ -67,9 +67,9 @@ export async function upsertDeal(deal) {
 
 export async function moveStage(dealId, newStage) {
   const now = new Date().toISOString();
-  const extra = newStage === 'won'  ? { won_date: now.slice(0,10) }
-              : newStage === 'lost' ? { lost_date: now.slice(0,10) }
-              : {};
+  const extra = newStage === 'won'  ? { won_date: now.slice(0,10), lost_date: null }
+              : newStage === 'lost' ? { lost_date: now.slice(0,10), won_date: null }
+              : { won_date: null, lost_date: null };
   const { error } = await supabase.from('deals').update({
     stage: newStage,
     stage_entered_at: now,

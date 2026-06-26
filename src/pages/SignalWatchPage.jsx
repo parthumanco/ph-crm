@@ -932,11 +932,22 @@ export default function SignalWatchPage({ onNavigate, icp, refreshKey = 0, isAct
         .order('created_at', { ascending: false })
         .limit(1);
       if (existing?.length && ['nurture', 'lost'].includes(existing[0].stage)) {
-        // Revive a deal that was previously sent back to Watch List, rather
-        // than leaving it stuck and silently no-op'ing.
+        // Revive a deal that was previously sent back to Watch List or lost.
         await moveStage(existing[0].id, 'outreach');
+      } else if (existing?.length && existing[0].stage === 'won') {
+        // Re-engagement: won deals are closed — create a fresh outreach deal.
+        const contacts = company.contacts || [];
+        const primary = contacts.find(c => c.is_primary) || contacts.find(c => c.source === 'old_gold') || contacts[0];
+        await upsertDeal({
+          company_id:    company.id,
+          company_name:  company.name,
+          contact_name:  primary?.name  || null,
+          contact_email: primary?.email || null,
+          stage:         'outreach',
+          assigned_to:   null,
+        });
       } else if (existing?.length) {
-        // Already has an active deal — nothing to do, just mark as added below
+        // Already has an active in-progress deal — nothing to do.
       } else {
         const contacts = company.contacts || [];
         const primary = contacts.find(c => c.is_primary) || contacts.find(c => c.source === 'old_gold') || contacts[0];

@@ -1406,7 +1406,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
     if (task.milestone_id) await syncMilestoneStatus(task.milestone_id, updated);
     if (nowComplete) {
       // If no client portal or no contact email, auto-approve internally — no review needed
-      const primaryContact = (clientRecord?.contacts || project.contacts || []).find(c => c.is_primary) || (clientRecord?.contacts || project.contacts || [])[0];
+      const primaryContact = (clientRecord?.contacts || activeProject.contacts || []).find(c => c.is_primary) || (clientRecord?.contacts || activeProject.contacts || [])[0];
       const toEmail = primaryContact?.email || activeProject.client_email || '';
       if (!activeProject.share_token || !toEmail) {
         try {

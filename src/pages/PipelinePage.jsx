@@ -74,7 +74,7 @@ export default function PipelinePage({ icp = {}, refreshKey = 0, onNavigate }) {
       const [{ data: ents, error: e1 }, { data: tchs, error: e2 }, { data: dealRows }] = await Promise.all([
         supabase.from('pipeline_entries').select('*').neq('status', 'won').neq('status', 'watch_list').order('created_at', { ascending: false }),
         supabase.from('touches').select('*'),
-        supabase.from('deals').select('id, company_id').not('stage', 'eq', 'lost'),
+        supabase.from('deals').select('id, company_id').not('stage', 'in', '("lost","won")'),
       ]);
       if (e1 || e2) console.error('Pipeline load error:', e1 || e2);
       // Fetch only the specific companies referenced by pipeline entries
@@ -106,11 +106,6 @@ export default function PipelinePage({ icp = {}, refreshKey = 0, onNavigate }) {
   const updateStatus = useCallback(async (entryId, status) => {
     await supabase.from('pipeline_entries').update({ status, updated_at: new Date().toISOString() }).eq('id', entryId);
     setEntries(es => es.map(e => e.id === entryId ? { ...e, status } : e));
-    if (status === 'responded' || status === 'won') {
-      const entry   = entriesRef.current.find(e => e.id === entryId);
-      const company = entry ? companiesRef.current[entry.company_id] : null;
-      if (entry && company) handleCreateDeal(entry, company);
-    }
   }, []);
 
   const updateEngagement = useCallback(async (companyId, engType) => {
@@ -197,7 +192,8 @@ export default function PipelinePage({ icp = {}, refreshKey = 0, onNavigate }) {
     if (!resolvedCompany.name) { alert('Could not resolve company — please try again.'); return; }
     setCreatingDeal(p => ({ ...p, [key]: true }));
     try {
-      const primaryContact = (resolvedCompany.contacts || [])[0] || {};
+      const primaryIdx = primaryContacts[entry.id] || 0;
+      const primaryContact = (resolvedCompany.contacts || [])[primaryIdx] || (resolvedCompany.contacts || [])[0] || {};
       // Build deal notes — freshNotes takes priority over stale entry.notes
       const noteParts = [];
       const noteText = freshNotes ?? entry.notes;
