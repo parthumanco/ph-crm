@@ -165,11 +165,66 @@ export async function addCompanyResearchItem(companyId, item) {
   return updated;
 }
 
+// ── Cross-table sync helpers (private) ────────────────────────────────────────
+// Called fire-and-forget after every contact write so companies ↔ clients stay
+// in sync regardless of which surface the user edited from.
+
+function _mergeMap(existing, incoming) {
+  const map = new Map(existing.map(c => [c.name?.trim().toLowerCase(), c]));
+  incoming.forEach(nc => {
+    const key = nc.name?.trim().toLowerCase();
+    if (!key) return;
+    const prev = map.get(key) || {};
+    const merged = { ...prev };
+    for (const [k, v] of Object.entries(nc)) {
+      if (v === null || v === undefined || v === '') continue;
+      if (Array.isArray(v) && v.length === 0) continue;
+      merged[k] = v;
+    }
+    map.set(key, merged);
+  });
+  return Array.from(map.values());
+}
+
+async function _mergeContactsIntoCompany(companyName, contacts) {
+  if (!companyName?.trim() || !contacts?.length) return;
+  const { data: co } = await supabase.from('companies').select('id, contacts').ilike('name', companyName).maybeSingle();
+  if (!co?.id) return;
+  const merged = _mergeMap(co.contacts || [], contacts);
+  await supabase.from('companies').update({ contacts: merged, updated_at: new Date().toISOString() }).eq('id', co.id);
+}
+
+async function _deleteContactFromCompany(companyName, contactName) {
+  if (!companyName?.trim() || !contactName?.trim()) return;
+  const { data: co } = await supabase.from('companies').select('id, contacts').ilike('name', companyName).maybeSingle();
+  if (!co?.id) return;
+  const key = contactName.trim().toLowerCase();
+  const updated = (co.contacts || []).filter(c => c.name?.trim().toLowerCase() !== key);
+  await supabase.from('companies').update({ contacts: updated, updated_at: new Date().toISOString() }).eq('id', co.id);
+}
+
+async function _mergeContactsIntoClient(clientName, contacts) {
+  if (!clientName?.trim() || !contacts?.length) return;
+  const { data: cl } = await supabase.from('clients').select('id, contacts').ilike('name', clientName).maybeSingle();
+  if (!cl?.id) return;
+  const merged = _mergeMap(cl.contacts || [], contacts);
+  await supabase.from('clients').update({ contacts: merged, updated_at: new Date().toISOString() }).eq('id', cl.id);
+}
+
+async function _deleteContactFromClient(clientName, contactName) {
+  if (!clientName?.trim() || !contactName?.trim()) return;
+  const { data: cl } = await supabase.from('clients').select('id, contacts').ilike('name', clientName).maybeSingle();
+  if (!cl?.id) return;
+  const key = contactName.trim().toLowerCase();
+  const updated = (cl.contacts || []).filter(c => c.name?.trim().toLowerCase() !== key);
+  await supabase.from('clients').update({ contacts: updated, updated_at: new Date().toISOString() }).eq('id', cl.id);
+}
+
 // Merge contacts into companies.contacts (matched by name), keeping Old Gold
 // contacts first/primary. Used wherever a contact's data needs to be visible
 // across Watch List, Pipeline, and Old Gold simultaneously.
 export async function upsertCompanyContacts(companyId, newContacts = []) {
-  const { data: row } = await supabase.from('companies').select('contacts').eq('id', companyId).single();
+  const { data: row } = await supabase.from('companies').select('contacts, name').eq('id', companyId).single();
   const existing = row?.contacts || [];
   const map = new Map(existing.map(c => [c.name?.trim().toLowerCase(), c]));
   newContacts.forEach(nc => {
@@ -188,6 +243,7 @@ export async function upsertCompanyContacts(companyId, newContacts = []) {
   const merged = sortContactsOldGoldFirst(Array.from(map.values()));
   const { error } = await supabase.from('companies').update({ contacts: merged }).eq('id', companyId);
   if (error) throw new Error(error.message);
+  _mergeContactsIntoClient(row?.name, merged).catch(e => console.warn('contact sync →clients failed:', e.message));
   return merged;
 }
 
@@ -203,22 +259,24 @@ export async function enrichCompanyContact(companyId, contact, companyName) {
 
 // Remove a contact from companies.contacts by name (case-insensitive).
 export async function deleteCompanyContactFromContacts(companyId, contactName) {
-  const { data: row } = await supabase.from('companies').select('contacts').eq('id', companyId).single();
+  const { data: row } = await supabase.from('companies').select('contacts, name').eq('id', companyId).single();
   const updated = (row?.contacts || []).filter(c => c.name?.trim().toLowerCase() !== contactName?.trim().toLowerCase());
   const { error } = await supabase.from('companies').update({ contacts: updated }).eq('id', companyId);
   if (error) throw new Error(error.message);
+  _deleteContactFromClient(row?.name, contactName).catch(e => console.warn('contact sync →clients failed:', e.message));
   return updated;
 }
 
 // Edit an existing companies.contacts entry in place, matched by its original name.
 export async function updateCompanyContactInContacts(companyId, originalName, patch) {
-  const { data: row } = await supabase.from('companies').select('contacts').eq('id', companyId).single();
+  const { data: row } = await supabase.from('companies').select('contacts, name').eq('id', companyId).single();
   const existing = row?.contacts || [];
   const key = originalName?.trim().toLowerCase();
   const cleanPatch = Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== '' && v !== null && v !== undefined));
   const updated = existing.map(c => c.name?.trim().toLowerCase() === key ? { ...c, ...cleanPatch } : c);
   const { error } = await supabase.from('companies').update({ contacts: updated }).eq('id', companyId);
   if (error) throw new Error(error.message);
+  _mergeContactsIntoClient(row?.name, updated).catch(e => console.warn('contact sync →clients failed:', e.message));
   return updated;
 }
 
@@ -427,7 +485,7 @@ export async function silentRefreshThesis(companyName, detailOverrides = {}, cli
 // New values win over old; existing enrichment data is preserved if not overwritten.
 export async function upsertClientContacts(clientId, newContacts = []) {
   if (!newContacts.length) return [];
-  const { data: row } = await supabase.from('clients').select('contacts').eq('id', clientId).single();
+  const { data: row } = await supabase.from('clients').select('contacts, name').eq('id', clientId).single();
   const existing = row?.contacts || [];
 
   const map = new Map(existing.map(c => [c.name?.toLowerCase(), c]));
@@ -450,6 +508,7 @@ export async function upsertClientContacts(clientId, newContacts = []) {
   const contacts = Array.from(map.values());
   const { error } = await supabase.from('clients').update({ contacts, updated_at: new Date().toISOString() }).eq('id', clientId);
   if (error) throw new Error(error.message);
+  _mergeContactsIntoCompany(row?.name, contacts).catch(e => console.warn('contact sync →companies failed:', e.message));
   return contacts;
 }
 
@@ -485,10 +544,11 @@ export async function transferCompanyContactsToClient(clientId, companyName) {
 
 // Remove a contact from clients.contacts by name (case-insensitive).
 export async function deleteClientContact(clientId, contactName) {
-  const { data: row } = await supabase.from('clients').select('contacts').eq('id', clientId).single();
+  const { data: row } = await supabase.from('clients').select('contacts, name').eq('id', clientId).single();
   const updated = (row?.contacts || []).filter(c => c.name?.trim().toLowerCase() !== contactName?.trim().toLowerCase());
   const { error } = await supabase.from('clients').update({ contacts: updated, updated_at: new Date().toISOString() }).eq('id', clientId);
   if (error) throw new Error(error.message);
+  _deleteContactFromCompany(row?.name, contactName).catch(e => console.warn('contact sync →companies failed:', e.message));
   return updated;
 }
 
@@ -496,13 +556,14 @@ export async function deleteClientContact(clientId, contactName) {
 // — same identification convention as deleteClientContact. Used by the shared
 // ContactsPanel so edits made from any page land on the one canonical row.
 export async function updateClientContact(clientId, originalName, patch) {
-  const { data: row } = await supabase.from('clients').select('contacts').eq('id', clientId).single();
+  const { data: row } = await supabase.from('clients').select('contacts, name').eq('id', clientId).single();
   const existing = row?.contacts || [];
   const key = originalName?.trim().toLowerCase();
   const cleanPatch = Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== '' && v !== null && v !== undefined));
   const updated = existing.map(c => c.name?.trim().toLowerCase() === key ? { ...c, ...cleanPatch } : c);
   const { error } = await supabase.from('clients').update({ contacts: updated, updated_at: new Date().toISOString() }).eq('id', clientId);
   if (error) throw new Error(error.message);
+  _mergeContactsIntoCompany(row?.name, updated).catch(e => console.warn('contact sync →companies failed:', e.message));
   return updated;
 }
 

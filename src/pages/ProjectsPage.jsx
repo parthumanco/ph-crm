@@ -858,6 +858,16 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
     }
   }, [targetProjectId, projects]);
 
+  // Seed clientRecord.contacts from projectCompany.contacts when the clients
+  // row has no contacts but the companies row does (e.g. project predates the
+  // unified contacts system, or the client_name matched a different clients row).
+  useEffect(() => {
+    if (!clientRecord?.id || clientRecord.contacts?.length || !projectCompany?.contacts?.length) return;
+    upsertClientContacts(clientRecord.id, projectCompany.contacts)
+      .then(updated => setClientRecord(cr => cr ? { ...cr, contacts: updated } : cr))
+      .catch(() => {});
+  }, [clientRecord?.id, projectCompany?.id]);
+
   const refreshDetail = async (projId) => {
     try {
       const [ms, ts, files] = await Promise.all([
@@ -4583,6 +4593,13 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
             discovered={(() => {
               const addedNames = new Set((clientRecord?.contacts || []).map(c => c.name?.trim().toLowerCase()));
               const pool = new Map();
+              // project.contacts (legacy JSONB field) first — surfaces contacts
+              // stored before the clients table was the canonical source.
+              (activeProject.contacts || []).forEach(c => {
+                if (!c.name?.trim()) return;
+                const key = c.name.trim().toLowerCase();
+                if (!addedNames.has(key)) pool.set(key, { name: c.name.trim(), title: c.title || '', email: c.email || '', linkedin: c.linkedin || '' });
+              });
               // companies.contacts (shared with Watch List/Old Gold/Pipeline) first,
               // then contact_angles layered on top for title/linkedin only.
               [projectCompany, dealCompanyIntel].forEach(company => {
