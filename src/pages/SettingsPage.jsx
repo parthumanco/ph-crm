@@ -267,7 +267,14 @@ export default function SettingsPage({ icp, onIcpSaved, teamMembers = [], onTeam
   const handleSaveMembers = async () => {
     setMemberSaving(true);
     try {
-      const cleaned = memberDraft.map(m => ({
+      const draft = newMemberName.trim()
+        ? [...memberDraft, { name: newMemberName.trim(), role: newMemberRole.trim(), hourlyRate: parseFloat(newMemberRate) || 0, costRate: parseFloat(newMemberCostRate) || 0 }]
+        : memberDraft;
+      if (newMemberName.trim()) {
+        setMemberDraft(draft);
+        setNewMemberName(''); setNewMemberRole(''); setNewMemberRate(''); setNewMemberCostRate('');
+      }
+      const cleaned = draft.map(m => ({
         name: m.name.trim(),
         role: m.role?.trim() || '',
         hourlyRate: parseFloat(m.hourlyRate) || 0,
