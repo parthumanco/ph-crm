@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabase';
 import {
   upsertDeal, deleteDeal,
   fetchActivities, addActivity, deleteActivity,
-  fetchTasks, addTask, completeTask, deleteTask,
+  fetchTasks, addTask, updateTask, completeTask, deleteTask,
   uploadDealTaskFile, fetchDealTaskFiles, deleteDealTaskFile, markDealTaskSent,
   uploadDealFile, fetchDealFiles, deleteDealFile,
   STAGES, ACTIVITY_TYPES, OWNERS, stageColor, stageLabel, fmt$, daysSince,
@@ -119,6 +119,9 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
   const [confirmDeleteFileId, setConfirmDeleteFileId] = useState(null); // file id awaiting delete confirmation
   const [hoveredFileId, setHoveredFileId] = useState(null); // file row being hovered
   const [confirmDeleteTaskId, setConfirmDeleteTaskId] = useState(null); // task id awaiting delete confirmation
+  const [editingDealTaskId, setEditingDealTaskId]     = useState(null);
+  const [editDealTaskDraft, setEditDealTaskDraft]     = useState({ title: '', due_date: '', assigned_to: '' });
+  const editDealTaskDraftRef                          = useRef({});
   const [confirmDeleteDeal, setConfirmDeleteDeal] = useState(false); // deal delete confirmation
   const [meetingSummaryPrompt, setMeetingSummaryPrompt] = useState(null); // { meeting, tasks } after transcript import
   const [uploadingDealFile, setUploadingDealFile] = useState(false);
@@ -451,6 +454,26 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
   const removeTask = async (id) => {
     await deleteTask(id);
     setTasks(ts => ts.filter(t => t.id !== id));
+  };
+
+  const startDealTaskEdit = (task) => {
+    editDealTaskDraftRef.current = { title: task.title, due_date: task.due_date || '', assigned_to: task.assigned_to || '' };
+    setEditDealTaskDraft(editDealTaskDraftRef.current);
+    setEditingDealTaskId(task.id);
+  };
+
+  const saveDealTaskEdit = async (task) => {
+    const draft = editDealTaskDraftRef.current;
+    if (!draft.title?.trim()) { setEditingDealTaskId(null); return; }
+    const patch = { title: draft.title.trim(), due_date: draft.due_date || null, assigned_to: draft.assigned_to || null };
+    setTasks(ts => ts.map(t => t.id === task.id ? { ...t, ...patch } : t));
+    setEditingDealTaskId(null);
+    try {
+      await updateTask(task.id, patch);
+    } catch (e) {
+      console.error('Task update failed:', e.message);
+      setTasks(ts => ts.map(t => t.id === task.id ? task : t));
+    }
   };
 
   const handleTaskFileUpload = async (taskId, file) => {
@@ -1453,37 +1476,113 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
                   )}
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: tasks.length > 0 ? 20 : 0 }}>
                     {tasks.map(t => {
-                      const overdue    = !t.completed && t.due_date && new Date(t.due_date) < new Date();
-                      const reminded   = t.id && hasReminder(t.id);
-                      const isExpanded = expandedTaskId === t.id && notifyPromptTaskId !== t.id;
-                      const isNotify   = notifyPromptTaskId === t.id;
-                      const files      = taskFiles[t.id] || [];
-                      const sentEntry  = t.review_chain?.filter(e => e.type === 'sent').at(-1);
+                      const overdue       = !t.completed && t.due_date && new Date(t.due_date) < new Date();
+                      const reminded      = t.id && hasReminder(t.id);
+                      const isExpanded    = expandedTaskId === t.id && notifyPromptTaskId !== t.id;
+                      const isNotify      = notifyPromptTaskId === t.id;
+                      const isEditingThis = editingDealTaskId === t.id;
+                      const files         = taskFiles[t.id] || [];
+                      const sentEntry     = t.review_chain?.filter(e => e.type === 'sent').at(-1);
                       return (
-                        <div key={t.id} style={{ borderRadius: 6, border: `1px solid ${isNotify ? '#fde68a' : overdue && !t.completed ? '#fca5a5' : 'var(--border)'}`, overflow: 'hidden', opacity: t.completed ? 0.6 : 1 }}>
-                          {/* ── Main row ── */}
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: isNotify ? '#fffbeb' : overdue && !t.completed ? '#fef2f2' : 'var(--surface)' }}>
+                        <div key={t.id} style={{ borderRadius: 6, border: `1px solid ${isEditingThis ? 'var(--accent)' : isNotify ? '#fde68a' : overdue && !t.completed ? '#fca5a5' : 'var(--border)'}`, overflow: 'hidden', opacity: t.completed ? 0.6 : 1 }}>
+                          {/* ── Inline edit mode ── */}
+                          {isEditingThis ? (
+                            <div
+                              style={{ display: 'flex', flexWrap: 'wrap', gap: 8, padding: '10px 12px', alignItems: 'center', background: 'var(--bg)', borderLeft: '3px solid var(--accent)' }}
+                              onBlur={e => {
+                                if (!e.currentTarget.contains(e.relatedTarget)) {
+                                  editDealTaskDraftRef.current = { ...editDealTaskDraftRef.current };
+                                  saveDealTaskEdit(t);
+                                }
+                              }}
+                            >
+                              <input
+                                type="text"
+                                autoFocus
+                                value={editDealTaskDraft.title}
+                                onChange={e => {
+                                  editDealTaskDraftRef.current = { ...editDealTaskDraftRef.current, title: e.target.value };
+                                  setEditDealTaskDraft(d => ({ ...d, title: e.target.value }));
+                                }}
+                                onKeyDown={e => {
+                                  if (e.key === 'Enter') saveDealTaskEdit(t);
+                                  if (e.key === 'Escape') setEditingDealTaskId(null);
+                                }}
+                                style={{ flex: '1 1 200px', fontSize: 13, padding: '5px 10px', fontWeight: 600 }}
+                                placeholder="Task title"
+                              />
+                              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                                <div>
+                                  <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 2 }}>Due date</div>
+                                  <input
+                                    type="date"
+                                    value={editDealTaskDraft.due_date}
+                                    onChange={e => {
+                                      editDealTaskDraftRef.current = { ...editDealTaskDraftRef.current, due_date: e.target.value };
+                                      setEditDealTaskDraft(d => ({ ...d, due_date: e.target.value }));
+                                    }}
+                                    style={{ fontSize: 12, padding: '4px 8px' }}
+                                  />
+                                </div>
+                                <div>
+                                  <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 2 }}>Assigned to</div>
+                                  <select
+                                    value={editDealTaskDraft.assigned_to}
+                                    onChange={e => {
+                                      editDealTaskDraftRef.current = { ...editDealTaskDraftRef.current, assigned_to: e.target.value };
+                                      setEditDealTaskDraft(d => ({ ...d, assigned_to: e.target.value }));
+                                    }}
+                                    style={{ fontSize: 12, padding: '4px 8px' }}
+                                  >
+                                    <option value="">—</option>
+                                    {OWNERS.map(o => <option key={o} value={o}>{o}</option>)}
+                                  </select>
+                                </div>
+                                <button
+                                  onMouseDown={e => { e.preventDefault(); saveDealTaskEdit(t); }}
+                                  style={{ fontSize: 11, fontWeight: 700, padding: '4px 12px', borderRadius: 6, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                                >Save</button>
+                                <button
+                                  onMouseDown={e => { e.preventDefault(); setEditingDealTaskId(null); }}
+                                  style={{ fontSize: 11, padding: '4px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text-muted)', cursor: 'pointer' }}
+                                >Cancel</button>
+                              </div>
+                            </div>
+                          ) : (
+                          /* ── Normal row ── */
+                          <div
+                            style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: isNotify ? '#fffbeb' : overdue && !t.completed ? '#fef2f2' : 'var(--surface)', cursor: 'default' }}
+                            onMouseEnter={e => { if (!t.completed) e.currentTarget.style.background = 'var(--bg)'; }}
+                            onMouseLeave={e => { e.currentTarget.style.background = isNotify ? '#fffbeb' : overdue && !t.completed ? '#fef2f2' : 'var(--surface)'; }}
+                          >
                             <input
                               type="checkbox"
                               checked={t.completed}
                               onChange={() => {
                                 if (t.completed) {
-                                  // Un-completing: no prompt, just toggle
                                   toggleTask(t);
                                   setNotifyPromptTaskId(null);
                                 } else {
-                                  // Completing: ask about notifying
                                   setNotifyPromptTaskId(t.id);
                                   setExpandedTaskId(null);
                                 }
                               }}
                               style={{ cursor: 'pointer', flexShrink: 0 }}
                             />
-                            <div style={{ flex: 1, minWidth: 0, cursor: 'pointer' }} onClick={() => { setExpandedTaskId(isExpanded ? null : t.id); setNotifyPromptTaskId(null); }}>
-                              <span style={{ fontSize: 13, textDecoration: t.completed ? 'line-through' : 'none', color: t.completed ? 'var(--text-muted)' : 'var(--text)' }}>{t.title}</span>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <span
+                                style={{ fontSize: 13, textDecoration: t.completed ? 'line-through' : 'none', color: t.completed ? 'var(--text-muted)' : 'var(--text)', cursor: 'text', userSelect: 'none' }}
+                                title="Double-click to edit"
+                                onDoubleClick={() => { if (!t.completed) startDealTaskEdit(t); }}
+                                onClick={() => { setExpandedTaskId(isExpanded ? null : t.id); setNotifyPromptTaskId(null); }}
+                              >{t.title}</span>
                               <div style={{ display: 'flex', gap: 6, marginTop: 2, alignItems: 'center', flexWrap: 'wrap' }}>
                                 {t.due_date && <span style={{ fontSize: 11, color: overdue && !t.completed ? '#b91c1c' : 'var(--text-faint)', fontWeight: overdue && !t.completed ? 700 : 400 }}>{overdue && !t.completed ? '⚠ ' : ''}{t.due_date}</span>}
-                                {t.assigned_to && <span style={{ fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 3, background: t.assigned_to === 'Mike' ? '#f3e8ff' : '#eff6ff', color: t.assigned_to === 'Mike' ? '#7c3aed' : '#1d4ed8' }}>{t.assigned_to}</span>}
+                                <span
+                                  title="Click to edit assignment"
+                                  onClick={() => { if (!t.completed) startDealTaskEdit(t); }}
+                                  style={{ fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 3, cursor: t.completed ? 'default' : 'pointer', background: t.assigned_to === 'Mike' ? '#f3e8ff' : t.assigned_to ? '#eff6ff' : 'var(--surface)', color: t.assigned_to === 'Mike' ? '#7c3aed' : t.assigned_to ? '#1d4ed8' : 'var(--text-faint)', border: t.assigned_to ? 'none' : '1px dashed var(--border)' }}
+                                >{t.assigned_to || '+ assign'}</span>
                                 {reminded && <span style={{ fontSize: 10, color: '#f59e0b' }}>🔔</span>}
                                 {sentEntry && (
                                   <span style={{ fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 3, background: '#d1fae5', color: '#065f46' }}>
@@ -1495,7 +1594,6 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
                                 )}
                               </div>
                             </div>
-                            {/* expand toggle (hidden when notify prompt is open) */}
                             {!isNotify && (
                               <button
                                 onClick={() => { setExpandedTaskId(isExpanded ? null : t.id); setNotifyPromptTaskId(null); }}
@@ -1538,6 +1636,7 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
                               <button onClick={() => setConfirmDeleteTaskId(t.id)} style={{ fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 20, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text-muted)', cursor: 'pointer', flexShrink: 0, whiteSpace: 'nowrap' }}>Delete</button>
                             )}
                           </div>
+                          )}
 
                           {/* ── Notify client? prompt (appears when checkbox is checked) ── */}
                           {isNotify && (
@@ -2912,61 +3011,66 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
         existingTasks={tasks}
         initialTranscript={initialTranscript}
         onImported={async ({ meeting, tasks: importedTasks, suggestedUpdates = [] }) => {
-          // suggestedUpdates are AI-proposed changes to existing tasks — logged for visibility
           if (suggestedUpdates.length > 0) {
             console.info('[DealDetailModal] AI suggested task updates:', suggestedUpdates);
           }
           const importErrors = [];
-
-          // Re-fetch from DB so the meeting list is always in sync
           let updatedMeetings = null;
-          try {
-            updatedMeetings = await fetchDealMeetings(deal.id);
-            setMeetings(updatedMeetings);
-          } catch (e) {
-            importErrors.push('Meeting fetch failed: ' + e.message);
-            // Fallback: optimistic insert
-            if (meeting) setMeetings(prev => [meeting, ...prev]);
-          }
 
-          // Save extracted tasks to the deal's Next Steps
-          if (importedTasks?.length) {
-            let tasksSaved = 0;
-            for (const task of importedTasks) {
-              if (!task.title?.trim()) continue;
+          try {
+            // Re-fetch meetings so the list is always in sync
+            try {
+              updatedMeetings = await fetchDealMeetings(deal.id);
+              setMeetings(updatedMeetings);
+            } catch (e) {
+              importErrors.push('Meeting fetch failed: ' + e.message);
+              if (meeting) setMeetings(prev => [meeting, ...prev]);
+            }
+
+            // Use TranscriptImporter tasks; fall back to meeting.action_items if empty
+            const taskSource = importedTasks?.length
+              ? importedTasks
+              : (meeting?.action_items || []).map(ai => ({ title: ai.title, assigned_to: ai.owner || null, due_date: ai.due_date || null }));
+
+            if (taskSource.length) {
+              let tasksSaved = 0;
+              for (const task of taskSource) {
+                if (!task.title?.trim()) continue;
+                try {
+                  await addTask({
+                    deal_id:     deal.id,
+                    company_id:  deal.company_id || null,
+                    title:       task.title,
+                    assigned_to: task.assigned_to || null,
+                    due_date:    task.due_date    || null,
+                  });
+                  tasksSaved++;
+                } catch (e) {
+                  console.error('[DealDetailModal] addTask error:', e.message, task);
+                  importErrors.push(`Task "${task.title.slice(0, 40)}": ${e.message}`);
+                }
+              }
               try {
-                await addTask({
-                  deal_id:     deal.id,
-                  company_id:  deal.company_id,
-                  title:       task.title,
-                  assigned_to: task.assigned_to || null,
-                  due_date:    task.due_date    || null,
-                });
-                tasksSaved++;
+                const updatedTasks = await fetchTasks(deal.id);
+                setTasks(updatedTasks);
               } catch (e) {
-                importErrors.push(`Task "${task.title.slice(0, 40)}": ${e.message}`);
+                console.error('[DealDetailModal] fetchTasks after import failed:', e.message);
+              }
+              if (tasksSaved > 0 && importedTasks?.length) {
+                setMeetingSummaryPrompt({ meeting, tasks: importedTasks });
               }
             }
-            if (tasksSaved > 0) {
-              const updatedTasks = await fetchTasks(deal.id);
-              setTasks(updatedTasks);
+
+            if (importErrors.length > 0) {
+              alert('Import issues:\n\n' + importErrors.join('\n\n'));
             }
+
+            // New meeting = new context → refresh AI next steps in background
+            silentRefreshThesis(updatedMeetings || undefined);
+          } finally {
+            setShowTranscriptImporter(false);
+            setInitialTranscript('');
           }
-
-          if (importErrors.length > 0) {
-            alert('Import issues:\n\n' + importErrors.join('\n\n'));
-          }
-
-          // New meeting = new context → refresh AI next steps in background
-          silentRefreshThesis(updatedMeetings || undefined);
-
-          // Prompt to send meeting summary if tasks were imported
-          if (importedTasks?.length) {
-            setMeetingSummaryPrompt({ meeting, tasks: importedTasks });
-          }
-
-          setShowTranscriptImporter(false);
-          setInitialTranscript('');
         }}
         onClose={() => { setShowTranscriptImporter(false); setInitialTranscript(''); }}
       />

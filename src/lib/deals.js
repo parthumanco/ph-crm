@@ -130,6 +130,11 @@ export async function addTask(task) {
   if (error) throw new Error(error.message);
 }
 
+export async function updateTask(id, patch) {
+  const { error } = await supabase.from('tasks').update(patch).eq('id', id);
+  if (error) throw new Error(error.message);
+}
+
 export async function completeTask(id, completed) {
   const { error } = await supabase.from('tasks').update({
     completed,

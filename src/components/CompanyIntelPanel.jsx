@@ -47,22 +47,33 @@ export default function CompanyIntelPanel({ intel, extraSources = [], emptyMessa
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 20, maxWidth: 720 }}>
-      {/* Score + meta row */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 10 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxWidth: 720 }}>
+      {/* Top row — compact stat pills: ICP, Overall, Employees, Engagement */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 4 }}>
         {[
           intel.icp_score     != null && { label: 'ICP Score',    value: `${intel.icp_score}/10`,     color: scoreColor(intel.icp_score) },
           intel.overall_score != null && { label: 'Overall Score', value: `${intel.overall_score}/10`, color: scoreColor(intel.overall_score) },
-          intel.icp_tier              && { label: 'Tier',          value: intel.icp_tier },
-          intel.funding_stage         && { label: 'Funding',       value: intel.funding_stage },
           intel.employee_count        && { label: 'Employees',     value: intel.employee_count },
           intel.engagement_type       && { label: 'Engagement',    value: intel.engagement_type },
-          intel.hq                    && { label: 'HQ',            value: intel.hq },
-          intel.industry              && { label: 'Industry',      value: intel.industry },
+        ].filter(Boolean).map((item, i) => (
+          <div key={i} style={{ padding: '5px 10px', background: 'var(--surface)', borderRadius: 7, border: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em', whiteSpace: 'nowrap' }}>{item.label}</span>
+            <span style={{ fontSize: 12, fontWeight: 800, color: item.color || 'var(--text)' }}>{item.value}</span>
+          </div>
+        ))}
+      </div>
+
+      {/* Second row — full-size tiles: Tier, Funding, HQ, Industry */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 10 }}>
+        {[
+          intel.icp_tier      && { label: 'Tier',     value: intel.icp_tier },
+          intel.hq            && { label: 'HQ',       value: intel.hq },
+          intel.funding_stage && { label: 'Funding',  value: intel.funding_stage },
+          intel.industry      && { label: 'Industry', value: intel.industry },
         ].filter(Boolean).map((item, i) => (
           <div key={i} style={{ padding: '12px 14px', background: 'var(--surface)', borderRadius: 9, border: '1px solid var(--border)' }}>
-            <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 4 }}>{item.label}</div>
-            <div style={{ fontSize: 14, fontWeight: 800, color: item.color || 'var(--text)' }}>{item.value}</div>
+            <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 3 }}>{item.label}</div>
+            <div style={{ fontSize: 12, fontWeight: 800, color: item.color || 'var(--text)' }}>{item.value}</div>
           </div>
         ))}
       </div>

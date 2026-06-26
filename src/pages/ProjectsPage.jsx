@@ -4037,7 +4037,12 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 20 }}>
                 {meetings.map(mtg => (
-                  <div key={mtg.id} style={{ padding: '12px 14px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8 }}>
+                  <div key={mtg.id} style={{ padding: '12px 14px', background: 'var(--surface)', border: `1px solid ${mtg.deal_id ? '#bbf7d0' : 'var(--border)'}`, borderLeft: mtg.deal_id ? '3px solid #059669' : undefined, borderRadius: 8 }}>
+                    {mtg.deal_id && (
+                      <div style={{ marginBottom: 8 }}>
+                        <span style={{ fontSize: 9, fontWeight: 800, padding: '1px 6px', borderRadius: 4, background: '#f0fdf4', color: '#059669', border: '1px solid #bbf7d0', textTransform: 'uppercase', letterSpacing: '.05em' }}>From Deal</span>
+                      </div>
+                    )}
                     {editingMeeting === mtg.id ? (
                       /* ── Inline edit form ── */
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>

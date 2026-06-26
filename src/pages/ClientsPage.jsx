@@ -91,6 +91,12 @@ export default function ClientsPage({ onNavigate, refreshKey, icp, targetClientN
   const [confirmDeleteClientFile, setConfirmDeleteClientFile] = useState(null); // file id awaiting confirm
   const [deletingClientFile, setDeletingClientFile] = useState(null); // file id
 
+  // Watch List link — override company name used for intel lookup
+  const [watchListName,      setWatchListName]      = useState('');
+  const [watchListNameDraft, setWatchListNameDraft] = useState('');
+  const [editingWatchLink,   setEditingWatchLink]   = useState(false);
+  const [savingWatchLink,    setSavingWatchLink]     = useState(false);
+
   // Build Thesis
   const [buildingThesis, setBuildingThesis] = useState(false);
   const [thesisPhases, setThesisPhases]     = useState([]); // [{phase,status,detail}]
@@ -189,12 +195,21 @@ export default function ClientsPage({ onNavigate, refreshKey, icp, targetClientN
     setTab('overview');
     setConfirmArchiveId(null);
 
-    fetchClientDetail(selected).then(d => {
+    // Reset watch list link state
+    setWatchListName('');
+    setWatchListNameDraft('');
+    setEditingWatchLink(false);
+
+    fetchClientDetail(selected).then(async d => {
       if (cancelled) return;
       setDetail(d);
       setEditDraft({ name: d.client.name, website: d.client.website || '', linkedin_url: d.client.linkedin_url || '', notes: d.client.notes || '' });
-      // Also fetch matching companies row for intelligence data
-      fetchCompanyIntel(d.client.name).then(data => {
+      // Load any saved watch list name override
+      const { data: setting } = await supabase.from('app_settings').select('value').eq('key', `client_watch_name_${selected}`).maybeSingle();
+      const linkedName = setting?.value || '';
+      if (!cancelled) { setWatchListName(linkedName); setWatchListNameDraft(linkedName); }
+      // Fetch intel using override name if set, otherwise client name
+      fetchCompanyIntel(linkedName || d.client.name).then(data => {
         if (cancelled) return;
         setIntel(data);
       }).catch(() => { if (!cancelled) setIntel(null); });
@@ -355,7 +370,7 @@ export default function ClientsPage({ onNavigate, refreshKey, icp, targetClientN
   };
 
   const handleBuildThesis = async () => {
-    if (!intel?.id || buildingThesis) return;
+    if (buildingThesis) return;
     setBuildingThesis(true);
     setThesisError('');
     setThesisLog([]);
@@ -363,7 +378,13 @@ export default function ClientsPage({ onNavigate, refreshKey, icp, targetClientN
     setThesisPhases(THESIS_PHASES.map(p => ({ ...p, status: 'waiting', detail: null })));
     setTab('overview');
     try {
-      const updated = await runBuildThesis(intel.id, intel, icp, detail || {}, (phase, status, data, message) => {
+      // If no companies row yet, create one for this client so thesis has somewhere to save
+      let targetIntel = intel;
+      if (!targetIntel?.id) {
+        targetIntel = await findOrCreateCompany(watchListName || detail.client.name);
+        setIntel(targetIntel);
+      }
+      const updated = await runBuildThesis(targetIntel.id, targetIntel, icp, detail || {}, (phase, status, data, message) => {
         setThesisPhases(prev => prev.map(p => p.phase === phase ? { ...p, status, detail: data } : p));
         if (message) addThesisLog(
           status === 'running' ? '🔍' : status === 'done' ? '✅' : status === 'log' ? '  →' : '⚙️',
@@ -505,7 +526,7 @@ ${allContacts.map(c => `<div class="contact-row"><div><strong>${esc(c.name)}</st
   // ── Derived data ──────────────────────────────────────────────────────────
   const historyItems = detail ? [
     ...(detail.activities || []).map(a => ({ date: a.activity_date, type: 'activity', icon: ACTIVITY_ICONS[a.type] || '📌', title: `${a.type.charAt(0).toUpperCase() + a.type.slice(1)}${a.assigned_to ? ` · ${a.assigned_to}` : ''}`, body: a.summary, id: a.id })),
-    ...(detail.meetings   || []).map(m => ({ date: m.meeting_date,  type: 'meeting',  icon: '📝', title: m.title || 'Meeting', body: m.summary, id: m.id, actionItems: m.action_items || [] })),
+    ...(detail.meetings   || []).map(m => ({ date: m.meeting_date,  type: 'meeting',  icon: '📝', title: m.title || 'Meeting', body: m.summary, id: m.id, actionItems: m.action_items || [], fromDeal: !!m.deal_id })),
   ].sort((a, b) => (!a.date ? 1 : !b.date ? -1 : new Date(b.date) - new Date(a.date))) : [];
 
   // Rich contacts: clients.contacts is the primary store; supplement with project/deal contacts
@@ -746,7 +767,12 @@ ${allContacts.map(c => `<div class="contact-row"><div><strong>${esc(c.name)}</st
                   { id: 'oldgold',   label: `Old Gold${ogHistory?.length ? ` (${ogHistory.length})` : ''}` },
                   { id: 'ai',        label: '✦ Ask AI' },
                 ].map(t => (
-                  <button key={t.id} className={`tab-btn${tab === t.id ? ' active' : ''}`} onClick={() => setTab(t.id)}>{t.label}</button>
+                  <button key={t.id} className={`tab-btn${tab === t.id ? ' active' : ''}`} onClick={() => {
+                    setTab(t.id);
+                    if (t.id === 'overview' && detail?.client?.name) {
+                      fetchCompanyIntel(watchListName || detail.client.name).then(data => { if (data) setIntel(data); }).catch(() => {});
+                    }
+                  }}>{t.label}</button>
                 ))}
               </div>
             </div>
@@ -757,10 +783,79 @@ ${allContacts.map(c => `<div class="contact-row"><div><strong>${esc(c.name)}</st
               {/* ── Overview (Intelligence) ── */}
               {tab === 'overview' && (
                 <>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 16, flexWrap: 'wrap' }}>
+                    {intel?.id && (
+                      <button
+                        onClick={handleDeepScan}
+                        disabled={scanning || buildingThesis}
+                        style={{ fontSize: 12, fontWeight: 700, padding: '7px 14px', borderRadius: 20, border: `1px solid ${intel?.deep_scanned && !scanning ? '#86efac' : 'var(--accent)'}`, background: scanning ? 'var(--surface)' : intel?.deep_scanned ? '#dcfce7' : 'var(--accent)', color: scanning ? 'var(--text-faint)' : intel?.deep_scanned ? '#15803d' : '#fff', cursor: (scanning || buildingThesis) ? 'default' : 'pointer', display: 'flex', alignItems: 'center', gap: 5 }}
+                      >
+                        {scanning ? <><span style={{ display: 'inline-block', width: 10, height: 10, border: '2px solid var(--accent)', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} /> {scanStatus || 'Scanning…'}</> : intel?.deep_scanned ? '✓ Scanned — Rescan' : 'Quick Scan'}
+                      </button>
+                    )}
+                    <button
+                      onClick={handleBuildThesis}
+                      disabled={scanning || buildingThesis}
+                      style={{ fontSize: 12, fontWeight: 700, padding: '7px 16px', borderRadius: 20, border: '1px solid var(--accent)', background: buildingThesis ? 'var(--surface)' : 'var(--accent)', color: buildingThesis ? 'var(--text-faint)' : '#fff', cursor: (scanning || buildingThesis) ? 'default' : 'pointer', display: 'flex', alignItems: 'center', gap: 5 }}
+                    >
+                      {buildingThesis ? <><span style={{ display: 'inline-block', width: 10, height: 10, border: '2px solid var(--accent)', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} /> Building…</> : intel?.thesis_built ? 'Refresh Thesis' : 'Build Thesis'}
+                    </button>
+                  </div>
+                  {/* Watch List link */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16, fontSize: 11, color: 'var(--text-faint)' }}>
+                    {editingWatchLink ? (
+                      <>
+                        <span style={{ fontWeight: 600 }}>Watch List name:</span>
+                        <input
+                          autoFocus
+                          value={watchListNameDraft}
+                          onChange={e => setWatchListNameDraft(e.target.value)}
+                          placeholder={detail.client.name}
+                          style={{ fontSize: 11, padding: '3px 8px', borderRadius: 6, border: '1px solid var(--accent)', background: 'var(--bg)', color: 'var(--text)', width: 220 }}
+                          onKeyDown={async e => {
+                            if (e.key === 'Escape') { setEditingWatchLink(false); setWatchListNameDraft(watchListName); }
+                            if (e.key === 'Enter') {
+                              setSavingWatchLink(true);
+                              const val = watchListNameDraft.trim();
+                              await supabase.from('app_settings').upsert({ key: `client_watch_name_${selected}`, value: val }, { onConflict: 'key' });
+                              setWatchListName(val);
+                              setEditingWatchLink(false);
+                              setSavingWatchLink(false);
+                              const data = await fetchCompanyIntel(val || detail.client.name);
+                              setIntel(data);
+                            }
+                          }}
+                        />
+                        <button
+                          disabled={savingWatchLink}
+                          onClick={async () => {
+                            setSavingWatchLink(true);
+                            const val = watchListNameDraft.trim();
+                            await supabase.from('app_settings').upsert({ key: `client_watch_name_${selected}`, value: val }, { onConflict: 'key' });
+                            setWatchListName(val);
+                            setEditingWatchLink(false);
+                            setSavingWatchLink(false);
+                            const data = await fetchCompanyIntel(val || detail.client.name);
+                            setIntel(data);
+                          }}
+                          style={{ fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 6, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer' }}
+                        >{savingWatchLink ? '…' : 'Link'}</button>
+                        <button onClick={() => { setEditingWatchLink(false); setWatchListNameDraft(watchListName); }} style={{ fontSize: 11, padding: '3px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'none', color: 'var(--text-faint)', cursor: 'pointer' }}>Cancel</button>
+                      </>
+                    ) : (
+                      <>
+                        <span>{watchListName ? <>Linked to <strong style={{ color: 'var(--text-muted)' }}>{watchListName}</strong></> : `Watch List: ${detail.client.name}`}</span>
+                        <button onClick={() => setEditingWatchLink(true)} style={{ fontSize: 10, padding: '2px 7px', borderRadius: 5, border: '1px solid var(--border)', background: 'none', color: 'var(--text-faint)', cursor: 'pointer' }}>
+                          {watchListName ? 'Change' : 'Link different name'}
+                        </button>
+                      </>
+                    )}
+                  </div>
+
                   <CompanyIntelPanel
                     intel={intel}
                     extraSources={detail.items}
-                    emptyMessage={`No intelligence data yet for ${detail.client.name}. This client doesn't have a matching entry in Watch List. Add them there first to enable deep scanning.`}
+                    emptyMessage={`No intelligence data yet. Click "Build Thesis" above to run research on ${detail.client.name}.`}
                   />
                   <div style={{ padding: '12px 24px 20px', borderTop: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 8 }}>
                     {confirmArchiveId === detail.client.id ? (
@@ -972,8 +1067,11 @@ ${allContacts.map(c => `<div class="contact-row"><div><strong>${esc(c.name)}</st
                         <div key={item.id + i} style={{ display: 'flex', gap: 14, paddingBottom: 20, position: 'relative' }}>
                           <div style={{ width: 40, height: 40, borderRadius: '50%', background: 'var(--surface)', border: '2px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16, flexShrink: 0, position: 'relative', zIndex: 1 }}>{item.icon}</div>
                           <div style={{ flex: 1, paddingTop: 8 }}>
-                            <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 4 }}>
+                            <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 4, flexWrap: 'wrap' }}>
                               <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)' }}>{item.title}</span>
+                              {item.fromDeal && (
+                                <span style={{ fontSize: 9, fontWeight: 800, padding: '1px 6px', borderRadius: 4, background: '#f0fdf4', color: '#059669', border: '1px solid #bbf7d0', textTransform: 'uppercase', letterSpacing: '.05em', whiteSpace: 'nowrap' }}>From Deal</span>
+                              )}
                               {item.date && <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>{fmtDate(item.date)}</span>}
                             </div>
                             {item.body && <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0, lineHeight: 1.6 }}>{item.body}</p>}
@@ -1195,7 +1293,39 @@ ${allContacts.map(c => `<div class="contact-row"><div><strong>${esc(c.name)}</st
                         </div>
                       )}
 
-                      {clientDocs.length === 0 && clientFiles.filter(f => f.source !== 'research').length === 0 && (
+                      {/* ── Files from the deal process ── */}
+                      {(detail.dealFiles || []).length > 0 && (
+                        <div style={{ marginBottom: 28 }}>
+                          <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.06em', color: 'var(--text-faint)', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 8 }}>
+                            Deal Files
+                            <span style={{ fontSize: 9, fontWeight: 800, padding: '1px 6px', borderRadius: 4, background: '#f0fdf4', color: '#059669', border: '1px solid #bbf7d0', textTransform: 'uppercase', letterSpacing: '.05em' }}>From Deal</span>
+                          </div>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                            {(detail.dealFiles || []).map(f => {
+                              const isLink = f.mime_type === 'link' || f.mime_type === 'text/uri-list';
+                              return (
+                                <div key={f.id} style={{ padding: '10px 12px', background: 'var(--surface)', border: '1px solid var(--border)', borderLeft: '3px solid #059669', borderRadius: 8, display: 'flex', gap: 10, alignItems: 'center' }}>
+                                  <span style={{ fontSize: 16, flexShrink: 0 }}>{isLink ? '🔗' : '📎'}</span>
+                                  <div style={{ flex: 1, minWidth: 0 }}>
+                                    {f.url ? (
+                                      <a href={f.url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 13, fontWeight: 600, color: 'var(--accent)', textDecoration: 'none', display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</a>
+                                    ) : (
+                                      <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</div>
+                                    )}
+                                    <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 2 }}>
+                                      {isLink ? 'Link' : f.mime_type || 'File'}
+                                      {f.size ? ` · ${Math.round(f.size / 1024)}KB` : ''}
+                                    </div>
+                                  </div>
+                                  {f.url && <span style={{ fontSize: 11, color: '#059669', whiteSpace: 'nowrap' }}>Open ↗</span>}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+
+                      {clientDocs.length === 0 && clientFiles.filter(f => f.source !== 'research').length === 0 && (detail.dealFiles || []).length === 0 && (
                         <div style={{ textAlign: 'center', padding: '40px 0 24px', color: 'var(--text-faint)' }}>
                           <div style={{ fontSize: 28, marginBottom: 8 }}>📄</div>
                           <div style={{ fontSize: 13, marginBottom: 8 }}>No documents yet for {detail.client.name}.</div>

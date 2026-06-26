@@ -624,6 +624,18 @@ export async function fetchClientDetail(clientId) {
     meetings = mtgData || [];
   }
 
+  // Deal files (uploaded directly to deal cards)
+  let dealFiles = [];
+  if (deals.length > 0) {
+    const dealIds = deals.map(d => d.id);
+    const { data: dfData } = await supabase
+      .from('deal_files')
+      .select('*')
+      .in('deal_id', dealIds)
+      .order('created_at', { ascending: false });
+    dealFiles = dfData || [];
+  }
+
   // Research items
   const { data: items } = await supabase
     .from('client_items')
@@ -637,6 +649,7 @@ export async function fetchClientDetail(clientId) {
     deals:      deals,
     activities: activities,
     meetings:   meetings,
+    dealFiles:  dealFiles,
     items:      items      || [],
   };
 }
