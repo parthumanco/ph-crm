@@ -807,24 +807,6 @@ ${allContacts.map(c => `<div class="contact-row"><div><strong>${esc(c.name)}</st
               {/* ── Overview (Intelligence) ── */}
               {tab === 'overview' && (
                 <>
-                  <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 16, flexWrap: 'wrap' }}>
-                    {intel?.id && (
-                      <button
-                        onClick={handleDeepScan}
-                        disabled={scanning || buildingThesis}
-                        style={{ fontSize: 12, fontWeight: 700, padding: '7px 14px', borderRadius: 20, border: `1px solid ${intel?.deep_scanned && !scanning ? '#86efac' : 'var(--accent)'}`, background: scanning ? 'var(--surface)' : intel?.deep_scanned ? '#dcfce7' : 'var(--accent)', color: scanning ? 'var(--text-faint)' : intel?.deep_scanned ? '#15803d' : '#fff', cursor: (scanning || buildingThesis) ? 'default' : 'pointer', display: 'flex', alignItems: 'center', gap: 5 }}
-                      >
-                        {scanning ? <><span style={{ display: 'inline-block', width: 10, height: 10, border: '2px solid var(--accent)', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} /> {scanStatus || 'Scanning…'}</> : intel?.deep_scanned ? '✓ Scanned — Rescan' : 'Quick Scan'}
-                      </button>
-                    )}
-                    <button
-                      onClick={handleBuildThesis}
-                      disabled={scanning || buildingThesis}
-                      style={{ fontSize: 12, fontWeight: 700, padding: '7px 16px', borderRadius: 20, border: '1px solid var(--accent)', background: buildingThesis ? 'var(--surface)' : 'var(--accent)', color: buildingThesis ? 'var(--text-faint)' : '#fff', cursor: (scanning || buildingThesis) ? 'default' : 'pointer', display: 'flex', alignItems: 'center', gap: 5 }}
-                    >
-                      {buildingThesis ? <><span style={{ display: 'inline-block', width: 10, height: 10, border: '2px solid var(--accent)', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} /> Building…</> : intel?.thesis_built ? 'Refresh Thesis' : 'Build Thesis'}
-                    </button>
-                  </div>
                   {/* Watch List link */}
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16, fontSize: 11, color: 'var(--text-faint)' }}>
                     {editingWatchLink ? (

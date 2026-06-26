@@ -632,6 +632,7 @@ export default function ClientPortalPage({ token }) {
     async function load() {
       try {
         const proj = await fetchProjectByToken(token);
+        if (!proj) { setError('This link is invalid or has expired.'); return; }
         setProject(proj);
 
         // Check password gate

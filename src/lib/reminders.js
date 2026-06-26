@@ -18,7 +18,7 @@ export function saveReminder({ id, title, company, assigned_to, due_date }) {
   const rest = all.filter(r => r.id !== id);
   const today = new Date().toISOString().slice(0, 10);
   // Re-arm only if due date was pushed to a future date; otherwise keep fired status
-  const dueDatePushed = existing?.fired && due_date > today && existing.due_date !== due_date;
+  const dueDatePushed = existing?.fired && due_date >= today && existing.due_date !== due_date;
   const fired = dueDatePushed ? false : (existing?.fired ?? false);
   save([...rest, { id, title, company, assigned_to, due_date, fired }]);
 }

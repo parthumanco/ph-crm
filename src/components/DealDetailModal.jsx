@@ -86,7 +86,7 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
     if (!teamNames.length) return;
     setTaskForm(f => f.assigned_to === 'Mike' || !teamNames.includes(f.assigned_to) ? { ...f, assigned_to: teamNames[0] } : f);
     setActForm(f => f.assigned_to === 'Mike' || !teamNames.includes(f.assigned_to) ? { ...f, assigned_to: teamNames[0] } : f);
-  }, [teamNames.join(',')]);
+  }, [teamMembers]);
 
   // Notes state (for quick save from Meetings tab)
   const [savingNotes, setSavingNotes]     = useState(false);
@@ -806,7 +806,7 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
     if (composeTaskId) {
       try {
         const updated = await markDealTaskSent(composeTaskId);
-        setTasks(ts => ts.map(t => t.id === composeTaskId ? { ...t, review_chain: updated } : t));
+        if (updated) setTasks(ts => ts.map(t => t.id === composeTaskId ? { ...t, review_chain: updated } : t));
       } catch (e) {
         console.error('Failed to mark task sent:', e.message);
       }

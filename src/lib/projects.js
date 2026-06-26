@@ -83,9 +83,11 @@ export async function upsertProject(p) {
     payload.id = crypto.randomUUID();
     payload.created_at = now;
   }
-  // Convert empty strings to null for date columns
-  if (!payload.start_date) payload.start_date = null;
-  if (!payload.end_date)   payload.end_date   = null;
+  // Convert empty strings to null for date and UUID columns
+  if (!payload.start_date)    payload.start_date    = null;
+  if (!payload.end_date)      payload.end_date      = null;
+  if (!payload.source_deal_id) payload.source_deal_id = null;
+  if (!payload.client_id)     payload.client_id     = null;
 
   // Always sync client_id whenever client_name is present
   // (handles new projects, renames, and any rows that slipped through migration)

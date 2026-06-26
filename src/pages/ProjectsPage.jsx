@@ -2102,11 +2102,11 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
     let saved;
     try {
       saved = await addExternalLink(projectId, linkUrl.trim(), name, milestoneId, taskId);
+      setShowLinkModal(null);
     } catch (e) {
       console.error('handleAddLink failed:', e);
+      alert('Could not save link: ' + e.message);
       return;
-    } finally {
-      setShowLinkModal(null);
     }
     setProjectFiles(prev => [saved, ...prev]);
     setCardFiles(prev => ({ ...prev, [projectId]: [saved, ...(prev[projectId] || [])] }));
