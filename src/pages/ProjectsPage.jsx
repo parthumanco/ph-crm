@@ -464,7 +464,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
   const [showArchivedMilestones, setShowArchivedMilestones] = useState(false);
   const [confirmHardDelete, setConfirmHardDelete]   = useState(null); // { type: 'task'|'milestone'|'project', item }
   const [reindexing, setReindexing]                 = useState(false);
-  const [assignedOwner, setAssignedOwner]   = useState(OWNERS[0]); // initial fallback — updated below
+  const [assignedOwner, setAssignedOwner]   = useState(() => owners[0] || OWNERS[0]);
   const [assignedTasks, setAssignedTasks]   = useState([]);
   const [assignedFiles, setAssignedFiles]   = useState({});  // taskId → File[]
   const [loadingAssigned, setLoadingAssigned] = useState(false);
@@ -634,6 +634,13 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
     supabase.from('app_settings').select('value').eq('key', 'forecast_pin').single()
       .then(({ data }) => setForecastPin(data?.value || ''));
   }, []);
+
+  // Keep assignedOwner in sync when teamMembers loads from Supabase
+  useEffect(() => {
+    if (owners.length && !owners.includes(assignedOwner) && assignedOwner !== '__unassigned__') {
+      setAssignedOwner(owners[0]);
+    }
+  }, [owners.join(',')]);
 
   // Auto-expand chain of custody for any task with an open rejection
   useEffect(() => {
