@@ -3,7 +3,8 @@ import { parseProposalWithAI, extractPdfTextAndPages, addDays, OWNERS } from '..
 
 const today = new Date().toISOString().slice(0, 10);
 
-export default function ProposalImporter({ projectId, projectStart, onImported, onClose }) {
+export default function ProposalImporter({ projectId, projectStart, onImported, onClose, owners: ownersProp }) {
+  const owners = ownersProp?.length ? ownersProp : OWNERS;
   const [step, setStep]           = useState('paste');   // paste | parsing | preview | saving
   const [inputMode, setInputMode] = useState('text');    // text | pdf | gdoc
   const [text, setText]           = useState('');

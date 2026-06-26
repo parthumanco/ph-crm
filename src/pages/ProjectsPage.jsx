@@ -5186,6 +5186,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
           projectStart={activeProject.start_date}
           onImported={handleImported}
           onClose={() => setShowImporter(false)}
+          owners={owners}
         />
       )}
 
