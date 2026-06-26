@@ -593,9 +593,7 @@ export default function PipelinePage({ icp = {}, refreshKey = 0, onNavigate }) {
           onClose={() => setResponseModal(null)}
           onSave={() => {
             load();
-            const { entry, company } = responseModal;
             setResponseModal(null);
-            handleCreateDeal(entry, company);
           }}
         />
       )}
@@ -605,12 +603,9 @@ export default function PipelinePage({ icp = {}, refreshKey = 0, onNavigate }) {
           entry={notesEntry}
           company={companies[notesEntry.company_id] || {}}
           onClose={() => setNotesEntry(null)}
-          onSave={(freshNotes) => {
-            const entry   = notesEntry;
-            const company = companies[notesEntry.company_id] || {};
+          onSave={() => {
             load();
             setNotesEntry(null);
-            handleCreateDeal(entry, company, freshNotes);
           }}
         />
       )}

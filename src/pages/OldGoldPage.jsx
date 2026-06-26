@@ -398,8 +398,8 @@ export default function OldGoldPage({ isActive = false, onNavigate, icp = {} }) 
           firstName4(nameLower) === firstName4(pName) && lastName(nameLower) === lastName(pName);
         // Substring name match (legacy)
         const subName = nameLower && (pName.includes(nameLower) || nameLower.includes(pName));
-        // Bidirectional company match
-        const subCo = companyLower && companyLower.length > 2 &&
+        // Company-only match: only use when AI extracted no name — prevents attaching to wrong person at same company
+        const subCo = !nameLower && companyLower && companyLower.length > 2 &&
           (pCo.includes(companyLower) || companyLower.includes(pCo));
         return fuzzyName || subName || subCo;
       });
@@ -481,8 +481,8 @@ export default function OldGoldPage({ isActive = false, onNavigate, icp = {} }) 
     try {
       await saveProjectMeeting({
         dealId:      deal.id,
-        title:       `Meeting — ${quickExtracted?.contact_name || 'Contact'} · ${fmtDate(new Date().toISOString().slice(0, 10))}`,
-        meetingDate: new Date().toISOString().slice(0, 10),
+        title:       `Meeting — ${quickExtracted?.contact_name || 'Contact'} · ${fmtDate(quickResult.meeting_date || new Date().toISOString().slice(0, 10))}`,
+        meetingDate: quickResult.meeting_date || new Date().toISOString().slice(0, 10),
         transcript:  quickText,
         summary:     quickResult.summary,
         actionItems: quickResult.action_items || [],

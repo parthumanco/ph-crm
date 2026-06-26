@@ -211,17 +211,23 @@ export default function ProposalImporter({ projectId, projectStart, onImported, 
       }
     }
 
-    onImported({
-      startDate,
-      projectName:     parsed.project_name || '',
-      budget:          parsed.total_budget  || null,
-      milestones:      preview,
-      proposalText,
-      proposalPdfFile: inputMode === 'pdf' ? pdfFile : null,
-      proposalPageHints,
-      gdocUrl:         inputMode === 'gdoc' ? gdocUrl : null,
-      gdocName:        inputMode === 'gdoc' ? gdocName : null,
-    });
+    try {
+      await onImported({
+        startDate,
+        projectName:     parsed.project_name || '',
+        budget:          parsed.total_budget  || null,
+        milestones:      preview,
+        proposalText,
+        proposalPdfFile: inputMode === 'pdf' ? pdfFile : null,
+        proposalPageHints,
+        gdocUrl:         inputMode === 'gdoc' ? gdocUrl : null,
+        gdocName:        inputMode === 'gdoc' ? gdocName : null,
+      });
+    } catch (e) {
+      console.error('ProposalImporter onImported failed:', e);
+      setStep('preview');
+      alert('Failed to save timeline: ' + e.message);
+    }
   };
 
   // ── Render ────────────────────────────────────────────────────────────────

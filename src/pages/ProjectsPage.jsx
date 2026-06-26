@@ -8,12 +8,12 @@ import {
   fetchProjectFiles, fetchArchivedProjectFiles, uploadProjectFile, deleteProjectFile, archiveProjectFile, restoreProjectFile, addExternalLink,
   restoreProjectTask, fetchAllTasksByOwner, saveTaskPortalContact,
   bulkInsertMilestones, bulkInsertTasks, parseProposalWithAI, extractPdfTextAndPages,
-  fetchProjectMeetings, deleteProjectMeeting,
+  fetchProjectMeetings, fetchDealMeetings, deleteProjectMeeting,
   PROJECT_STATUSES, MILESTONE_STATUSES, OWNERS,
   projColor, projLabel, msColor, msLabel,
   daysBetween, addDays, projectProgress, fmtDate,
 } from '../lib/projects';
-import { fetchDeals, fetchActivities, addActivity, fetchTasks, ACTIVITY_TYPES } from '../lib/deals';
+import { fetchDeals, fetchActivities, addActivity, fetchTasks, fetchDealFiles, fetchDealTaskFiles, ACTIVITY_TYPES } from '../lib/deals';
 import { fetchCompanyIntel, silentRefreshThesis, fetchClients, findOrCreateClient, upsertClientContacts } from '../lib/clients';
 import ProposalImporter from '../components/ProposalImporter';
 import TranscriptImporter from '../components/TranscriptImporter';
@@ -482,10 +482,19 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
   const [projectCompany, setProjectCompany]       = useState(null);
   const [clientRecord, setClientRecord]           = useState(null); // clients row — canonical contacts list, shared with ClientsPage
   // Client contacts available in task assignment dropdowns (deduped against internal team)
-  const clientTaskContacts = (clientRecord?.contacts || [])
-    .filter(c => c.name?.trim() && !owners.some(o => o.toLowerCase() === c.name.trim().toLowerCase()))
-    .map(c => c.name.trim())
-    .filter((n, i, arr) => arr.indexOf(n) === i);
+  const clientTaskContacts = useMemo(() => {
+    const seen = new Set();
+    return (clientRecord?.contacts || [])
+      .filter(c => {
+        if (!c.name?.trim()) return false;
+        if (owners.some(o => o.toLowerCase() === c.name.trim().toLowerCase())) return false;
+        const n = c.name.trim();
+        if (seen.has(n)) return false;
+        seen.add(n);
+        return true;
+      })
+      .map(c => c.name.trim());
+  }, [clientRecord?.contacts, owners]);
   const [addingContact, setAddingContact]         = useState(false);
   const [newContactDraft, setNewContactDraft]     = useState({ name: '', title: '', email: '' });
   const [summaryGenerating, setSummaryGenerating] = useState(false);
@@ -573,6 +582,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
   const [projectTab, setProjectTab]               = useState('timeline');
   const [dealActivities, setDealActivities]       = useState([]);
   const [dealTasks, setDealTasks]                 = useState([]);
+  const [dealFiles, setDealFiles]                 = useState([]);
   const [dealCompanyIntel, setDealCompanyIntel]   = useState(null);
   const [addingDealAct, setAddingDealAct]         = useState(false);
   const [dealActForm, setDealActForm]             = useState({ type: 'call', summary: '', activity_date: new Date().toISOString().slice(0,10), assigned_to: 'Mike' });
@@ -632,7 +642,8 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
   useEffect(() => { loadAll(); }, [loadAll]);
   useEffect(() => {
     supabase.from('app_settings').select('value').eq('key', 'forecast_pin').single()
-      .then(({ data }) => setForecastPin(data?.value || ''));
+      .then(({ data, error }) => { if (!error) setForecastPin(data?.value || ''); })
+      .catch(e => console.warn('Could not load forecast PIN:', e.message));
   }, []);
 
   // Keep assignedOwner in sync when teamMembers loads from Supabase
@@ -740,6 +751,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
     setProjectTab('timeline');
     setDealActivities([]);
     setDealTasks([]);
+    setDealFiles([]);
     setDealCompanyIntel(null);
     setAddingDealAct(false);
     setShareToken(project.share_token || '');
@@ -782,15 +794,40 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
       setProjectFiles(files);
       setArchivedFiles(archivedF);
       setMeetings(mtgs);
-      // Load deal context if linked
-      if (project.source_deal_id) {
+      // Load deal context: prefer source_deal_id, fall back to client_name match
+      const linkedDealIds = project.source_deal_id
+        ? [project.source_deal_id]
+        : allDeals
+            .filter(d => d.company_name?.trim().toLowerCase() === project.client_name?.trim().toLowerCase())
+            .map(d => d.id);
+      if (linkedDealIds.length) {
+        const primaryDealId = linkedDealIds[0];
         Promise.all([
-          fetchActivities(project.source_deal_id),
-          fetchTasks(project.source_deal_id),
-        ]).then(([acts, tsks]) => {
+          fetchActivities(primaryDealId),
+          fetchTasks(primaryDealId),
+          Promise.all(linkedDealIds.map(id => fetchDealMeetings(id).catch(e => { console.error('fetchDealMeetings failed:', e); return []; }))),
+          Promise.all(linkedDealIds.map(id => fetchDealFiles(id).catch(e => { console.error('fetchDealFiles failed:', e); return []; }))),
+        ]).then(([acts, tsks, mtgArrays, fileArrays]) => {
           setDealActivities(acts || []);
           setDealTasks(tsks || []);
-        }).catch(() => {});
+          const dealMtgs = mtgArrays.flat();
+          const dealFs   = fileArrays.flat();
+          if (dealMtgs.length) {
+            setMeetings(prev => {
+              const existingIds = new Set(prev.map(m => m.id));
+              return [...prev, ...dealMtgs.filter(m => !existingIds.has(m.id))];
+            });
+          }
+          // Fetch task-level files (deal_task_files) using task IDs from the deal
+          const taskIds = (tsks || []).map(t => t.id);
+          const taskFilePromise = taskIds.length
+            ? fetchDealTaskFiles(taskIds).catch(() => [])
+            : Promise.resolve([]);
+          taskFilePromise.then(taskFs => {
+            const allDealFs = [...dealFs, ...taskFs];
+            if (allDealFs.length) setDealFiles(allDealFs);
+          });
+        }).catch(e => console.error('[openProject] deal context fetch failed:', e));
       }
       // Load company intel by name (works with or without source_deal_id)
       if (project.client_name) {
@@ -859,17 +896,28 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
 
   // ── Save project header edits ─────────────────────────────────────────────
   const handleSaveProject = async () => {
-    const saved = await upsertProject(activeProject);
-    setActiveProject(saved);
-    setProjects(prev => prev.map(p => p.id === saved.id ? saved : p));
+    try {
+      const saved = await upsertProject(activeProject);
+      setActiveProject(saved);
+      setProjects(prev => prev.map(p => p.id === saved.id ? saved : p));
+    } catch (e) {
+      console.error('handleSaveProject failed:', e);
+    }
   };
 
   // ── Structured project notes ──────────────────────────────────────────────
   const saveNotes = async (notes) => {
+    const prev = activeProject;
     const updated = { ...activeProject, internal_notes: JSON.stringify(notes) };
     setActiveProject(updated);
-    setProjects(prev => prev.map(p => p.id === updated.id ? updated : p));
-    await upsertProject(updated);
+    setProjects(ps => ps.map(p => p.id === updated.id ? updated : p));
+    try {
+      await upsertProject(updated);
+    } catch (e) {
+      console.error('saveNotes failed:', e);
+      setActiveProject(prev);
+      setProjects(ps => ps.map(p => p.id === prev.id ? prev : p));
+    }
   };
   const handleAddNote = async () => {
     if (!newNoteText.trim()) return;
@@ -1083,7 +1131,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
       setShareSaved(true);
       setTimeout(() => setShareSaved(false), 2500);
 
-      if (shareClientEmail) {
+      if (shareClientEmail && !portalShareLog.some(e => e.email === shareClientEmail)) {
         const newEntry = { email: shareClientEmail, sharedAt: new Date().toISOString() };
         const updatedLog = [...portalShareLog, newEntry];
         setPortalShareLog(updatedLog);
@@ -1146,7 +1194,14 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
   // ── Milestone edits ───────────────────────────────────────────────────────
   const handleSaveMilestone = async (ms) => {
     const prevMs = milestones.find(m => m.id === ms.id);
-    const saved = await upsertMilestone(ms);
+    let saved;
+    try {
+      saved = await upsertMilestone(ms);
+    } catch (e) {
+      console.error('handleSaveMilestone failed:', e);
+      setEditingMs(null);
+      return;
+    }
     setMilestones(prev => prev.map(m => m.id === saved.id ? saved : m));
     setEditingMs(null);
     // Notify client if milestone just became complete
@@ -1265,16 +1320,22 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
     const lastMs = milestones[milestones.length - 1];
     const start  = lastMs?.due_date || activeProject.start_date || new Date().toISOString().slice(0, 10);
     const end    = addDays(start, 14);
-    const saved  = await upsertMilestone({
-      project_id:  activeProject.id,
-      title:       'New Milestone',
-      description: '',
-      status:      'not_started',
-      assigned_to: '',
-      start_date:  start,
-      due_date:    end,
-      order_index: milestones.length,
-    });
+    let saved;
+    try {
+      saved = await upsertMilestone({
+        project_id:  activeProject.id,
+        title:       'New Milestone',
+        description: '',
+        status:      'not_started',
+        assigned_to: '',
+        start_date:  start,
+        due_date:    end,
+        order_index: milestones.length,
+      });
+    } catch (e) {
+      console.error('handleAddMilestone failed:', e);
+      return;
+    }
     setMilestones(prev => [...prev, saved]);
     setEditingMs(saved.id);
     setExpanded(prev => ({ ...prev, [saved.id]: true }));
@@ -1322,6 +1383,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
       await toggleTask(task.id, nowComplete);
     } catch (e) {
       console.error('toggleTask failed:', e);
+      return;
     }
     const patch = t => t.id === task.id ? {
       ...t, completed: nowComplete,
@@ -1334,7 +1396,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
     if (task.milestone_id) await syncMilestoneStatus(task.milestone_id, updated);
     if (nowComplete) {
       // If no client portal or no contact email, auto-approve internally — no review needed
-      const primaryContact = (activeProject.contacts || []).find(c => c.is_primary) || (activeProject.contacts || [])[0];
+      const primaryContact = (clientRecord?.contacts || project.contacts || []).find(c => c.is_primary) || (clientRecord?.contacts || project.contacts || [])[0];
       const toEmail = primaryContact?.email || activeProject.client_email || '';
       if (!activeProject.share_token || !toEmail) {
         try {
@@ -1561,7 +1623,12 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
       assigned_to:      draft.assigned_to || '',
       estimated_hours:  draft.estimated_hours !== '' && draft.estimated_hours != null ? parseFloat(draft.estimated_hours) : null,
     };
-    await upsertProjectTask(updated);
+    try {
+      await upsertProjectTask(updated);
+    } catch (e) {
+      console.error('handleSaveTaskEdit failed:', e);
+      return;
+    }
     setTasks(prev => prev.map(t => t.id === updated.id ? updated : t));
     setAllTasks(prev => ({ ...prev, [activeProject.id]: prev[activeProject.id]?.map(t => t.id === updated.id ? updated : t) || [] }));
     await syncMilestoneDates(updated);
@@ -1569,13 +1636,19 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
 
   const handleToggleAssignedTask = async (task) => {
     const nowComplete = !task.completed;
-    await toggleTask(task.id, nowComplete);
+    try {
+      await toggleTask(task.id, nowComplete);
+    } catch (e) {
+      console.error('handleToggleAssignedTask failed:', e);
+      return;
+    }
     const patch = t => t.id === task.id ? {
       ...t, completed: nowComplete,
       completed_at: nowComplete ? new Date().toISOString() : null,
       ...(nowComplete ? {} : { approved_at: null, approved_by: null, rejected_at: null, rejected_by: null, rejection_notes: null, rejection_response: null }),
     } : t;
     setAssignedTasks(prev => prev.map(patch));
+    const projectTasks = task.project_id ? (allTasks[task.project_id] || []).map(patch) : [];
     if (task.project_id) {
       setAllTasks(prev => ({
         ...prev,
@@ -1583,7 +1656,6 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
       }));
     }
     if (task.milestone_id && task.project_id) {
-      const projectTasks = (allTasks[task.project_id] || []).map(patch);
       await syncMilestoneStatus(task.milestone_id, projectTasks);
     }
   };
@@ -1592,7 +1664,12 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
     const draft = { ...editTaskDraftRef.current, ...overrides };
     if (!draft.title?.trim()) { setEditingTask(null); return; }
     const updated = { ...task, title: draft.title.trim(), due_date: draft.due_date || null, assigned_to: draft.assigned_to || '', estimated_hours: draft.estimated_hours !== '' && draft.estimated_hours != null ? parseFloat(draft.estimated_hours) : null };
-    await upsertProjectTask(updated);
+    try {
+      await upsertProjectTask(updated);
+    } catch (e) {
+      console.error('handleSaveAssignedTaskEdit failed:', e);
+      return;
+    }
     setAssignedTasks(prev => prev.map(t =>
       t.id === updated.id ? { ...updated, _project: t._project, _milestone: t._milestone } : t
     ));
@@ -1753,6 +1830,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
 
   // ── Transcript import ─────────────────────────────────────────────────────
   const handleTranscriptImported = async ({ meeting, tasks: newTasks, suggestedUpdates = [] }) => {
+    const chosenMsId = transcriptDefaultMs; // capture before clearing
     setShowTranscriptImporter(false);
     setTranscriptDefaultMs(null);
 
@@ -1779,9 +1857,9 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
 
     if (!newTasks?.length) return;
 
-    // Auto-create or find a milestone named after the meeting
-    let meetingMilestoneId = null;
-    if (meeting?.title) {
+    // Use the explicitly chosen milestone if set; otherwise auto-create one from meeting title
+    let meetingMilestoneId = chosenMsId || null;
+    if (!chosenMsId && meeting?.title) {
       const existing = milestones.find(m => m.title?.toLowerCase().trim() === meeting.title.toLowerCase().trim());
       if (existing) {
         meetingMilestoneId = existing.id;
@@ -1862,7 +1940,20 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
     const file = e.dataTransfer?.files?.[0];
     let text = '';
     if (file) {
-      if (file.type !== 'application/pdf') {
+      if (file.type === 'application/pdf') {
+        try {
+          const b64 = await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = e => resolve(e.target.result.split(',')[1]);
+            reader.onerror = reject;
+            reader.readAsDataURL(file);
+          });
+          const { text: extracted } = await extractPdfTextAndPages(b64);
+          text = extracted || '';
+        } catch (e) {
+          console.warn('PDF text extraction failed on drop:', e.message);
+        }
+      } else {
         text = await new Promise((resolve) => {
           const reader = new FileReader();
           reader.onload = ev => resolve(ev.target.result || '');
@@ -1995,10 +2086,17 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
     if (!linkUrl.trim()) return;
     const { projectId, milestoneId, taskId } = showLinkModal;
     const name = linkName.trim() || parseLinkName(linkUrl.trim());
-    const saved = await addExternalLink(projectId, linkUrl.trim(), name, milestoneId, taskId);
+    let saved;
+    try {
+      saved = await addExternalLink(projectId, linkUrl.trim(), name, milestoneId, taskId);
+    } catch (e) {
+      console.error('handleAddLink failed:', e);
+      return;
+    } finally {
+      setShowLinkModal(null);
+    }
     setProjectFiles(prev => [saved, ...prev]);
     setCardFiles(prev => ({ ...prev, [projectId]: [saved, ...(prev[projectId] || [])] }));
-    setShowLinkModal(null);
     if (activeProject?.id === projectId) triggerProjectThesisRefresh({ files: [saved, ...projectFiles] });
   };
 
@@ -3255,7 +3353,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                           return (
                             <button
                               key={s.id}
-                              onClick={() => { const u = { ...ms, status: s.id }; setMilestones(p => p.map(m => m.id === ms.id ? u : m)); upsertMilestone(u); }}
+                              onClick={() => { const u = { ...ms, status: s.id }; setMilestones(p => p.map(m => m.id === ms.id ? u : m)); upsertMilestone(u).catch(e => console.error('upsertMilestone failed:', e)); }}
                               style={{
                                 fontSize: 11, fontWeight: 700, padding: '4px 12px', borderRadius: 20, cursor: 'pointer',
                                 border: `1.5px solid ${s.color}`,
@@ -4052,13 +4150,21 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
               <p style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 20, textAlign: 'center', padding: '12px 0' }}>No meetings logged yet.</p>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 20 }}>
-                {meetings.map(mtg => (
+                {[
+                  ...meetings.filter(m => !m.deal_id || m.project_id),
+                  ...(meetings.some(m => m.deal_id && !m.project_id) ? [{ __divider: true, id: '__deal_divider__' }] : []),
+                  ...meetings.filter(m => m.deal_id && !m.project_id),
+                ].map(item => {
+                  if (item.__divider) return (
+                    <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '4px 0' }}>
+                      <div style={{ flex: 1, height: '1px', background: 'var(--border)' }} />
+                      <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.06em', whiteSpace: 'nowrap', padding: '0 8px' }}>Carried over from deal</span>
+                      <div style={{ flex: 1, height: '1px', background: 'var(--border)' }} />
+                    </div>
+                  );
+                  const mtg = item;
+                  return (
                   <div key={mtg.id} style={{ padding: '12px 14px', background: 'var(--surface)', border: `1px solid ${mtg.deal_id ? '#bbf7d0' : 'var(--border)'}`, borderLeft: mtg.deal_id ? '3px solid #059669' : undefined, borderRadius: 8 }}>
-                    {mtg.deal_id && (
-                      <div style={{ marginBottom: 8 }}>
-                        <span style={{ fontSize: 9, fontWeight: 800, padding: '1px 6px', borderRadius: 4, background: '#f0fdf4', color: '#059669', border: '1px solid #bbf7d0', textTransform: 'uppercase', letterSpacing: '.05em' }}>From Deal</span>
-                      </div>
-                    )}
                     {editingMeeting === mtg.id ? (
                       /* ── Inline edit form ── */
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -4116,7 +4222,8 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                       />
                     )}
                   </div>
-                ))}
+                  );
+                })}
               </div>
             )}
 
@@ -4360,6 +4467,25 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
                     ))}
                   </div>
                 )}
+              </div>
+            )}
+
+            {/* ── Files from deal ── */}
+            {dealFiles.length > 0 && (
+              <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 8 }}>From deal</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {dealFiles.map(f => (
+                    <div key={f.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: 'var(--bg)', border: '1px solid var(--border-light)', borderLeft: '3px solid #059669', borderRadius: 8 }}>
+                      <span style={{ fontSize: 16, flexShrink: 0 }}>{fileIcon(f.mime_type)}</span>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <a href={f.url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, fontWeight: 600, color: 'var(--accent)', textDecoration: 'none', display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</a>
+                        {f.size && <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>{fmtFileSize(f.size)}</span>}
+                      </div>
+                      <span style={{ fontSize: 9, fontWeight: 800, padding: '1px 6px', borderRadius: 4, background: '#f0fdf4', color: '#059669', border: '1px solid #bbf7d0', textTransform: 'uppercase', letterSpacing: '.05em', flexShrink: 0 }}>from deal</span>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
 
@@ -5000,7 +5126,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
         ].join('');
         const ccEmailsResend = extraRecipients.map(c => c.email).filter(Boolean);
         const gmailUrl = toEmail ? `https://mail.google.com/mail/?view=cm&to=${encodeURIComponent(toEmail)}&su=${encodeURIComponent(subject)}${ccEmailsResend.length ? `&cc=${encodeURIComponent(ccEmailsResend.join(','))}` : ''}` : null;
-        const allContactsResend = (project?.contacts || []).filter(c => c.email && c.email !== toEmail && !extraRecipients.find(r => r.email === c.email));
+        const allContactsResend = (clientRecord?.contacts || project?.contacts || []).filter(c => c.email && c.email !== toEmail && !extraRecipients.find(r => r.email === c.email));
 
         return (
           <div style={{ position: 'fixed', inset: 0, zIndex: 900, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>

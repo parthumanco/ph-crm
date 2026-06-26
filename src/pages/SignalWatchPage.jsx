@@ -885,20 +885,22 @@ export default function SignalWatchPage({ onNavigate, icp, refreshKey = 0, isAct
       monday.setDate(today.getDate() - today.getDay() + 1);
       const weekStart = monday.toISOString().slice(0, 10);
 
-      // If a 'won' entry exists, restore it; otherwise insert fresh
       const { data: existing } = await supabase
         .from('pipeline_entries')
         .select('id, status')
         .eq('company_id', company.id)
         .limit(1);
 
-      if (existing?.length) {
+      const existingEntry = existing?.[0];
+      if (existingEntry && existingEntry.status !== 'won') {
+        // Revive a non-won entry
         const { error } = await supabase
           .from('pipeline_entries')
           .update({ status: 'active', updated_at: new Date().toISOString() })
-          .eq('id', existing[0].id);
+          .eq('id', existingEntry.id);
         if (error) throw error;
-      } else {
+      } else if (!existingEntry || existingEntry.status === 'won') {
+        // Always create a fresh entry for won companies (new engagement)
         const primaryIdx = (company.contacts || []).findIndex(c => c.is_primary || c.source === 'old_gold');
         const { error } = await supabase.from('pipeline_entries').insert({
           company_id: company.id,
@@ -933,7 +935,9 @@ export default function SignalWatchPage({ onNavigate, icp, refreshKey = 0, isAct
         // Revive a deal that was previously sent back to Watch List, rather
         // than leaving it stuck and silently no-op'ing.
         await moveStage(existing[0].id, 'outreach');
-      } else if (!existing?.length) {
+      } else if (existing?.length) {
+        // Already has an active deal — nothing to do, just mark as added below
+      } else {
         const contacts = company.contacts || [];
         const primary = contacts.find(c => c.is_primary) || contacts.find(c => c.source === 'old_gold') || contacts[0];
         const newDeal = await upsertDeal({
@@ -942,7 +946,7 @@ export default function SignalWatchPage({ onNavigate, icp, refreshKey = 0, isAct
           contact_name:  primary?.name  || null,
           contact_email: primary?.email || null,
           stage:         'outreach',
-          assigned_to:   'Mike',
+          assigned_to:   null,
         });
 
         // Carry over open Old Gold tasks for this company's prospects

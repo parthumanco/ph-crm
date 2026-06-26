@@ -309,6 +309,7 @@ export async function syncDealMeetings(deal, apiKey, { updatedAfter } = {}) {
   const imported        = [];
   const importedNoteIds = []; // collected here so we don't rely on saveProjectMeeting returning granola_note_id
   const errors          = [];
+  let   skipped         = 0;
   const alreadyImported = await loadImportedNoteIds();
 
   let cursor = null;
@@ -323,7 +324,7 @@ export async function syncDealMeetings(deal, apiKey, { updatedAfter } = {}) {
     });
 
     for (const note of notes) {
-      if (alreadyImported.has(note.id)) continue;
+      if (alreadyImported.has(note.id)) { skipped++; continue; }
 
       const score = scoreNoteForDeal(note, deal);
       if (score < 30) continue;
@@ -347,7 +348,7 @@ export async function syncDealMeetings(deal, apiKey, { updatedAfter } = {}) {
     await markNotesImported(importedNoteIds);
   }
 
-  return { imported, skipped: alreadyImported.size, errors };
+  return { imported, skipped, errors };
 }
 
 /**

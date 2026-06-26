@@ -292,8 +292,9 @@ export default function ClientsPage({ onNavigate, refreshKey, icp, targetClientN
     try {
       const archived_at = new Date().toISOString();
       await supabase.from('clients').update({ archived_at }).eq('id', clientId);
+      const nextClientId = clients.find(c => !c.archived_at && c.id !== clientId)?.id || null;
       setClients(prev => prev.map(c => c.id === clientId ? { ...c, archived_at } : c));
-      if (selected === clientId) setSelected(clients.find(c => !c.archived_at && c.id !== clientId)?.id || null);
+      if (selected === clientId) setSelected(nextClientId);
     } catch (e) { console.error(e); }
     finally { setArchivingClientId(null); }
   };
@@ -501,6 +502,7 @@ ${allContacts.map(c => `<div class="contact-row"><div><strong>${esc(c.name)}</st
 </body></html>`;
 
     const win = window.open('', '_blank');
+    if (!win) { alert('Could not open print window — please allow pop-ups for this site.'); return; }
     win.document.write(html);
     win.document.close();
   };

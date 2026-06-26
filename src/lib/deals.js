@@ -215,7 +215,7 @@ export async function deleteDealTaskFile(id, storagePath) {
 
 export async function markDealTaskSent(taskId, sentBy = 'Pete') {
   const { data, error: fetchErr } = await supabase.from('tasks').select('review_chain').eq('id', taskId).single();
-  if (fetchErr) console.warn('markDealTaskSent: could not fetch existing chain:', fetchErr.message);
+  if (fetchErr) { console.warn('markDealTaskSent: could not fetch existing chain:', fetchErr.message); return; }
   const chain = Array.isArray(data?.review_chain) ? data.review_chain : [];
   const updated = [...chain, { type: 'sent', by: sentBy, at: new Date().toISOString() }];
   const { error } = await supabase.from('tasks').update({ review_chain: updated }).eq('id', taskId);

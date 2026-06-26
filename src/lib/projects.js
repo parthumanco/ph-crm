@@ -175,7 +175,9 @@ export async function fetchProjectTasks(projectId) {
 
 export async function upsertProjectTask(t) {
   const now = new Date().toISOString();
-  const payload = { ...t, created_at: t.created_at || now };
+  // Only stamp created_at when not already set — avoids overwriting the original on updates
+  const payload = { ...t };
+  if (!payload.created_at) payload.created_at = now;
   const { data, error } = await supabase
     .from('project_tasks').upsert(payload, { onConflict: 'id' }).select().single();
   if (error) throw new Error(error.message);
@@ -635,6 +637,7 @@ export async function deleteProjectFile(id, storagePath) {
 export async function fetchProjectByToken(token) {
   const { data, error } = await supabase
     .from('projects').select('*').eq('share_token', token).single();
+  if (error?.code === 'PGRST116') return null; // not found — invalid or expired token
   if (error) throw new Error(error.message);
   return data;
 }

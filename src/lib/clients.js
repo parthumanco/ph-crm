@@ -239,7 +239,7 @@ export async function setPrimaryCompanyContact(companyId, contactName) {
         const clContacts = cl.contacts || [];
         if (!clContacts.some(c => c.name?.trim().toLowerCase() === key)) return;
         const clUpdated = clContacts.map(c => ({ ...c, is_primary: c.name?.trim().toLowerCase() === key }));
-        supabase.from('clients').update({ contacts: clUpdated, updated_at: new Date().toISOString() }).eq('id', cl.id).then(() => {});
+        supabase.from('clients').update({ contacts: clUpdated, updated_at: new Date().toISOString() }).eq('id', cl.id).then(() => {}).catch(e => console.warn('clients contact sync failed:', e.message));
       });
   }
   return updated;

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
 import {
   upsertDeal, deleteDeal,
@@ -40,8 +40,8 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
   const [tasks, setTasks]         = useState([]);
   const [saving, setSaving]       = useState(false);
   const [deleting, setDeleting]   = useState(false);
-  const [actForm, setActForm]     = useState({ type: 'call', summary: '', activity_date: new Date().toISOString().slice(0,10), assigned_to: 'Mike' });
-  const [taskForm, setTaskForm]   = useState({ title: '', due_date: '', assigned_to: 'Mike' });
+  const [actForm, setActForm]     = useState({ type: 'call', summary: '', activity_date: new Date().toISOString().slice(0,10), assigned_to: teamNames[0] || 'Mike' });
+  const [taskForm, setTaskForm]   = useState({ title: '', due_date: '', assigned_to: teamNames[0] || 'Mike' });
   const [addingAct, setAddingAct] = useState(false);
   const [addingTask, setAddingTask] = useState(false);
   const [savingAct, setSavingAct] = useState(false);
@@ -81,6 +81,12 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
   useEffect(() => { dealRef.current = deal; }, [deal]);
   useEffect(() => { setThesisModalOpen(false); intelFetchedRef.current = false; }, [deal?.id]);
   useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; }; }, []);
+  // Sync form defaults when teamMembers loads asynchronously after mount
+  useEffect(() => {
+    if (!teamNames.length) return;
+    setTaskForm(f => f.assigned_to === 'Mike' || !teamNames.includes(f.assigned_to) ? { ...f, assigned_to: teamNames[0] } : f);
+    setActForm(f => f.assigned_to === 'Mike' || !teamNames.includes(f.assigned_to) ? { ...f, assigned_to: teamNames[0] } : f);
+  }, [teamNames.join(',')]);
 
   // Notes state (for quick save from Meetings tab)
   const [savingNotes, setSavingNotes]     = useState(false);
@@ -123,7 +129,9 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
   const [editingDealTaskId, setEditingDealTaskId]     = useState(null);
   const [editDealTaskDraft, setEditDealTaskDraft]     = useState({ title: '', due_date: '', assigned_to: '' });
   const editDealTaskDraftRef                          = useRef({});
+  const isSavingDealTaskRef                           = useRef(false);
   const [confirmDeleteDeal, setConfirmDeleteDeal] = useState(false); // deal delete confirmation
+  const [confirmDeleteMtgId, setConfirmDeleteMtgId] = useState(null); // meeting id pending delete confirm
   const [meetingSummaryPrompt, setMeetingSummaryPrompt] = useState(null); // { meeting, tasks } after transcript import
   const [uploadingDealFile, setUploadingDealFile] = useState(false);
 
@@ -339,7 +347,8 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
     setMovingBack(true);
     try {
       if (deal.stage === 'nurture') {
-        // Already in nurture/Watch List — just remove from pipeline entirely
+        // Already in nurture/Watch List — confirm before permanently removing
+        if (!window.confirm(`Remove ${deal.company_name} from the pipeline entirely? This cannot be undone.`)) { setMovingBack(false); return; }
         await deleteDeal(deal.id);
         onClose();
         onSaved?.(null);
@@ -464,8 +473,10 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
   };
 
   const saveDealTaskEdit = async (task) => {
+    if (isSavingDealTaskRef.current) return;
+    isSavingDealTaskRef.current = true;
     const draft = editDealTaskDraftRef.current;
-    if (!draft.title?.trim()) { setEditingDealTaskId(null); return; }
+    if (!draft.title?.trim()) { setEditingDealTaskId(null); isSavingDealTaskRef.current = false; return; }
     const patch = { title: draft.title.trim(), due_date: draft.due_date || null, assigned_to: draft.assigned_to || null };
     setTasks(ts => ts.map(t => t.id === task.id ? { ...t, ...patch } : t));
     setEditingDealTaskId(null);
@@ -474,6 +485,8 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
     } catch (e) {
       console.error('Task update failed:', e.message);
       setTasks(ts => ts.map(t => t.id === task.id ? task : t));
+    } finally {
+      isSavingDealTaskRef.current = false;
     }
   };
 
@@ -703,10 +716,19 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
   })();
 
   // Client contacts available for task assignment (deduped against internal team)
-  const clientTaskContacts = mergedContacts
-    .filter(c => c.name?.trim() && !teamNames.some(o => o.toLowerCase() === c.name.trim().toLowerCase()))
-    .map(c => c.name.trim())
-    .filter((n, i, arr) => arr.indexOf(n) === i);
+  const clientTaskContacts = useMemo(() => {
+    const seen = new Set();
+    return mergedContacts
+      .filter(c => {
+        if (!c.name?.trim()) return false;
+        if (teamNames.some(o => o.toLowerCase() === c.name.trim().toLowerCase())) return false;
+        const n = c.name.trim();
+        if (seen.has(n)) return false;
+        seen.add(n);
+        return true;
+      })
+      .map(c => c.name.trim());
+  }, [mergedContacts, teamNames]);
 
   const handleDraftEmail = async () => {
     if (draftingEmail) return;
@@ -768,7 +790,7 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
           type:          'email',
           summary,
           activity_date: new Date().toISOString().slice(0, 10),
-          assigned_to:   deal.assigned_to || 'Mike',
+          assigned_to:   deal.assigned_to || teamNames[0] || null,
         });
         const updated = await fetchActivities(deal.id);
         setActivities(updated);
@@ -834,6 +856,7 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
     }
   };
 
+  const [mtgReordered, setMtgReordered] = useState(false);
   const handleMtgDrop = (targetId) => {
     const fromId = dragMtgId;
     if (!fromId || fromId === targetId) return;
@@ -848,6 +871,7 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
     });
     setDragMtgId(null);
     setDragOverMtgId(null);
+    setMtgReordered(true);
   };
 
   const handleAddContact = async () => {
@@ -1174,6 +1198,7 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
 </body></html>`;
 
     const win = window.open('', '_blank');
+    if (!win) { alert('Could not open print window — please allow pop-ups for this site.'); return; }
     win.document.write(html);
     win.document.close();
   };
@@ -1296,7 +1321,7 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
                     setComposeEmail({ to: contact.email, toName: contact.name });
                     setComposeDraft({
                       subject: `Meeting Summary — ${deal.company_name} — ${meetingDate}`,
-                      body: `Hi ${firstName},\n\nGreat meeting today. Here's a quick summary of what we each have on our plate heading into the next phase.\n\nPART HUMAN:\n${phLines}\n\nYOUR NEXT STEPS:\n${clientLines}\n\nLet us know if anything looks off or if priorities shift. Looking forward to making progress together.\n\nBest,\nPete`,
+                      body: `Hi ${firstName},\n\nGreat meeting today. Here's a quick summary of what we each have on our plate heading into the next phase.\n\nPART HUMAN:\n${phLines}\n\nYOUR NEXT STEPS:\n${clientLines}\n\nLet us know if anything looks off or if priorities shift. Looking forward to making progress together.\n\nBest,\n${deal.assigned_to || teamNames[0] || 'Part Human'}`,
                     });
                     setMeetingSummaryPrompt(null);
                   }}
@@ -1403,7 +1428,7 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
                   {saving ? 'Saving…' : isNew ? 'Create Deal' : 'Save Changes'}
                 </button>
                 {!isNew && (
-                  <button className="btn btn-danger" onClick={handleDelete} disabled={deleting} style={{ flexShrink: 0 }}>
+                  <button className="btn btn-danger" onClick={() => setConfirmDeleteDeal(true)} disabled={deleting} style={{ flexShrink: 0 }}>
                     {deleting ? '…' : '🗑'}
                   </button>
                 )}
@@ -1673,7 +1698,7 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
                                     setNotifyCompleteAfterSend(true);
                                     setComposeDraft({
                                       subject: `Quick update — ${deal.company_name}`,
-                                      body: `Hi ${firstName},\n\nJust a quick note to let you know I've completed the following:\n\n"${t.title}"\n\nLet me know if you have any questions or if there's anything else you'd like to discuss.${fileNote}\n\nBest,\nPete`,
+                                      body: `Hi ${firstName},\n\nJust a quick note to let you know I've completed the following:\n\n"${t.title}"\n\nLet me know if you have any questions or if there's anything else you'd like to discuss.${fileNote}\n\nBest,\n${deal.assigned_to || teamNames[0] || 'Part Human'}`,
                                     });
                                   }}
                                   style={{ fontSize: 11, fontWeight: 700, padding: '5px 13px', borderRadius: 6, border: 'none', background: '#f59e0b', color: '#fff', cursor: 'pointer', whiteSpace: 'nowrap' }}
@@ -1754,7 +1779,7 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
                                     setComposeTaskId(t.id);
                                     setComposeDraft({
                                       subject: t.title,
-                                      body: `Hi ${firstName},\n\nI wanted to share the following with you regarding "${t.title}".\n\nPlease let me know if you have any questions or if there's anything you'd like to discuss.${fileNote}\n\nBest,\nPete`,
+                                      body: `Hi ${firstName},\n\nI wanted to share the following with you regarding "${t.title}".\n\nPlease let me know if you have any questions or if there's anything you'd like to discuss.${fileNote}\n\nBest,\n${deal.assigned_to || teamNames[0] || 'Part Human'}`,
                                     });
                                   }}
                                   style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', height: 28, width: 80, padding: 0, borderRadius: 20, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text-muted)', cursor: 'pointer', boxSizing: 'border-box' }}
@@ -2082,7 +2107,14 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
                                 {showTranscript === mtg.id ? 'Hide' : 'Transcript'}
                               </button>
                             )}
-                            <button onClick={async () => { await deleteProjectMeeting(mtg.id); setMeetings(prev => prev.filter(m => m.id !== mtg.id)); }} style={{ fontSize: 10, padding: '2px 5px', borderRadius: 5, border: '1px solid var(--border)', background: 'none', color: 'var(--text-faint)', cursor: 'pointer' }}>🗑</button>
+                            {confirmDeleteMtgId === mtg.id ? (
+                              <>
+                                <button onClick={async () => { await deleteProjectMeeting(mtg.id); setMeetings(prev => prev.filter(m => m.id !== mtg.id)); setConfirmDeleteMtgId(null); }} style={{ fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 5, border: '1px solid #fca5a5', background: '#fef2f2', color: '#dc2626', cursor: 'pointer' }}>Delete</button>
+                                <button onClick={() => setConfirmDeleteMtgId(null)} style={{ fontSize: 10, padding: '2px 6px', borderRadius: 5, border: '1px solid var(--border)', background: 'none', color: 'var(--text-faint)', cursor: 'pointer' }}>Cancel</button>
+                              </>
+                            ) : (
+                              <button onClick={() => setConfirmDeleteMtgId(mtg.id)} style={{ fontSize: 10, padding: '2px 5px', borderRadius: 5, border: '1px solid var(--border)', background: 'none', color: 'var(--text-faint)', cursor: 'pointer' }}>🗑</button>
+                            )}
                           </div>
                         </div>
                         {mtg.summary && <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6, marginBottom: mtg.action_items?.length ? 6 : 0 }}>{mtg.summary}</div>}
@@ -2104,6 +2136,10 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
                       </div>
                     ))}
                   </div>
+
+                  {mtgReordered && (
+                    <div style={{ fontSize: 10, color: 'var(--text-faint)', textAlign: 'center', marginTop: 8 }}>Order is session-only — resets on close</div>
+                  )}
 
                 {/* ── Meeting Notes ── */}
                 <hr style={{ border: 'none', borderTop: '2px solid var(--border)', margin: '28px 0 20px' }} />
@@ -3043,7 +3079,13 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
             // Use TranscriptImporter tasks; fall back to meeting.action_items if empty
             const taskSource = importedTasks?.length
               ? importedTasks
-              : (meeting?.action_items || []).map(ai => ({ title: ai.title, assigned_to: ai.owner || null, due_date: ai.due_date || null }));
+              : (meeting?.action_items || []).map(ai => {
+                  const ownerMatch = teamNames.find(o => o.toLowerCase() === ai.owner?.trim().toLowerCase());
+                  const title = ownerMatch
+                    ? ai.title.trim()
+                    : `${ai.owner?.trim() ? `[${ai.owner.trim()}] ` : ''}${ai.title.trim()}`;
+                  return { title, assigned_to: ownerMatch || deal.assigned_to || teamNames[0] || null, due_date: ai.due_date || null };
+                });
 
             if (taskSource.length) {
               let tasksSaved = 0;

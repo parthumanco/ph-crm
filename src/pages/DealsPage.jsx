@@ -423,7 +423,7 @@ export default function DealsPage({ refreshKey = 0, targetDealId = null, onTarge
       contact_name:  contactName  || null,
       contact_email: contactEmail || null,
       stage:         'prospect',
-      assigned_to:   'Mike',
+      assigned_to:   null,
     });
     setDeals(prev => [newDeal, ...prev]);
     return newDeal.id;
@@ -451,7 +451,8 @@ export default function DealsPage({ refreshKey = 0, targetDealId = null, onTarge
   // ── Modal handlers ─────────────────────────────────────────────────────────
   const handleSaved = (saved) => {
     if (!saved) {
-      setDeals(prev => prev.filter(d => d.id !== selectedDeal?.id));
+      const deletedId = selectedDeal?.id;
+      setDeals(prev => prev.filter(d => d.id !== deletedId));
     } else {
       const prev = deals.find(d => d.id === saved.id);
       if (saved.stage === 'won' && prev?.stage !== 'won') {
@@ -466,7 +467,7 @@ export default function DealsPage({ refreshKey = 0, targetDealId = null, onTarge
     setSelectedDeal(saved);
   };
 
-  const newDealTemplate = { company_name: '', stage: 'outreach', assigned_to: 'Mike' };
+  const newDealTemplate = { company_name: '', stage: 'outreach', assigned_to: null };
 
   return (
     <>
