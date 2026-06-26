@@ -124,7 +124,7 @@ function KanbanColumn({ stage, deals, onCardClick, onDrop, isDragOver, onDragOve
   );
 }
 
-export default function DealsPage({ refreshKey = 0, targetDealId = null, onTargetDealConsumed }) {
+export default function DealsPage({ refreshKey = 0, targetDealId = null, onTargetDealConsumed, teamMembers = [] }) {
   const [deals, setDeals]           = useState([]);
   const [loading, setLoading]       = useState(true);
   const [selectedDeal, setSelectedDeal] = useState(null);
@@ -1037,6 +1037,7 @@ export default function DealsPage({ refreshKey = 0, targetDealId = null, onTarge
             }
           }}
           onDraftProposal={handleDraftProposal}
+          teamMembers={teamMembers}
         />
       )}
     </>

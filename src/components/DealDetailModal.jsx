@@ -33,7 +33,8 @@ const THESIS_PHASES = [
   { id: 'synthesis',  label: 'Synthesis'  },
 ];
 
-export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, onDraftProposal }) {
+export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, onDraftProposal, teamMembers = [] }) {
+  const teamNames = teamMembers.length ? teamMembers.map(m => m.name) : OWNERS;
   const [deal, setDeal]           = useState({ ...initialDeal });
   const [activities, setActivities] = useState([]);
   const [tasks, setTasks]         = useState([]);
@@ -398,12 +399,12 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
             // assigned_to must be an internal team member (DB constraint) — if the
             // AI attributed this item to the prospect, keep that name in the title
             // instead, so whose follow-up it is doesn't get lost.
-            const ownerMatch = OWNERS.find(o => o.toLowerCase() === item.owner?.trim().toLowerCase());
+            const ownerMatch = teamNames.find(o => o.toLowerCase() === item.owner?.trim().toLowerCase());
             const title = ownerMatch ? item.title.trim() : `${item.owner?.trim() ? `[${item.owner.trim()}] ` : ''}${item.title.trim()}`;
             return addTask({
               title,
               due_date: item.due_date || null,
-              assigned_to: ownerMatch || deal.assigned_to || 'Mike',
+              assigned_to: ownerMatch || deal.assigned_to || teamNames[0] || 'Mike',
               deal_id: deal.id,
               company_id: deal.company_id,
             });
@@ -703,7 +704,7 @@ export default function DealDetailModal({ deal: initialDeal, onClose, onSaved, o
 
   // Client contacts available for task assignment (deduped against internal team)
   const clientTaskContacts = mergedContacts
-    .filter(c => c.name?.trim() && !OWNERS.some(o => o.toLowerCase() === c.name.trim().toLowerCase()))
+    .filter(c => c.name?.trim() && !teamNames.some(o => o.toLowerCase() === c.name.trim().toLowerCase()))
     .map(c => c.name.trim())
     .filter((n, i, arr) => arr.indexOf(n) === i);
 
@@ -1286,8 +1287,8 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
                       : new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
 
                     const allTasks = meetingSummaryPrompt.tasks;
-                    const phTasks  = allTasks.filter(t => OWNERS.includes(t.assigned_to));
-                    const clientTasks = allTasks.filter(t => !OWNERS.includes(t.assigned_to));
+                    const phTasks  = allTasks.filter(t => teamNames.includes(t.assigned_to));
+                    const clientTasks = allTasks.filter(t => !teamNames.includes(t.assigned_to));
 
                     const phLines     = phTasks.length     ? phTasks.map(t => `  • ${t.title}${t.assigned_to ? ` — ${t.assigned_to}` : ''}`).join('\n') : '  • Nothing on our end just yet';
                     const clientLines = clientTasks.length ? clientTasks.map(t => `  • ${t.title}${t.assigned_to ? ` — ${t.assigned_to}` : ''}`).join('\n') : '  • Nothing on your end just yet';
@@ -1378,7 +1379,7 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
                   <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', display: 'block', marginBottom: 4 }}>Assigned To</label>
                   <select value={deal.assigned_to || ''} onChange={e => field('assigned_to', e.target.value)} style={{ width: '100%', fontSize: 13 }}>
                     <option value="">Unassigned</option>
-                    {OWNERS.map(o => <option key={o} value={o}>{o}</option>)}
+                    {teamNames.map(o => <option key={o} value={o}>{o}</option>)}
                   </select>
                 </div>
                 <div>
@@ -1466,7 +1467,7 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
                         <input type="date" value={taskForm.due_date} onChange={e => setTaskForm(f => ({ ...f, due_date: e.target.value }))} style={{ fontSize: 12 }} />
                         <select value={taskForm.assigned_to} onChange={e => setTaskForm(f => ({ ...f, assigned_to: e.target.value }))} style={{ fontSize: 12 }}>
                           <optgroup label="Team">
-                            {OWNERS.map(o => <option key={o} value={o}>{o}</option>)}
+                            {teamNames.map(o => <option key={o} value={o}>{o}</option>)}
                           </optgroup>
                           {clientTaskContacts.length > 0 && (
                             <optgroup label="Client">
@@ -1549,7 +1550,7 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
                                   >
                                     <option value="">—</option>
                                     <optgroup label="Team">
-                                      {OWNERS.map(o => <option key={o} value={o}>{o}</option>)}
+                                      {teamNames.map(o => <option key={o} value={o}>{o}</option>)}
                                     </optgroup>
                                     {clientTaskContacts.length > 0 && (
                                       <optgroup label="Client">
@@ -1571,13 +1572,17 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
                           ) : (
                           /* ── Normal row ── */
                           <div
-                            style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: isNotify ? '#fffbeb' : overdue && !t.completed ? '#fef2f2' : 'var(--surface)', cursor: 'default' }}
-                            onMouseEnter={e => { if (!t.completed) e.currentTarget.style.background = 'var(--bg)'; }}
+                            style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: isNotify ? '#fffbeb' : overdue && !t.completed ? '#fef2f2' : 'var(--surface)', cursor: 'pointer' }}
+                            onClick={() => { if (!isNotify) { setExpandedTaskId(isExpanded ? null : t.id); setNotifyPromptTaskId(null); } }}
+                            onDoubleClick={e => { e.stopPropagation(); if (!t.completed && !isNotify) startDealTaskEdit(t); }}
+                            onMouseEnter={e => { if (!t.completed) e.currentTarget.style.background = isNotify ? '#fffbeb' : overdue && !t.completed ? '#fef2f2' : 'var(--bg)'; }}
                             onMouseLeave={e => { e.currentTarget.style.background = isNotify ? '#fffbeb' : overdue && !t.completed ? '#fef2f2' : 'var(--surface)'; }}
                           >
                             <input
                               type="checkbox"
                               checked={t.completed}
+                              onClick={e => e.stopPropagation()}
+                              onDoubleClick={e => e.stopPropagation()}
                               onChange={() => {
                                 if (t.completed) {
                                   toggleTask(t);
@@ -1591,16 +1596,13 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
                             />
                             <div style={{ flex: 1, minWidth: 0 }}>
                               <span
-                                style={{ fontSize: 13, textDecoration: t.completed ? 'line-through' : 'none', color: t.completed ? 'var(--text-muted)' : 'var(--text)', cursor: 'text', userSelect: 'none' }}
-                                title="Double-click to edit"
-                                onDoubleClick={() => { if (!t.completed) startDealTaskEdit(t); }}
-                                onClick={() => { setExpandedTaskId(isExpanded ? null : t.id); setNotifyPromptTaskId(null); }}
+                                style={{ fontSize: 13, textDecoration: t.completed ? 'line-through' : 'none', color: t.completed ? 'var(--text-muted)' : 'var(--text)', userSelect: 'none' }}
                               >{t.title}</span>
                               <div style={{ display: 'flex', gap: 6, marginTop: 2, alignItems: 'center', flexWrap: 'wrap' }}>
                                 {t.due_date && <span style={{ fontSize: 11, color: overdue && !t.completed ? '#b91c1c' : 'var(--text-faint)', fontWeight: overdue && !t.completed ? 700 : 400 }}>{overdue && !t.completed ? '⚠ ' : ''}{t.due_date}</span>}
                                 <span
                                   title="Click to edit assignment"
-                                  onClick={() => { if (!t.completed) startDealTaskEdit(t); }}
+                                  onClick={e => { e.stopPropagation(); if (!t.completed) startDealTaskEdit(t); }}
                                   style={{ fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 3, cursor: t.completed ? 'default' : 'pointer', background: t.assigned_to === 'Mike' ? '#f3e8ff' : t.assigned_to ? '#eff6ff' : 'var(--surface)', color: t.assigned_to === 'Mike' ? '#7c3aed' : t.assigned_to ? '#1d4ed8' : 'var(--text-faint)', border: t.assigned_to ? 'none' : '1px dashed var(--border)' }}
                                 >{t.assigned_to || '+ assign'}</span>
                                 {reminded && <span style={{ fontSize: 10, color: '#f59e0b' }}>🔔</span>}
@@ -1614,19 +1616,10 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
                                 )}
                               </div>
                             </div>
-                            {!isNotify && (
-                              <button
-                                onClick={() => { setExpandedTaskId(isExpanded ? null : t.id); setNotifyPromptTaskId(null); }}
-                                title={isExpanded ? 'Collapse' : 'Attach / Send'}
-                                style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 11, color: 'var(--text-faint)', flexShrink: 0, padding: '0 2px', lineHeight: 1 }}
-                              >
-                                {isExpanded ? '▲' : '▼'}
-                              </button>
-                            )}
                             {!t.completed && t.due_date && t.id && (
                               <button
                                 title={reminded ? 'Cancel reminder' : 'Set reminder'}
-                                onClick={async () => {
+                                onClick={async e => { e.stopPropagation();
                                   if (reminded) {
                                     clearReminder(t.id);
                                   } else {
@@ -1647,13 +1640,13 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
                               </button>
                             )}
                             {confirmDeleteTaskId === t.id ? (
-                              <div style={{ display: 'flex', gap: 4, alignItems: 'center', flexShrink: 0 }}>
+                              <div onClick={e => e.stopPropagation()} style={{ display: 'flex', gap: 4, alignItems: 'center', flexShrink: 0 }}>
                                 <span style={{ fontSize: 10, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>Sure?</span>
                                 <button onClick={() => { setConfirmDeleteTaskId(null); removeTask(t.id); }} style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 20, border: 'none', background: '#ef4444', color: '#fff', cursor: 'pointer', whiteSpace: 'nowrap' }}>Yes</button>
                                 <button onClick={() => setConfirmDeleteTaskId(null)} style={{ fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 20, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text-muted)', cursor: 'pointer' }}>Cancel</button>
                               </div>
                             ) : (
-                              <button onClick={() => setConfirmDeleteTaskId(t.id)} style={{ fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 20, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text-muted)', cursor: 'pointer', flexShrink: 0, whiteSpace: 'nowrap' }}>Delete</button>
+                              <button onClick={e => { e.stopPropagation(); setConfirmDeleteTaskId(t.id); }} style={{ fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 20, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text-muted)', cursor: 'pointer', flexShrink: 0, whiteSpace: 'nowrap' }}>Delete</button>
                             )}
                           </div>
                           )}
@@ -2143,7 +2136,7 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
                         </select>
                         <input type="date" value={actForm.activity_date} onChange={e => setActForm(f => ({ ...f, activity_date: e.target.value }))} style={{ fontSize: 12 }} />
                         <select value={actForm.assigned_to} onChange={e => setActForm(f => ({ ...f, assigned_to: e.target.value }))} style={{ fontSize: 12 }}>
-                          {OWNERS.map(o => <option key={o} value={o}>{o}</option>)}
+                          {teamNames.map(o => <option key={o} value={o}>{o}</option>)}
                         </select>
                       </div>
                       <textarea rows={2} placeholder="What happened? Key points, outcomes…" value={actForm.summary} onChange={e => setActForm(f => ({ ...f, summary: e.target.value }))} style={{ width: '100%', fontSize: 12, lineHeight: 1.5, marginBottom: 8 }} />
@@ -3027,7 +3020,7 @@ ${activities.length === 0 ? '<p style="color:#9ca3af;font-size:12px;">No activit
     {showTranscriptImporter && (
       <TranscriptImporter
         dealId={deal.id}
-        owners={OWNERS}
+        owners={teamNames}
         existingTasks={tasks}
         initialTranscript={initialTranscript}
         onImported={async ({ meeting, tasks: importedTasks, suggestedUpdates = [] }) => {

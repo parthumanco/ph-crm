@@ -166,7 +166,7 @@ export default function App() {
           <PipelinePage icp={icp} refreshKey={pageKeys.pipeline || 0} onNavigate={handleSetPage} />
         </PageSlot>
         <PageSlot active={page === 'deals'}>
-          <DealsPage refreshKey={pageKeys.deals || 0} targetDealId={targetDealId} onTargetDealConsumed={() => setTargetDealId(null)} />
+          <DealsPage refreshKey={pageKeys.deals || 0} targetDealId={targetDealId} onTargetDealConsumed={() => setTargetDealId(null)} teamMembers={teamMembers} />
         </PageSlot>
         <PageSlot active={page === 'support'}>
           <SupportPage teamMembers={teamMembers} />
