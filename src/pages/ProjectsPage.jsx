@@ -858,12 +858,15 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
     }
   }, [targetProjectId, projects]);
 
-  // Seed clientRecord.contacts from projectCompany.contacts when the clients
-  // row has no contacts but the companies row does (e.g. project predates the
-  // unified contacts system, or the client_name matched a different clients row).
+  // Whenever the companies row has contacts not yet in clients.contacts, merge
+  // them in automatically. This keeps Projects, Clients, Watch List, and Pipeline
+  // all pointing at the same contact roster without manual one-by-one promotion.
   useEffect(() => {
-    if (!clientRecord?.id || clientRecord.contacts?.length || !projectCompany?.contacts?.length) return;
-    upsertClientContacts(clientRecord.id, projectCompany.contacts)
+    if (!clientRecord?.id || !projectCompany?.contacts?.length) return;
+    const existingNames = new Set((clientRecord.contacts || []).map(c => c.name?.trim().toLowerCase()));
+    const missing = projectCompany.contacts.filter(c => c.name?.trim() && !existingNames.has(c.name.trim().toLowerCase()));
+    if (!missing.length) return;
+    upsertClientContacts(clientRecord.id, missing)
       .then(updated => setClientRecord(cr => cr ? { ...cr, contacts: updated } : cr))
       .catch(() => {});
   }, [clientRecord?.id, projectCompany?.id]);

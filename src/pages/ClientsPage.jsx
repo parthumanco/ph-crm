@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import {
   fetchClients, fetchClientDetail, fetchCompanyIntel, runClientDeepScan, runBuildThesis,
-  upsertClient, findOrCreateCompany,
+  upsertClient, findOrCreateCompany, upsertClientContacts,
   addClientItem, deleteClientItem, askClientQuestion, silentRefreshThesis,
 } from '../lib/clients';
 import { fetchDocuments, fetchCompanyFiles, docType, deleteCompanyFile } from '../lib/documents';
@@ -219,6 +219,18 @@ export default function ClientsPage({ onNavigate, refreshKey, icp, targetClientN
 
     return () => { cancelled = true; };
   }, [selected]);
+
+  // Whenever companies.contacts (intel) has entries not yet in clients.contacts,
+  // merge them in automatically so all four surfaces stay in sync on load.
+  useEffect(() => {
+    if (!detail?.client?.id || !intel?.contacts?.length) return;
+    const existingNames = new Set((detail.client.contacts || []).map(c => c.name?.trim().toLowerCase()));
+    const missing = intel.contacts.filter(c => c.name?.trim() && !existingNames.has(c.name.trim().toLowerCase()));
+    if (!missing.length) return;
+    upsertClientContacts(detail.client.id, missing)
+      .then(updated => setDetail(d => d ? { ...d, client: { ...d.client, contacts: updated } } : d))
+      .catch(() => {});
+  }, [detail?.client?.id, intel?.id]);
 
   const filtered = clients.filter(c =>
     c.name.toLowerCase().includes(search.toLowerCase()) &&
@@ -567,10 +579,20 @@ ${allContacts.map(c => `<div class="contact-row"><div><strong>${esc(c.name)}</st
   const discoveredContacts = detail ? (() => {
     const addedNames = new Set((detail.client?.contacts || []).map(c => c.name?.trim().toLowerCase()));
     const pool = new Map();
+    // companies.contacts first — the shared roster across Watch List, Pipeline, Old Gold
+    (intel?.contacts || []).forEach(c => {
+      if (!c.name?.trim()) return;
+      const key = c.name.trim().toLowerCase();
+      if (!addedNames.has(key)) pool.set(key, { name: c.name.trim(), title: c.title || '', email: c.email || '', linkedin: c.linkedin || '' });
+    });
+    // contact_angles on top — AI-discovered names/titles that may not be in contacts yet
     (intel?.contact_angles || []).forEach(c => {
       if (!c.name?.trim()) return;
       const key = c.name.trim().toLowerCase();
-      if (!addedNames.has(key)) pool.set(key, { name: c.name.trim(), title: c.title || '', email: c.email || '', linkedin: c.linkedinUrl || c.linkedin || '' });
+      if (!addedNames.has(key)) {
+        const existing = pool.get(key) || {};
+        pool.set(key, { name: c.name.trim(), title: existing.title || c.title || '', email: existing.email || c.email || '', linkedin: existing.linkedin || c.linkedinUrl || c.linkedin || '' });
+      }
     });
     return Array.from(pool.values());
   })() : [];
