@@ -2,7 +2,6 @@ import { useState, useEffect, useRef } from 'react';
 import { saveIcp, loadTeamEmails, saveTeamEmails, saveTeamMembers, DEFAULT_BRAND_BRAIN, loadBrandBrain, saveBrandBrain } from '../lib/settings';
 import { invalidateBrandCache } from '../lib/anthropic';
 import { supabase } from '../lib/supabase';
-import { loadGranolaApiKey, saveGranolaApiKey, testGranolaConnection } from '../lib/granola';
 
 // ── Reference document helpers ────────────────────────────────────────────────
 async function loadRefDocs() {
@@ -216,7 +215,7 @@ export default function SettingsPage({ icp, onIcpSaved, teamMembers = [], onTeam
   useEffect(() => { loadTeamEmails().then(setTeamEmails); }, []);
   useEffect(() => { loadRefDocs().then(setRefDocs); }, []);
   useEffect(() => {
-    loadGranolaApiKey().then(k => { setGranolaKey(k); setGranolaKeyDraft(k); });
+    import('../lib/granola').then(({ loadGranolaApiKey }) => loadGranolaApiKey()).then(k => { setGranolaKey(k); setGranolaKeyDraft(k); });
   }, []);
   useEffect(() => {
     supabase.from('app_settings').select('value').eq('key', 'forecast_pin').single()
@@ -905,6 +904,7 @@ export default function SettingsPage({ icp, onIcpSaved, teamMembers = [], onTeam
               setGranolaTesting(true);
               setGranolaTestResult(null);
               try {
+                const { testGranolaConnection } = await import('../lib/granola');
                 const result = await testGranolaConnection(granolaKeyDraft.trim());
                 setGranolaTestResult({ ok: true, message: `Connected — ${result.count} note${result.count !== 1 ? 's' : ''} accessible` });
               } catch (e) {
@@ -923,6 +923,7 @@ export default function SettingsPage({ icp, onIcpSaved, teamMembers = [], onTeam
             onClick={async () => {
               setGranolaSaving(true);
               try {
+                const { saveGranolaApiKey } = await import('../lib/granola');
                 await saveGranolaApiKey(granolaKeyDraft.trim());
                 setGranolaKey(granolaKeyDraft.trim());
                 setGranolaSaved(true);
@@ -943,6 +944,7 @@ export default function SettingsPage({ icp, onIcpSaved, teamMembers = [], onTeam
               style={{ color: '#dc2626', borderColor: '#fca5a5' }}
               onClick={async () => {
                 if (!window.confirm('Remove Granola API key?')) return;
+                const { saveGranolaApiKey } = await import('../lib/granola');
                 await saveGranolaApiKey('');
                 setGranolaKey('');
                 setGranolaKeyDraft('');

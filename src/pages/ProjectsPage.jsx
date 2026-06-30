@@ -433,6 +433,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
   const [view, setView]             = useState('list');   // 'list' | 'detail'
   const [projects, setProjects]     = useState([]);
   const consumedProjectIdRef        = useRef(null); // deep-link: avoid re-opening same project repeatedly
+  const openingProjectIdRef         = useRef(null); // tracks latest openProject call to cancel stale async writes
   const [allTasks, setAllTasks]     = useState({});       // { projectId: tasks[] }
   const [loading, setLoading]       = useState(true);
   const [allDeals, setAllDeals]     = useState([]);   // every pipeline deal, any stage
@@ -703,6 +704,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
 
   // Open project detail
   const openProject = async (project) => {
+    openingProjectIdRef.current = project.id;
     setActiveProject(project);
     setView('detail');
     setLoadingDetail(true);
@@ -808,6 +810,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
           Promise.all(linkedDealIds.map(id => fetchDealMeetings(id).catch(e => { console.error('fetchDealMeetings failed:', e); return []; }))),
           Promise.all(linkedDealIds.map(id => fetchDealFiles(id).catch(e => { console.error('fetchDealFiles failed:', e); return []; }))),
         ]).then(([acts, tsks, mtgArrays, fileArrays]) => {
+          if (openingProjectIdRef.current !== project.id) return;
           setDealActivities(acts || []);
           setDealTasks(tsks || []);
           const dealMtgs = mtgArrays.flat();
@@ -824,6 +827,7 @@ export default function ProjectsPage({ goHomeRef, refreshKey = 0, teamMembers = 
             ? fetchDealTaskFiles(taskIds).catch(() => [])
             : Promise.resolve([]);
           taskFilePromise.then(taskFs => {
+            if (openingProjectIdRef.current !== project.id) return;
             const allDealFs = [...dealFs, ...taskFs];
             if (allDealFs.length) setDealFiles(allDealFs);
           });

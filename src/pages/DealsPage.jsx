@@ -296,8 +296,9 @@ export default function DealsPage({ refreshKey = 0, targetDealId = null, onTarge
       return;
     }
 
-    // Normal stage move
-    setDeals(prev => prev.map(d => d.id === dealId ? { ...d, stage: stageId, stage_entered_at: new Date().toISOString() } : d));
+    // Normal stage move — also clear won_date/lost_date so the optimistic state
+    // matches what moveStage sends to the server (both NULLed on non-won/non-lost)
+    setDeals(prev => prev.map(d => d.id === dealId ? { ...d, stage: stageId, stage_entered_at: new Date().toISOString(), won_date: null, lost_date: null } : d));
     try {
       await moveStage(dealId, stageId);
     } catch (e) {
