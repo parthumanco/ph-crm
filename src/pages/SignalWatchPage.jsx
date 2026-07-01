@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
 import { scanBatch, scanDeepDive, weeklyRescanBatch, geocodeHqBatch, enrichContactsWithSearch, scanLinkedInPosts, ENGAGEMENT_META, ENGAGEMENT_OPTIONS } from '../lib/anthropic';
 import { loadLastWeeklyScan, saveLastWeeklyScan, isWeeklyScanDue, markWeeklyScanViewed } from '../lib/settings';
-import { mergeContactAngles, mergeTriggers, sortContactsOldGoldFirst } from '../lib/clients';
+import { mergeContactAngles, mergeTriggers, sortContactsOldGoldFirst, runBuildThesis } from '../lib/clients';
 import { fetchOldGoldForCompany, OG_STATUS } from '../lib/oldGold';
 import { parseCsvLine } from '../lib/csv';
 import { upsertDeal, moveStage } from '../lib/deals';
@@ -1804,6 +1804,8 @@ export default function SignalWatchPage({ onNavigate, icp, refreshKey = 0, isAct
                       setCompanies(prev => prev.map(c => c.id === companyId ? { ...c, engagement_type: engType } : c));
                       await supabase.from('companies').update({ engagement_type: engType }).eq('id', companyId);
                     }}
+                    icp={icp}
+                    onThesisBuilt={(updated) => setCompanies(prev => prev.map(c => c.id === updated.id ? { ...c, ...updated } : c))}
                   />
                 );
               })}
@@ -1857,7 +1859,7 @@ function AddContactForm({ companyId, existingContacts, onSaved }) {
   );
 }
 
-function CompanyCard({ company, distMiles, status, isScanning, scanningAll, weeklyScanRunning, isAddingToPipeline, isAddedToPipeline, isAddingToDeals, isAddedToDeals, isOnWatchList, onScan, onAddToPipeline, onAddToDeals, onResumeOutreach, onNavigatePipeline, onNavigateDeals, onDelete, forceExpanded, onExpandedChange, cardRef, onUpdateContacts, onUpdateEngagement }) {
+function CompanyCard({ company, distMiles, status, isScanning, scanningAll, weeklyScanRunning, isAddingToPipeline, isAddedToPipeline, isAddingToDeals, isAddedToDeals, isOnWatchList, onScan, onAddToPipeline, onAddToDeals, onResumeOutreach, onNavigatePipeline, onNavigateDeals, onDelete, forceExpanded, onExpandedChange, cardRef, onUpdateContacts, onUpdateEngagement, icp, onThesisBuilt }) {
   const [expanded, setExpanded] = useState(false);
   const [editingIdx, setEditingIdx] = useState(null);
   const [editForm, setEditForm] = useState({});
@@ -1874,6 +1876,8 @@ function CompanyCard({ company, distMiles, status, isScanning, scanningAll, week
   const [ogData, setOgData] = useState(null); // null=not loaded yet
   const [ogLoading, setOgLoading] = useState(false);
   const [thesisOpen, setThesisOpen] = useState(false);
+  const [buildingThesis, setBuildingThesis] = useState(false);
+  const [thesisError, setThesisError] = useState('');
 
   useEffect(() => {
     if (forceExpanded) setExpanded(true);
@@ -1891,6 +1895,23 @@ function CompanyCard({ company, distMiles, status, isScanning, scanningAll, week
     setExpanded(val);
     if (!val) setThesisOpen(false);
     onExpandedChange?.(val);
+  };
+
+  const handleBuildThesis = async (e) => {
+    e.stopPropagation();
+    if (!company.id) return;
+    setBuildingThesis(true);
+    setThesisError('');
+    try {
+      const result = await runBuildThesis(company.id, company, icp || {}, {}, () => {});
+      const { _thesisSaveError, ...clean } = result;
+      onThesisBuilt?.({ ...company, ...clean });
+      setThesisOpen(true);
+    } catch (err) {
+      setThesisError(err.message || 'Build failed');
+    } finally {
+      setBuildingThesis(false);
+    }
   };
 
   const exportToPdf = () => {
@@ -2123,6 +2144,26 @@ function CompanyCard({ company, distMiles, status, isScanning, scanningAll, week
           >
             {isScanning ? <><span className="spinner" /> Scanning…</> : company.deep_scanned ? '↻ Rescan' : 'Deep Scan'}
           </button>
+
+          {company.deep_scanned && (
+            buildingThesis ? (
+              <span style={{ fontSize: 10, color: 'var(--accent)', display: 'flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap' }}>
+                <span className="spinner" /> Building thesis…
+              </span>
+            ) : (
+              <>
+                <button
+                  className="btn btn-xs"
+                  style={{ borderRadius: 8, background: '#f5f3ff', color: '#5b21b6', border: '1px solid #c4b5fd' }}
+                  onClick={handleBuildThesis}
+                  title={company.thesis ? 'Rebuild AI thesis using latest scan data' : 'Build an AI investment thesis from scan data'}
+                >
+                  {company.thesis ? '↻ Refresh Thesis' : '✦ Build Thesis'}
+                </button>
+                {thesisError && <span style={{ fontSize: 10, color: '#ef4444' }}>{thesisError}</span>}
+              </>
+            )
+          )}
 
         </div>
       </div>
