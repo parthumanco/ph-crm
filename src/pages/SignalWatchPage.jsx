@@ -2071,18 +2071,18 @@ function CompanyCard({ company, distMiles, status, isScanning, scanningAll, week
             </div>
           )}
 
-          {/* Action buttons / status labels */}
+          {/* Action buttons — all uniform pills stacked */}
           {hasResult && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'stretch', flexShrink: 0, minWidth: 138 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'stretch', flexShrink: 0, minWidth: 150 }}>
               {isAddedToDeals ? (
-                <span style={{ fontSize: 11, fontWeight: 700, color: '#15803d', background: '#dcfce7', padding: '4px 10px', borderRadius: 6, border: '1px solid #86efac', textAlign: 'center', cursor: 'pointer' }} onClick={e => { e.stopPropagation(); onNavigateDeals(); }}>In Pipeline →</span>
+                <span style={{ fontSize: 11, fontWeight: 700, color: '#15803d', background: '#dcfce7', padding: '5px 10px', borderRadius: 6, border: '1px solid #86efac', textAlign: 'center', cursor: 'pointer' }} onClick={e => { e.stopPropagation(); onNavigateDeals(); }}>In Pipeline →</span>
               ) : (
                 <button className="btn btn-secondary btn-sm" style={{ borderRadius: 6 }} onClick={e => { e.stopPropagation(); onAddToDeals(); }} disabled={isAddingToDeals}>
                   {isAddingToDeals ? <><span className="spinner" /> Adding…</> : '+ Pipeline'}
                 </button>
               )}
               {isAddedToPipeline ? (
-                <span style={{ fontSize: 11, fontWeight: 700, color: '#0369a1', background: '#e0f2fe', padding: '4px 10px', borderRadius: 6, border: '1px solid #7dd3fc', textAlign: 'center', cursor: 'pointer' }} onClick={e => { e.stopPropagation(); onNavigatePipeline(); }}>In Cold Outreach →</span>
+                <span style={{ fontSize: 11, fontWeight: 700, color: '#0369a1', background: '#e0f2fe', padding: '5px 10px', borderRadius: 6, border: '1px solid #7dd3fc', textAlign: 'center', cursor: 'pointer' }} onClick={e => { e.stopPropagation(); onNavigatePipeline(); }}>In Cold Outreach →</span>
               ) : isOnWatchList ? (
                 <button className="btn btn-secondary btn-sm" style={{ borderRadius: 6, color: 'var(--accent)', borderColor: 'var(--accent)' }} onClick={e => { e.stopPropagation(); onResumeOutreach(); }}>↩ Resume Outreach</button>
               ) : (
@@ -2090,6 +2090,32 @@ function CompanyCard({ company, distMiles, status, isScanning, scanningAll, week
                   {isAddingToPipeline ? <><span className="spinner" /> Adding…</> : '+ Cold Outreach'}
                 </button>
               )}
+              <button
+                className="btn btn-secondary btn-sm"
+                style={{ borderRadius: 6 }}
+                onClick={e => { e.stopPropagation(); onScan(); }}
+                disabled={isScanning}
+                title={company.scan_date ? `Scanned ${ddmyy(company.scan_date)} — click to rescan` : 'Run a deep scan'}
+              >
+                {isScanning ? <><span className="spinner" /> Scanning…</> : company.scan_date ? '↻ Rescan' : 'Deep Scan'}
+              </button>
+              {company.scan_date && (
+                buildingThesis ? (
+                  <button className="btn btn-secondary btn-sm" style={{ borderRadius: 6, color: '#5b21b6', borderColor: '#c4b5fd', background: '#f5f3ff' }} disabled>
+                    <span className="spinner" /> Building…
+                  </button>
+                ) : (
+                  <button
+                    className="btn btn-secondary btn-sm"
+                    style={{ borderRadius: 6, color: '#5b21b6', borderColor: '#c4b5fd', background: '#f5f3ff' }}
+                    onClick={handleBuildThesis}
+                    title={company.thesis ? 'Rebuild AI thesis from scan data' : 'Build an AI investment thesis from scan data'}
+                  >
+                    {company.thesis ? '↻ Refresh Thesis' : '✦ Build Thesis'}
+                  </button>
+                )
+              )}
+              {thesisError && <span style={{ fontSize: 10, color: '#ef4444', textAlign: 'center' }}>{thesisError}</span>}
             </div>
           )}
 
@@ -2135,36 +2161,6 @@ function CompanyCard({ company, distMiles, status, isScanning, scanningAll, week
           {company.scan_date && !isScanning && (
             <span style={{ fontSize: 10, color: 'var(--text-faint)', whiteSpace: 'nowrap' }}>Scanned {ddmyy(company.scan_date)}</span>
           )}
-          <button
-            className="btn btn-xs"
-            title={company.deep_scanned ? `Scanned ${new Date(company.scan_date).toLocaleDateString()} — click to rescan` : 'Run a deep scan'}
-            style={{ borderRadius: 8, ...(company.deep_scanned ? { background: 'var(--surface)', color: 'var(--text-muted)', border: '1px solid var(--border)' } : {}) }}
-            onClick={e => { e.stopPropagation(); onScan(); }}
-            disabled={isScanning}
-          >
-            {isScanning ? <><span className="spinner" /> Scanning…</> : company.deep_scanned ? '↻ Rescan' : 'Deep Scan'}
-          </button>
-
-          {company.scan_date && !isScanning && (
-            buildingThesis ? (
-              <span style={{ fontSize: 10, color: 'var(--accent)', display: 'flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap' }}>
-                <span className="spinner" /> Building thesis…
-              </span>
-            ) : (
-              <>
-                <button
-                  className="btn btn-xs"
-                  style={{ borderRadius: 8, background: '#f5f3ff', color: '#5b21b6', border: '1px solid #c4b5fd' }}
-                  onClick={handleBuildThesis}
-                  title={company.thesis ? 'Rebuild AI thesis using latest scan data' : 'Build an AI investment thesis from scan data'}
-                >
-                  {company.thesis ? '↻ Refresh Thesis' : '✦ Build Thesis'}
-                </button>
-                {thesisError && <span style={{ fontSize: 10, color: '#ef4444' }}>{thesisError}</span>}
-              </>
-            )
-          )}
-
         </div>
       </div>
 
