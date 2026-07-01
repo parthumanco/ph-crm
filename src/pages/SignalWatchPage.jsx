@@ -2061,61 +2061,70 @@ function CompanyCard({ company, distMiles, status, isScanning, scanningAll, week
             )}
           </div>
 
-          {/* SIG / ICP scores */}
+          {/* 3-column action grid: scores | scan+thesis | pipeline+outreach */}
           {hasResult && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 3, alignItems: 'flex-end', flexShrink: 0 }}>
-              <span style={{ fontSize: 11, fontWeight: 700, padding: '2px 9px', borderRadius: 6, background: sc + '18', color: sc, border: `1px solid ${sc}44` }}>SIG {company.overall_score}/10</span>
-              {company.icp_score && (
-                <span style={{ fontSize: 11, fontWeight: 700, padding: '2px 9px', borderRadius: 6, background: scoreColor(company.icp_score) + '18', color: scoreColor(company.icp_score), border: `1px solid ${scoreColor(company.icp_score)}44` }}>ICP {company.icp_score}/10</span>
-              )}
-            </div>
-          )}
+            <div style={{ display: 'flex', gap: 6, flexShrink: 0, alignItems: 'stretch' }}>
 
-          {/* Action buttons — all uniform pills stacked */}
-          {hasResult && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'stretch', flexShrink: 0, minWidth: 150 }}>
-              {isAddedToDeals ? (
-                <span style={{ fontSize: 11, fontWeight: 700, color: '#15803d', background: '#dcfce7', padding: '5px 10px', borderRadius: 6, border: '1px solid #86efac', textAlign: 'center', cursor: 'pointer' }} onClick={e => { e.stopPropagation(); onNavigateDeals(); }}>In Pipeline →</span>
-              ) : (
-                <button className="btn btn-secondary btn-sm" style={{ borderRadius: 6 }} onClick={e => { e.stopPropagation(); onAddToDeals(); }} disabled={isAddingToDeals}>
-                  {isAddingToDeals ? <><span className="spinner" /> Adding…</> : '+ Pipeline'}
+              {/* Col 1: ICP / SIG scores */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                {company.icp_score && (
+                  <span style={{ fontSize: 11, fontWeight: 700, padding: '5px 9px', borderRadius: 6, background: scoreColor(company.icp_score) + '18', color: scoreColor(company.icp_score), border: `1px solid ${scoreColor(company.icp_score)}44`, textAlign: 'center', whiteSpace: 'nowrap' }}>ICP {company.icp_score}/10</span>
+                )}
+                {sc && (
+                  <span style={{ fontSize: 11, fontWeight: 700, padding: '5px 9px', borderRadius: 6, background: sc + '18', color: sc, border: `1px solid ${sc}44`, textAlign: 'center', whiteSpace: 'nowrap' }}>SIG {company.overall_score}/10</span>
+                )}
+              </div>
+
+              {/* Col 2: Deep Scan / Build Thesis */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 110 }}>
+                <button
+                  className="btn btn-secondary btn-sm"
+                  style={{ borderRadius: 6 }}
+                  onClick={e => { e.stopPropagation(); onScan(); }}
+                  disabled={isScanning}
+                  title={company.scan_date ? `Scanned ${ddmyy(company.scan_date)} — click to rescan` : 'Run a deep scan'}
+                >
+                  {isScanning ? <><span className="spinner" /> Scanning…</> : company.scan_date ? '↻ Rescan' : 'Deep Scan'}
                 </button>
-              )}
-              {isAddedToPipeline ? (
-                <span style={{ fontSize: 11, fontWeight: 700, color: '#0369a1', background: '#e0f2fe', padding: '5px 10px', borderRadius: 6, border: '1px solid #7dd3fc', textAlign: 'center', cursor: 'pointer' }} onClick={e => { e.stopPropagation(); onNavigatePipeline(); }}>In Cold Outreach →</span>
-              ) : isOnWatchList ? (
-                <button className="btn btn-secondary btn-sm" style={{ borderRadius: 6, color: 'var(--accent)', borderColor: 'var(--accent)' }} onClick={e => { e.stopPropagation(); onResumeOutreach(); }}>↩ Resume Outreach</button>
-              ) : (
-                <button className="btn btn-green btn-sm" style={{ borderRadius: 6 }} onClick={e => { e.stopPropagation(); onAddToPipeline(); }} disabled={isAddingToPipeline}>
-                  {isAddingToPipeline ? <><span className="spinner" /> Adding…</> : '+ Cold Outreach'}
-                </button>
-              )}
-              <button
-                className="btn btn-secondary btn-sm"
-                style={{ borderRadius: 6 }}
-                onClick={e => { e.stopPropagation(); onScan(); }}
-                disabled={isScanning}
-                title={company.scan_date ? `Scanned ${ddmyy(company.scan_date)} — click to rescan` : 'Run a deep scan'}
-              >
-                {isScanning ? <><span className="spinner" /> Scanning…</> : company.scan_date ? '↻ Rescan' : 'Deep Scan'}
-              </button>
-              {company.scan_date && (
-                buildingThesis ? (
-                  <button className="btn btn-secondary btn-sm" style={{ borderRadius: 6, color: '#5b21b6', borderColor: '#c4b5fd', background: '#f5f3ff' }} disabled>
-                    <span className="spinner" /> Building…
-                  </button>
+                {company.scan_date && (
+                  buildingThesis ? (
+                    <button className="btn btn-secondary btn-sm" style={{ borderRadius: 6, color: '#5b21b6', borderColor: '#c4b5fd', background: '#f5f3ff' }} disabled>
+                      <span className="spinner" /> Building…
+                    </button>
+                  ) : (
+                    <button
+                      className="btn btn-secondary btn-sm"
+                      style={{ borderRadius: 6, color: '#5b21b6', borderColor: '#c4b5fd', background: '#f5f3ff' }}
+                      onClick={handleBuildThesis}
+                      title={company.thesis ? 'Rebuild AI thesis from scan data' : 'Build an AI investment thesis from scan data'}
+                    >
+                      {company.thesis ? '↻ Refresh Thesis' : '✦ Build Thesis'}
+                    </button>
+                  )
+                )}
+                {thesisError && <span style={{ fontSize: 10, color: '#ef4444', textAlign: 'center' }}>{thesisError}</span>}
+              </div>
+
+              {/* Col 3: + Pipeline / + Cold Outreach */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 130 }}>
+                {isAddedToDeals ? (
+                  <span style={{ fontSize: 11, fontWeight: 700, color: '#15803d', background: '#dcfce7', padding: '5px 10px', borderRadius: 6, border: '1px solid #86efac', textAlign: 'center', cursor: 'pointer' }} onClick={e => { e.stopPropagation(); onNavigateDeals(); }}>In Pipeline →</span>
                 ) : (
-                  <button
-                    className="btn btn-secondary btn-sm"
-                    style={{ borderRadius: 6, color: '#5b21b6', borderColor: '#c4b5fd', background: '#f5f3ff' }}
-                    onClick={handleBuildThesis}
-                    title={company.thesis ? 'Rebuild AI thesis from scan data' : 'Build an AI investment thesis from scan data'}
-                  >
-                    {company.thesis ? '↻ Refresh Thesis' : '✦ Build Thesis'}
+                  <button className="btn btn-secondary btn-sm" style={{ borderRadius: 6 }} onClick={e => { e.stopPropagation(); onAddToDeals(); }} disabled={isAddingToDeals}>
+                    {isAddingToDeals ? <><span className="spinner" /> Adding…</> : '+ Pipeline'}
                   </button>
-                )
-              )}
-              {thesisError && <span style={{ fontSize: 10, color: '#ef4444', textAlign: 'center' }}>{thesisError}</span>}
+                )}
+                {isAddedToPipeline ? (
+                  <span style={{ fontSize: 11, fontWeight: 700, color: '#0369a1', background: '#e0f2fe', padding: '5px 10px', borderRadius: 6, border: '1px solid #7dd3fc', textAlign: 'center', cursor: 'pointer' }} onClick={e => { e.stopPropagation(); onNavigatePipeline(); }}>In Cold Outreach →</span>
+                ) : isOnWatchList ? (
+                  <button className="btn btn-secondary btn-sm" style={{ borderRadius: 6, color: 'var(--accent)', borderColor: 'var(--accent)' }} onClick={e => { e.stopPropagation(); onResumeOutreach(); }}>↩ Resume Outreach</button>
+                ) : (
+                  <button className="btn btn-green btn-sm" style={{ borderRadius: 6 }} onClick={e => { e.stopPropagation(); onAddToPipeline(); }} disabled={isAddingToPipeline}>
+                    {isAddingToPipeline ? <><span className="spinner" /> Adding…</> : '+ Cold Outreach'}
+                  </button>
+                )}
+              </div>
+
             </div>
           )}
 
