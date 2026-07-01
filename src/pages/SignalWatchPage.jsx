@@ -2065,13 +2065,13 @@ function CompanyCard({ company, distMiles, status, isScanning, scanningAll, week
           {hasResult && (
             <div style={{ display: 'flex', gap: 6, flexShrink: 0, alignItems: 'stretch' }}>
 
-              {/* Col 1: ICP / SIG scores */}
+              {/* Col 1: ICP / SIG scores — sized to match btn-sm height exactly */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                 {company.icp_score && (
-                  <span style={{ fontSize: 11, fontWeight: 700, padding: '5px 9px', borderRadius: 6, background: scoreColor(company.icp_score) + '18', color: scoreColor(company.icp_score), border: `1px solid ${scoreColor(company.icp_score)}44`, textAlign: 'center', whiteSpace: 'nowrap' }}>ICP {company.icp_score}/10</span>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700, lineHeight: 1, padding: '5px 10px', borderRadius: 6, background: scoreColor(company.icp_score) + '18', color: scoreColor(company.icp_score), border: `1px solid ${scoreColor(company.icp_score)}44`, whiteSpace: 'nowrap' }}>ICP {company.icp_score}/10</span>
                 )}
                 {sc && (
-                  <span style={{ fontSize: 11, fontWeight: 700, padding: '5px 9px', borderRadius: 6, background: sc + '18', color: sc, border: `1px solid ${sc}44`, textAlign: 'center', whiteSpace: 'nowrap' }}>SIG {company.overall_score}/10</span>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700, lineHeight: 1, padding: '5px 10px', borderRadius: 6, background: sc + '18', color: sc, border: `1px solid ${sc}44`, whiteSpace: 'nowrap' }}>SIG {company.overall_score}/10</span>
                 )}
               </div>
 
