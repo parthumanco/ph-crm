@@ -2145,7 +2145,7 @@ function CompanyCard({ company, distMiles, status, isScanning, scanningAll, week
             {isScanning ? <><span className="spinner" /> Scanning…</> : company.deep_scanned ? '↻ Rescan' : 'Deep Scan'}
           </button>
 
-          {company.deep_scanned && (
+          {company.scan_date && !isScanning && (
             buildingThesis ? (
               <span style={{ fontSize: 10, color: 'var(--accent)', display: 'flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap' }}>
                 <span className="spinner" /> Building thesis…
